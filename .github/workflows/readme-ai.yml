@@ -4,18 +4,33 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch: # يتيح لك تشغيل الأداة يدوياً متى شئت من تبويب Actions
+  workflow_dispatch:
 
 jobs:
   generate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # ضروري جداً لكي تتمكن الأداة من حفظ وتحديث ملف README.md تلقائياً
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run readme-ai
-        uses: readme-ai/readme-ai-action@main
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          api_key: ${{ secrets.OPENAI_API_KEY }}
-          
+          python-version: '3.10'
+
+      - name: Install readme-ai
+        run: pip install readme-ai
+
+      - name: Run readme-ai
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          readme-ai --repository . --api-key "$OPENAI_API_KEY"
+
+      - name: Commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "docs: automatic update of README.md using AI"
+          file_pattern: README.md
