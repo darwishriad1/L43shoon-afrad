@@ -1,0 +1,6 @@
+{
+  "name": "نظام إدارة الجاهزية والتحضير اليومي",
+  "description": "نظام متكامل لإدارة وتحضير القوة اليومي، متابعة الحضور والغياب، تقييم جاهزية الوحدات، وتوليد التقارير الإحصائية للقيادة.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
