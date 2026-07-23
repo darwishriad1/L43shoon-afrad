@@ -30,7 +30,7 @@ import {
   TrendingUp
 } from 'lucide-react';
 import { Unit, Soldier, User } from '../types';
-import { fetchWithRetry } from '../lib/api';
+import { fetchWithRetry, safeJson } from '../lib/api';
 import SoldierProfile from './SoldierProfile';
 
 interface OrgManagerProps {
@@ -304,7 +304,7 @@ export default function OrgManager({
       if (!res.ok) {
         throw new Error('فشل جلب البيانات من الخادم العسكري');
       }
-      const data = await res.json();
+      const data = await safeJson(res, { results: [], totalCount: 0 });
       
       if (resetList) {
         setSearchedSoldiers(data.results);
@@ -503,7 +503,7 @@ export default function OrgManager({
       try {
         const res = await fetchWithRetry(`/api/soldiers/${soldier.id}`);
         if (!res.ok) throw new Error('فشل جلب بيانات العسكري الكاملة');
-        const fullSoldier = await res.json();
+        const fullSoldier = await safeJson(res);
         setEditingSoldier(fullSoldier);
         setSoldierName(fullSoldier.fullName);
         setSoldierMilNumber(fullSoldier.militaryNumber);
@@ -605,7 +605,7 @@ export default function OrgManager({
     try {
       const res = await fetchWithRetry(`/api/soldiers/${soldier.id}`);
       if (!res.ok) throw new Error('فشل جلب بيانات العسكري الكاملة');
-      const fullSoldier = await res.json();
+      const fullSoldier = await safeJson(res);
       setTransferSoldierId(fullSoldier.id);
       setTransferTargetUnitId('');
       setTransferOrderNumber(`أ-${Math.floor(1000 + Math.random() * 9000)}//${new Date().getFullYear()}`);

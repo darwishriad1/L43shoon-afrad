@@ -64,7 +64,7 @@ import { auth, googleAuthProvider } from './lib/firebase.ts';
 import { signInWithPopup, signOut, onAuthStateChanged, GoogleAuthProvider } from 'firebase/auth';
 
 // Resilient API Fetch Import
-import { fetchWithRetry } from './lib/api';
+import { fetchWithRetry, safeJson } from './lib/api';
 
 export default function App() {
   // --- STATE MANAGERS ---
@@ -156,7 +156,7 @@ export default function App() {
           if (!res.ok) {
             throw new Error('Local session invalid');
           }
-          const profile = await res.json();
+          const profile = await safeJson(res);
           if (!active) return;
           
           setToken(localToken);
@@ -179,13 +179,13 @@ export default function App() {
           ]);
           
           const [usersData, unitsData, soldiersData, attendanceData, logsData, notificationsData, settingsData] = await Promise.all([
-            usersRes.json(),
-            unitsRes.json(),
-            soldiersRes.json(),
-            attendanceRes.json(),
-            logsRes.json(),
-            notificationsRes.json(),
-            settingsRes.json(),
+            safeJson(usersRes, []),
+            safeJson(unitsRes, []),
+            safeJson(soldiersRes, []),
+            safeJson(attendanceRes, []),
+            safeJson(logsRes, []),
+            safeJson(notificationsRes, []),
+            safeJson(settingsRes, null),
           ]);
           
           if (!active) return;
@@ -219,7 +219,7 @@ export default function App() {
                 'Authorization': `Bearer ${idToken}`
               }
             });
-            const profile = await res.json();
+            const profile = await safeJson(res);
             if (!active) return;
             setDbUser(profile);
 
@@ -248,13 +248,13 @@ export default function App() {
             ]);
             
             const [usersData, unitsData, soldiersData, attendanceData, logsData, notificationsData, settingsData] = await Promise.all([
-              usersRes.json(),
-              unitsRes.json(),
-              soldiersRes.json(),
-              attendanceRes.json(),
-              logsRes.json(),
-              notificationsRes.json(),
-              settingsRes.json(),
+              safeJson(usersRes, []),
+              safeJson(unitsRes, []),
+              safeJson(soldiersRes, []),
+              safeJson(attendanceRes, []),
+              safeJson(logsRes, []),
+              safeJson(notificationsRes, []),
+              safeJson(settingsRes, null),
             ]);
             
             if (!active) return;
@@ -343,11 +343,11 @@ export default function App() {
       });
       
       if (!res.ok) {
-        const data = await res.json();
+        const data = await safeJson<any>(res, {});
         throw new Error(data.error || 'فشل تسجيل الدخول: اسم المستخدم أو كلمة المرور خاطئة');
       }
 
-      const { token: localToken, user } = await res.json();
+      const { token: localToken, user } = await safeJson(res);
       
       // Save in localStorage for persistence
       localStorage.setItem('military_auth_token', localToken);
@@ -384,13 +384,13 @@ export default function App() {
       ]);
       
       const [usersData, unitsData, soldiersData, attendanceData, logsData, notificationsData, settingsData] = await Promise.all([
-        usersRes.json(),
-        unitsRes.json(),
-        soldiersRes.json(),
-        attendanceRes.json(),
-        logsRes.json(),
-        notificationsRes.json(),
-        settingsRes.json(),
+        safeJson(usersRes, []),
+        safeJson(unitsRes, []),
+        safeJson(soldiersRes, []),
+        safeJson(attendanceRes, []),
+        safeJson(logsRes, []),
+        safeJson(notificationsRes, []),
+        safeJson(settingsRes, null),
       ]);
       
       setUsers(usersData);

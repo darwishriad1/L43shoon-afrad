@@ -8,7 +8,7 @@ import {
   Lock, Check, Building, Camera, X, MessageSquare
 } from 'lucide-react';
 import { Soldier, SickLeave, AttendanceRecord, AuditLog, User as SystemUser, Unit } from '../types';
-import { fetchWithRetry } from '../lib/api';
+import { fetchWithRetry, safeJson } from '../lib/api';
 import { downloadElementAsPdf } from '../utils/pdfGenerator';
 import WhatsAppShareModal from './WhatsAppShareModal';
 
@@ -206,7 +206,7 @@ export default function SoldierProfile({
     try {
       const res = await fetchWithRetry(`/api/soldiers/${soldierId}`);
       if (!res.ok) throw new Error('فشل جلب ملف العسكري من قاعدة البيانات');
-      const data: Soldier = await res.json();
+      const data: Soldier = await safeJson(res);
       
       // Unit permission check: restricted users can only view soldiers in their assigned unit
       const isRestricted = currentUser && currentUser.role !== 'admin' && currentUser.role !== 'commander_formation' && Boolean(currentUser.unitId);
@@ -258,19 +258,19 @@ export default function SoldierProfile({
         if (activeTab === 'medical') {
           const res = await fetchWithRetry(`/api/soldiers/${soldierId}/sick-leaves`);
           if (res.ok) {
-            const data = await res.json();
+            const data = await safeJson(res, []);
             setSickLeavesList(data);
           }
         } else if (activeTab === 'attendance') {
           const res = await fetchWithRetry(`/api/soldiers/${soldierId}/attendance-history`);
           if (res.ok) {
-            const data = await res.json();
+            const data = await safeJson(res, []);
             setAttendanceHistory(data);
           }
         } else if (activeTab === 'timeline') {
           const res = await fetchWithRetry(`/api/soldiers/${soldierId}/audit-logs`);
           if (res.ok) {
-            const data = await res.json();
+            const data = await safeJson(res, []);
             setAuditLogsList(data);
           }
         }
@@ -403,7 +403,7 @@ export default function SoldierProfile({
       });
 
       if (!response.ok) throw new Error('فشل تسجيل الإجازة في الخادم');
-      const newLeave = await response.json();
+      const newLeave = await safeJson(response);
 
       // 2. Update soldier military status to "إجازة"
       await fetchWithRetry(`/api/soldiers/${soldierId}`, {
@@ -524,7 +524,7 @@ export default function SoldierProfile({
 
       if (!response.ok) throw new Error('فشل إرسال الإجازة الطبية للخادم');
       
-      const newLeave = await response.json();
+      const newLeave = await safeJson(response);
       setSickLeavesList(prev => [newLeave, ...prev]);
       
       // Update soldier status to "إجازة" locally and trigger update on server
