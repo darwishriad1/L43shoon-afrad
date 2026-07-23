@@ -1,0 +1,21 @@
+name: Generate README
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # يتيح لك تشغيل الأداة يدوياً متى شئت من تبويب Actions
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run readme-ai
+        uses: readme-ai/readme-ai-action@main
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          api_key: ${{ secrets.OPENAI_API_KEY }}
+          
