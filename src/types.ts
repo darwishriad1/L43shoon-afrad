@@ -46,8 +46,28 @@ export interface Soldier {
   medicalHistory?: string | null;
   promotionHistory?: string | null; // JSON array of promotions
   assignmentsHistory?: string | null; // JSON array of past assignments
+  custodiesHistory?: string | null; // JSON array of military custody records
   attachments?: string | null; // JSON array of attachments
   photoUrl?: string | null; // base64 or URL of soldier's photo
+}
+
+export interface MilitaryCustody {
+  id: string;
+  soldierId: string;
+  custodyNumber: string; // رقم العهدة (رقم السلاح / الرقم المميز للمركبة / رقم الأمانة)
+  type: string; // نوع العهدة (مثل: بندقية، جهاز اتصال، سيارة، نظارة ليلية، درع واقي، أثاث، إلخ)
+  description: string; // وصف العهدة
+  quantity: number; // الكمية
+  issueDate: string; // تاريخ التسلم (تاريخ العهد) YYYY-MM-DD
+  status: 'نشط' | 'منتهٍ' | 'قيد التدقيق' | 'مفقود/متحفظ عليه'; // حالة العهدة
+  orderRef?: string; // مرجع الأمر الإداري (إن وجد)
+  issuingDept: string; // اسم الجهة المسلمة (الإمداد / التسليح / الفنية / شؤون الأفراد / أخرى)
+  issuingOfficer: string; // اسم الموظف أو القائد المسلم
+  notes?: string; // ملاحظات وبنود إخلاء الطرف
+  individualSigned: boolean; // توقيع الفرد
+  officerSigned: boolean; // توقيع المسؤول
+  returnDate?: string; // تاريخ الإرجاع / إخلاء الطرف
+  createdAt?: string;
 }
 
 export interface SickLeave {
@@ -63,6 +83,7 @@ export interface SickLeave {
   orderNumber?: string;
   orderDate?: string;
   reason?: string;
+  diagnosis?: string;
   attachmentUrl?: string | null;
   status: string; // 'نشط' | 'منتهي'
   hospital?: string | null;

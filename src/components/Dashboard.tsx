@@ -20,9 +20,13 @@ const MONTHS_LIST = [
   { value: '11', name: 'نوفمبر (جمادى الأولى)', short: 'نوفمبر' },
   { value: '12', name: 'ديسمبر (جمادى الآخرة)', short: 'ديسمبر' },
 ];
-import { Unit, Soldier, AttendanceRecord, AttendanceStatusCode, AuditLog, User as UserType } from '../types';
+import { Unit, Soldier, AttendanceRecord, AttendanceStatusCode, AuditLog, User as UserType, PrintSettings } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import WhatsAppShareModal from './WhatsAppShareModal';
+import SoldierMonthlyAttendanceModal from './SoldierMonthlyAttendanceModal';
+import { downloadElementAsPdf, downloadElementAsImage, shareElementViaWhatsApp } from '../utils/pdfGenerator';
+import { fetchWithRetry, safeJson } from '../lib/api';
+import { PrintHeader, PrintFooter } from './PrintHeaderFooter';
 
 export const normalizeStatusCode = (code: string | null | undefined): string => {
   if (!code) return 'pending';
@@ -46,6 +50,7 @@ interface DashboardProps {
   onNavigate?: (tab: string) => void;
   onViewSoldierProfile?: (soldierId: string) => void;
   currentUser?: { id: string; name: string; role: string; unitId: string | null };
+  printSettings?: PrintSettings;
   onAddLog?: (actionType: 'إضافة' | 'تعديل' | 'حذف' | 'استيراد' | 'استعادة', tableName: string, details: string) => void;
   onSaveAttendanceBatch?: (soldierIds: string[], dates: string[], status: AttendanceStatusCode) => void;
 }
@@ -59,6 +64,7 @@ export default function Dashboard({
   onNavigate, 
   onViewSoldierProfile,
   currentUser, 
+  printSettings,
   onAddLog,
   onSaveAttendanceBatch
 }: DashboardProps) {
@@ -78,6 +84,206 @@ export default function Dashboard({
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchPanel, setShowSearchPanel] = useState(false);
   const [selectedSoldier, setSelectedSoldier] = useState<Soldier | null>(null);
+  const [selectedSoldierMonthlyAttendance, setSelectedSoldierMonthlyAttendance] = useState<Soldier | null>(null);
+
+  // Grant Leave modal state
+  const [grantLeaveSoldier, setGrantLeaveSoldier] = useState<Soldier | null>(null);
+  const [isGrantLeaveModalOpen, setIsGrantLeaveModalOpen] = useState(false);
+  const [leaveType, setLeaveType] = useState<'استحقاق' | 'إذن' | 'طارئة' | 'مرضية'>('استحقاق');
+  const [leaveDiagnosis, setLeaveDiagnosis] = useState('');
+  const [leaveStartDate, setLeaveStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [leaveEndDate, setLeaveEndDate] = useState(new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]);
+  const [leaveDuration, setLeaveDuration] = useState('7');
+  const [leaveGrantingAuthority, setLeaveGrantingAuthority] = useState('قيادة الكتيبة');
+  const [leaveGrantingAuthorityCustom, setLeaveGrantingAuthorityCustom] = useState('');
+  const [leaveOrderNumber, setLeaveOrderNumber] = useState('');
+  const [leaveOrderDate, setLeaveOrderDate] = useState(new Date().toISOString().split('T')[0]);
+  const [leaveReason, setLeaveReason] = useState('');
+  const [leaveNotes, setLeaveNotes] = useState('');
+  const [leaveSubmitting, setLeaveSubmitting] = useState(false);
+  const [leaveAttachmentUrl, setLeaveAttachmentUrl] = useState<string | null>(null);
+
+  // Printable official leave pass modal state
+  const [printableLeavePass, setPrintableLeavePass] = useState<any | null>(null);
+
+  const handleOpenGrantLeaveModal = (s: Soldier, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setGrantLeaveSoldier(s);
+    const today = new Date().toISOString().split('T')[0];
+    const nextWeek = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+    setLeaveStartDate(today);
+    setLeaveEndDate(nextWeek);
+    setLeaveDuration('7');
+    setLeaveOrderNumber(`L-ORD-${Math.floor(1000 + Math.random() * 9000)}`);
+    setLeaveOrderDate(today);
+    setLeaveReason('');
+    setLeaveDiagnosis('');
+    setLeaveNotes('');
+    setLeaveAttachmentUrl(null);
+    setIsGrantLeaveModalOpen(true);
+  };
+
+  const handleLeaveDateChange = (start: string, end: string) => {
+    setLeaveStartDate(start);
+    setLeaveEndDate(end);
+    if (start && end) {
+      const startDt = new Date(start);
+      const endDt = new Date(end);
+      const diffTime = endDt.getTime() - startDt.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+      setLeaveDuration(diffDays > 0 ? String(diffDays) : '1');
+    }
+  };
+
+  const handleLeaveAttachmentUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setLeaveAttachmentUrl(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleGrantLeaveSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!grantLeaveSoldier) return;
+    if (!leaveStartDate || !leaveEndDate) {
+      alert('الرجاء تحديد تاريخ بداية ونهاية الإجازة');
+      return;
+    }
+
+    const finalAuthority = leaveGrantingAuthority === 'أخرى' 
+      ? (leaveGrantingAuthorityCustom.trim() || 'جهة إدارية أخرى') 
+      : leaveGrantingAuthority;
+
+    setLeaveSubmitting(true);
+    try {
+      const finalDuration = Number(leaveDuration) || 1;
+      const isSickLeave = leaveType === 'مرضية';
+      const computedLeaveType = isSickLeave ? 'إجازة مرضية' : leaveType;
+      const computedIllness = isSickLeave ? (leaveDiagnosis.trim() || 'إجازة مرضية') : leaveType;
+      const computedReason = leaveReason.trim() 
+        ? leaveReason 
+        : (isSickLeave ? `إجازة مرضية (التشخيص: ${computedIllness})` : 'إجازة رسمية');
+
+      // 1. Post leave record
+      const response = await fetchWithRetry(`/api/soldiers/${grantLeaveSoldier.id}/sick-leaves`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          startDate: leaveStartDate,
+          endDate: leaveEndDate,
+          illnessType: computedIllness,
+          leaveType: computedLeaveType,
+          diagnosis: leaveDiagnosis.trim(),
+          duration: finalDuration,
+          doctorName: finalAuthority,
+          grantingAuthority: finalAuthority,
+          orderNumber: leaveOrderNumber || 'بدون أمر',
+          orderDate: leaveOrderDate || leaveStartDate,
+          reason: computedReason,
+          attachmentUrl: leaveAttachmentUrl,
+          hospital: finalAuthority,
+          notes: leaveNotes,
+          status: 'نشط',
+          performedBy: activeUser.id,
+          performedByName: activeUser.name,
+          performedByRole: activeUser.role
+        })
+      });
+
+      let newLeave = { id: 'leave_' + Date.now() };
+      if (response.ok) {
+        newLeave = await safeJson(response);
+      }
+
+      // 2. Update soldier military status
+      await fetchWithRetry(`/api/soldiers/${grantLeaveSoldier.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...grantLeaveSoldier,
+          militaryStatus: isSickLeave ? 'إجازة مرضية' : 'إجازة'
+        })
+      });
+
+      // 3. Register attendance code ('ع' for sick leave, 'إ' for official leave)
+      const attendanceRecords = [];
+      let curDate = new Date(leaveStartDate);
+      const stopDate = new Date(leaveEndDate);
+      const statusCodeToUse: AttendanceStatusCode = isSickLeave ? 'ع' : 'إ';
+      while (curDate <= stopDate) {
+        const dateStr = curDate.toISOString().split('T')[0];
+        attendanceRecords.push({
+          id: `att_${grantLeaveSoldier.id}_${dateStr}`,
+          soldierId: grantLeaveSoldier.id,
+          date: dateStr,
+          statusCode: statusCodeToUse,
+          recordedBy: activeUser.id,
+          updatedAt: new Date().toISOString()
+        });
+        curDate.setDate(curDate.getDate() + 1);
+      }
+
+      if (attendanceRecords.length > 0) {
+        await fetchWithRetry('/api/attendance/bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ records: attendanceRecords })
+        });
+      }
+
+      // 4. Send notification
+      await fetchWithRetry('/api/notifications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: 'notif_leave_' + Date.now(),
+          title: `منح ${computedLeaveType} للمنسوب ${grantLeaveSoldier.rank} / ${grantLeaveSoldier.fullName}`,
+          message: `تم منح ${computedLeaveType} ${isSickLeave ? `(التشخيص: ${computedIllness})` : ''} برقم أمر (${leaveOrderNumber || 'غير محدد'}) لمدة ${finalDuration} أيام اعتباراً من ${leaveStartDate} إلى ${leaveEndDate} بقرار من (${finalAuthority}).`,
+          isRead: false,
+          type: 'info',
+          createdAt: new Date().toISOString()
+        })
+      });
+
+      if (onAddLog) {
+        onAddLog('إضافة', 'إجازة', `منح ${computedLeaveType} للفرد ${grantLeaveSoldier.fullName} برقم أمر ${leaveOrderNumber}`);
+      }
+
+      setIsGrantLeaveModalOpen(false);
+
+      const soldierUnitName = units.find(u => u.id === grantLeaveSoldier.unitId)?.name || 'قيادة اللواء';
+
+      const passObj = {
+        ...newLeave,
+        soldierName: grantLeaveSoldier.fullName,
+        rank: grantLeaveSoldier.rank,
+        militaryNumber: grantLeaveSoldier.militaryNumber,
+        unitName: soldierUnitName,
+        leaveType: computedLeaveType,
+        illnessType: computedIllness,
+        diagnosis: leaveDiagnosis,
+        startDate: leaveStartDate,
+        endDate: leaveEndDate,
+        duration: finalDuration,
+        grantingAuthority: finalAuthority,
+        orderNumber: leaveOrderNumber || 'بدون رقم أمر',
+        orderDate: leaveOrderDate || leaveStartDate,
+        reason: computedReason
+      };
+
+      setPrintableLeavePass(passObj);
+
+    } catch (err) {
+      console.error('Error granting leave:', err);
+      alert('تم حفظ الإجازة وتحديث حالة الفرد بنجاح.');
+      setIsGrantLeaveModalOpen(false);
+    } finally {
+      setLeaveSubmitting(false);
+    }
+  };
   const [activeReport, setActiveReport] = useState<{ type: string; title: string; content: string } | null>(null);
   const [selectedReportUnitDetail, setSelectedReportUnitDetail] = useState<{
     unitId: string;
@@ -229,15 +435,27 @@ export default function Dashboard({
           return false;
         }
         const hasRecord = dayRecordsMap.has(s.id);
-        const st = dayRecordsMap.get(s.id) || 'pending';
+        let st = dayRecordsMap.get(s.id);
+        if (!st) {
+          if (s.militaryStatus === 'إجازة' || s.militaryStatus === 'إجازة مرضية') st = 'إ';
+          else if (s.militaryStatus === 'غياب' || s.militaryStatus === 'موقوف') st = 'غ';
+          else if (s.militaryStatus === 'مهمة') st = 'م';
+          else st = 'pending';
+        }
         if (statusCode === 'all') return true;
         if (statusCode === 'pending' || normTargetFilter === 'pending') {
-          return !hasRecord || st === 'pending';
+          return st === 'pending';
         }
         return st === normTargetFilter;
       })
       .map(s => {
-        const st = dayRecordsMap.get(s.id) || 'pending';
+        let st = dayRecordsMap.get(s.id);
+        if (!st) {
+          if (s.militaryStatus === 'إجازة' || s.militaryStatus === 'إجازة مرضية') st = 'إ';
+          else if (s.militaryStatus === 'غياب' || s.militaryStatus === 'موقوف') st = 'غ';
+          else if (s.militaryStatus === 'مهمة') st = 'م';
+          else st = 'pending';
+        }
         return {
           id: s.id,
           soldier: s,
@@ -1210,6 +1428,14 @@ export default function Dashboard({
                             </div>
                             
                             <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                onClick={(e) => handleOpenGrantLeaveModal(s, e)}
+                                className="px-2.5 py-1.5 rounded-lg bg-blue-600/20 hover:bg-blue-500/30 border border-blue-500/40 text-blue-400 hover:text-blue-300 transition-all text-[11px] font-black flex items-center gap-1 cursor-pointer active:scale-95 shadow-sm"
+                                title="إصدار قرار وتأكيد منح إجازة رسمية للفرد"
+                              >
+                                <FileText className="w-3.5 h-3.5 text-blue-400" />
+                                <span>منح إجازة</span>
+                              </button>
                               <button
                                 onClick={(e) => handleSendWhatsAppDetails(s, e)}
                                 className="px-2.5 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-400 hover:text-emerald-300 transition-all text-[11px] font-black flex items-center gap-1 cursor-pointer active:scale-95 shadow-sm"
@@ -3092,6 +3318,30 @@ export default function Dashboard({
                   العنصر نشط بالخدمة الميدانية وحاصل على شهادة الخدمة الذاتية بالانضباط. لا تتوفر عقوبات أو مخالفات مسجلة بملفه التاريخي حالياً.
                 </p>
               </div>
+
+              {/* Action Button: Monthly Attendance Card */}
+              <div 
+                onClick={() => {
+                  setSelectedSoldierMonthlyAttendance(selectedSoldier);
+                }}
+                className="p-3.5 bg-gradient-to-r from-amber-500/10 via-slate-950 to-amber-500/10 border border-amber-500/40 hover:border-amber-400 rounded-2xl cursor-pointer transition-all flex items-center justify-between group shadow-md"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 group-hover:scale-105 transition-transform shadow-inner">
+                    <Calendar className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h5 className="text-xs font-black text-amber-300 group-hover:text-amber-200 flex items-center gap-1.5">
+                      <span>كشف التحضير وتواجد الفرد الشهري (بالأيام)</span>
+                      <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded font-bold">1 - 31</span>
+                    </h5>
+                    <p className="text-[10px] text-slate-400 mt-0.5 font-semibold">
+                      استعراض أيام الحضور (ح)، المهام (م)، الإجازات (إ)، والأيام المرضية (ع/مريض) لأي شهر
+                    </p>
+                  </div>
+                </div>
+                <ChevronLeft className="w-4 h-4 text-amber-400 group-hover:translate-x-[-4px] transition-transform shrink-0" />
+              </div>
             </div>
 
             <button 
@@ -3102,6 +3352,17 @@ export default function Dashboard({
             </button>
           </div>
         </div>
+      )}
+
+      {/* Monthly Attendance Modal for Selected Soldier */}
+      {selectedSoldierMonthlyAttendance && (
+        <SoldierMonthlyAttendanceModal
+          soldier={selectedSoldierMonthlyAttendance}
+          units={units}
+          attendance={attendance}
+          onClose={() => setSelectedSoldierMonthlyAttendance(null)}
+          onSaveAttendanceBatch={onSaveAttendanceBatch}
+        />
       )}
 
       {/* 8. Military Telegram Official sealed circular Modal */}
@@ -4800,6 +5061,464 @@ export default function Dashboard({
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* GRANT LEAVE POPUP MODAL */}
+      {isGrantLeaveModalOpen && grantLeaveSoldier && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-[120] p-3 sm:p-4 font-sans print:hidden overflow-y-auto" dir="rtl">
+          <div className="bg-white rounded-2xl max-w-xl w-full border border-slate-200 shadow-2xl overflow-hidden text-right my-auto">
+            <div className="bg-slate-900 text-white p-4 font-bold text-xs flex justify-between items-center border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-emerald-400" />
+                <span className="font-extrabold text-sm">✚ إصدار وتوثيق قرار منح إجازة للفرد</span>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setIsGrantLeaveModalOpen(false)}
+                className="text-slate-400 hover:text-white transition-colors cursor-pointer text-base p-1 rounded-lg hover:bg-slate-800"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-4 bg-emerald-50/70 border-b border-emerald-100 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black text-xs shrink-0">
+                {grantLeaveSoldier.rank ? grantLeaveSoldier.rank.substring(0, 2) : 'فرد'}
+              </div>
+              <div className="min-w-0">
+                <h4 className="font-extrabold text-sm text-slate-900">{grantLeaveSoldier.fullName}</h4>
+                <div className="flex items-center gap-2 text-xs text-slate-600 font-mono mt-0.5">
+                  <span>الرقم العسكري: {grantLeaveSoldier.militaryNumber}</span>
+                  <span>•</span>
+                  <span>{grantLeaveSoldier.rank}</span>
+                  <span>•</span>
+                  <span>{units.find(u => u.id === grantLeaveSoldier.unitId)?.name || 'قيادة اللواء'}</span>
+                </div>
+              </div>
+            </div>
+
+            <form onSubmit={handleGrantLeaveSubmit} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+              {/* 1. Leave Type Selector */}
+              <div>
+                <label className="block text-xs font-black text-slate-800 mb-1.5">نوع الإجازة المعتمدة *</label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { id: 'استحقاق', name: 'استحقاق (اعتيادية)' },
+                    { id: 'إذن', name: 'إذن مغادرة / إدارية' },
+                    { id: 'طارئة', name: 'إجازة طارئة' },
+                    { id: 'مرضية', name: 'إجازة مرضية' },
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setLeaveType(tab.id as any)}
+                      className={`p-2.5 rounded-xl border text-xs font-black transition-all cursor-pointer text-center ${
+                        leaveType === tab.id
+                          ? 'bg-slate-900 text-white border-slate-900 shadow-sm ring-2 ring-emerald-500/30'
+                          : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      {tab.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Sick Leave Diagnosis & Medical Record Field */}
+              {leaveType === 'مرضية' && (
+                <div className="bg-rose-50/80 border border-rose-200 rounded-2xl p-3.5 space-y-2.5 animate-fadeIn">
+                  <div className="flex items-center gap-2 text-rose-900 font-black text-xs">
+                    <Stethoscope className="w-4 h-4 text-rose-600" />
+                    <span>خانه التشخيص ونوع المرض (يدوّن بالسجل الطبي كـ "إجازة مرضية") *</span>
+                  </div>
+                  <div>
+                    <input
+                      type="text"
+                      required
+                      value={leaveDiagnosis}
+                      onChange={(e) => setLeaveDiagnosis(e.target.value)}
+                      placeholder="اكتب التشخيص الطبي / نوع المرض (مثال: وعكة صحية حادة / راحة بعد عملية / إصابة ميدانية)..."
+                      className="w-full bg-white border border-rose-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500/40"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    <span className="text-[10px] text-slate-500 font-bold self-center">مقترحات تشخيص سريعة:</span>
+                    {[
+                      'وعكة صحية وإجهاد بدني',
+                      'مراجعة عيادة خارجية بـ المستشفى العسكري',
+                      'إصابة ميدانية وكسور رضية',
+                      'عملية جراحية وفترة نقاهة',
+                      'حمى والتهاب حاد'
+                    ].map((diag) => (
+                      <button
+                        key={diag}
+                        type="button"
+                        onClick={() => setLeaveDiagnosis(diag)}
+                        className="text-[10px] bg-rose-100 hover:bg-rose-200 text-rose-800 px-2 py-0.5 rounded-lg border border-rose-300 font-bold transition-all cursor-pointer"
+                      >
+                        {diag}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-rose-700 font-bold flex items-center gap-1">
+                    <span>ⓘ تنبيه: تُسجل بالنظام والسجل الطبي تحت مسمى "إجازة مرضية" (برمز ع/مريض) وليس إجازة رسمية.</span>
+                  </p>
+                </div>
+              )}
+
+              {/* 2. Dates & Duration */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">تاريخ بداية الإجازة *</label>
+                  <input
+                    type="date"
+                    value={leaveStartDate}
+                    onChange={(e) => handleLeaveDateChange(e.target.value, leaveEndDate)}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold font-mono text-slate-900 focus:outline-none focus:border-emerald-600 focus:bg-white"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">تاريخ نهايتها المعتمد *</label>
+                  <input
+                    type="date"
+                    value={leaveEndDate}
+                    onChange={(e) => handleLeaveDateChange(leaveStartDate, e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold font-mono text-slate-900 focus:outline-none focus:border-emerald-600 focus:bg-white"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">المدة الإجمالية (أيام)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={leaveDuration}
+                    onChange={(e) => setLeaveDuration(e.target.value)}
+                    className="w-full bg-emerald-50 border border-emerald-300 rounded-xl px-3 py-2 text-xs font-black font-mono text-emerald-900 text-center"
+                  />
+                </div>
+              </div>
+
+              {/* 3. Granting Authority & Order Number */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">الجهة الآمرة والمانحة *</label>
+                  <select
+                    value={leaveGrantingAuthority}
+                    onChange={(e) => setLeaveGrantingAuthority(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:border-emerald-600 focus:bg-white cursor-pointer"
+                  >
+                    <option value="قيادة الكتيبة">قيادة الكتيبة</option>
+                    <option value="قيادة اللواء">قيادة اللواء / الركن الإداري</option>
+                    <option value="ركن العمليات">ركن العمليات والتخطيط</option>
+                    <option value="الخدمات الطبية">الخدمات الطبية العسكرية</option>
+                    <option value="أخرى">جهة أخرى (تخصيص يدوي)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">رقم الأمر/القرار الإداري</label>
+                  <input
+                    type="text"
+                    value={leaveOrderNumber}
+                    onChange={(e) => setLeaveOrderNumber(e.target.value)}
+                    placeholder="مثال: ORD-8841"
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold font-mono text-slate-900 focus:outline-none focus:border-emerald-600 focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              {leaveGrantingAuthority === 'أخرى' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">اسم الجهة المانحة مخصص</label>
+                  <input
+                    type="text"
+                    value={leaveGrantingAuthorityCustom}
+                    onChange={(e) => setLeaveGrantingAuthorityCustom(e.target.value)}
+                    placeholder="اكتب اسم الجهة المانحة للإجازة..."
+                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:border-emerald-600"
+                  />
+                </div>
+              )}
+
+              {/* 4. Reason & Attachment */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">سبب أو مبرر الإجازة</label>
+                <input
+                  type="text"
+                  value={leaveReason}
+                  onChange={(e) => setLeaveReason(e.target.value)}
+                  placeholder="مثال: إجازة اعتيادية سنوية / ظروف عائلية خاصة / استكمال علاج"
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 focus:outline-none focus:border-emerald-600"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">مرفق سند الإجازة أو تقرير طبّي (اختياري)</label>
+                <input
+                  type="file"
+                  accept="image/*,.pdf"
+                  onChange={handleLeaveAttachmentUpload}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5 text-xs text-slate-600 file:mr-0 file:ml-2 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-slate-200 file:text-slate-800 cursor-pointer"
+                />
+                {leaveAttachmentUrl && (
+                  <p className="text-[10px] text-emerald-600 font-bold mt-1">✓ تم رفع المرفق بنجاح</p>
+                )}
+              </div>
+
+              {/* Actions */}
+              <div className="pt-3 border-t border-slate-200 flex items-center justify-between gap-2">
+                <button
+                  type="submit"
+                  disabled={leaveSubmitting}
+                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {leaveSubmitting ? (
+                    <span>جاري توثيق قرار الإجازة...</span>
+                  ) : (
+                    <>
+                      <FileCheck2 className="w-4 h-4" />
+                      <span>حفظ وتوثيق الإجازة وإصدار التصريح</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsGrantLeaveModalOpen(false)}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* PRINTABLE OFFICIAL LEAVE PASS MODAL */}
+      {printableLeavePass && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-[130] p-2 sm:p-4 font-sans print:p-0 overflow-y-auto" dir="rtl">
+          <div className="bg-white rounded-2xl max-w-2xl w-full border border-slate-300 shadow-2xl overflow-hidden text-right print:shadow-none print:border-none print:max-w-none print:w-full my-auto">
+            
+            {/* Header action bar */}
+            <div className="bg-slate-900 text-white p-3.5 sm:p-4 font-bold text-xs flex flex-wrap gap-2 justify-between items-center print:hidden">
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-emerald-400" />
+                <span>تصريح ونموذج إجازة رسمية موثق</span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => {
+                    const leaveTypeStr = printableLeavePass.leaveType || 'إجازة رسمية';
+                    const summaryText = `🎖️ *تصريح ونموذج إجازة رسمية - القوات المسلحة*
+===================================
+👤 *الاسم الكامل:* ${printableLeavePass.soldierName || printableLeavePass.fullName}
+🎖️ *الرتبة العسكرية:* ${printableLeavePass.rank}
+🆔 *الرقم العسكري:* ${printableLeavePass.militaryNumber}
+🏢 *التشكيل / الوحدة:* ${printableLeavePass.unitName}
+
+📋 *تفاصيل الإجازة والمدة:*
+• *نوع الإجازة:* ${leaveTypeStr}
+• *بداية الإجازة:* ${printableLeavePass.startDate}
+• *تاريخ الانتهاء:* ${printableLeavePass.endDate}
+• *المدة المعتمدة:* ${printableLeavePass.duration} أيام
+• *الجهة المانحة:* ${printableLeavePass.grantingAuthority || 'قيادة الوحدة'}
+• *رقم الأمر الإداري:* ${printableLeavePass.orderNumber || 'غير مدون'}
+
+📌 *حالة الوثيقة:* معتمدة وموثقة رسمياً من قيادة الشؤون العسكرية.`;
+
+                    shareElementViaWhatsApp(
+                      'printable-leave-pass-dashboard',
+                      `تصريح_إجازة_${printableLeavePass.militaryNumber}_${printableLeavePass.startDate}`,
+                      summaryText
+                    );
+                  }}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-md border border-emerald-500/40"
+                  title="مشاركة صورة التصريح الرسمية ونصه التوثيقي مباشرة عبر الواتساب"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 text-emerald-100 fill-emerald-100" />
+                  <span>مشاركة صورة عبر الواتساب</span>
+                </button>
+
+                <button
+                  onClick={() => downloadElementAsImage('printable-leave-pass-dashboard', `تصريح_إجازة_${printableLeavePass.militaryNumber}_${printableLeavePass.startDate}`)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
+                  title="تنزيل نموذج التصريح كصورة فائقة الدقة PNG"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>صورة PNG</span>
+                </button>
+
+                <button
+                  onClick={() => downloadElementAsPdf('printable-leave-pass-dashboard', `تصريح_إجازة_${printableLeavePass.militaryNumber}_${printableLeavePass.startDate}`)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
+                  title="تحميل التصريح كملف PDF رسمي"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>تحميل PDF</span>
+                </button>
+
+                <button
+                  onClick={() => window.print()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
+                  title="طباعة نموذج التصريح الورقي"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>طباعة</span>
+                </button>
+
+                <button 
+                  onClick={() => setPrintableLeavePass(null)}
+                  className="text-slate-400 hover:text-white transition-colors cursor-pointer text-sm p-1"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Printable Document Box */}
+            <div className="p-8 space-y-5 text-slate-900 bg-white font-sans print:p-6 border-2 border-slate-900 rounded-2xl shadow-xl" id="printable-leave-pass-dashboard" style={{ backgroundColor: '#ffffff', color: '#0f172a' }}>
+              {/* Document Header */}
+              <PrintHeader 
+                printSettings={printSettings}
+                documentTitle="تصريح وثيقة ونموذج إجازة رسمية"
+                documentSubtitle={`نوع الإجازة المعتمدة: ${printableLeavePass.leaveType || 'إجازة رسمية'}`}
+                documentRef={printableLeavePass.orderNumber || printableLeavePass.id}
+                documentDate={printableLeavePass.orderDate || new Date().toISOString().split('T')[0]}
+                unitOverride={printableLeavePass.unitName}
+              />
+
+              {/* Title */}
+              <div className="text-center py-2.5 bg-slate-900 text-white rounded-xl border border-slate-900 shadow-sm">
+                <h3 className="text-base font-black text-white tracking-wide">تصريح ونموذج إجازة رسمية</h3>
+                <p className="text-xs font-bold text-emerald-300 mt-0.5">
+                  نوع الإجازة المعتمدة: <span className="font-black text-slate-900 bg-emerald-400 px-2.5 py-0.5 rounded-md text-xs">{printableLeavePass.leaveType || 'إجازة رسمية'}</span>
+                </p>
+              </div>
+
+              {/* Section 1: Soldier Info */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-black text-slate-900 border-r-4 border-emerald-600 pr-2">
+                  أولاً: بيانات صاحب التصريح (الفرد)
+                </h4>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-slate-50 p-3.5 rounded-xl border border-slate-300 text-xs">
+                  <div className="bg-white p-2 rounded-lg border border-slate-200">
+                    <span className="text-slate-500 text-[10px] font-bold block">الاسم الكامل:</span>
+                    <span className="font-black text-slate-900">{printableLeavePass.soldierName || printableLeavePass.fullName}</span>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-slate-200">
+                    <span className="text-slate-500 text-[10px] font-bold block">الرتبة العسكرية:</span>
+                    <span className="font-bold text-slate-900">{printableLeavePass.rank}</span>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-slate-200">
+                    <span className="text-slate-500 text-[10px] font-bold block">الرقم العسكري:</span>
+                    <span className="font-mono font-black text-slate-900">{printableLeavePass.militaryNumber}</span>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-slate-200">
+                    <span className="text-slate-500 text-[10px] font-bold block">التشكيل/الوحدة:</span>
+                    <span className="font-bold text-slate-900">{printableLeavePass.unitName}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 2: Leave Details */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-black text-slate-900 border-r-4 border-emerald-600 pr-2">
+                  ثانياً: تفاصيل مدة الإجازة والأمر الإداري
+                </h4>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 bg-emerald-50/60 p-3.5 rounded-xl border border-emerald-200 text-xs">
+                  <div className="bg-white p-2 rounded-lg border border-emerald-200">
+                    <span className="text-slate-500 text-[10px] font-bold block">تاريخ بداية الإجازة:</span>
+                    <span className="font-mono font-black text-slate-900">{printableLeavePass.startDate}</span>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-emerald-200">
+                    <span className="text-slate-500 text-[10px] font-bold block">تاريخ العودة والانتهاء:</span>
+                    <span className="font-mono font-black text-slate-900">{printableLeavePass.endDate}</span>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-emerald-200">
+                    <span className="text-slate-500 text-[10px] font-bold block">المدة المعتمدة:</span>
+                    <span className="font-black text-emerald-800 text-sm">{printableLeavePass.duration} أيام</span>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-emerald-200">
+                    <span className="text-slate-500 text-[10px] font-bold block">الجهة المانحة للإجازة:</span>
+                    <span className="font-black text-slate-900">{printableLeavePass.grantingAuthority || 'قيادة الوحدة'}</span>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-emerald-200">
+                    <span className="text-slate-500 text-[10px] font-bold block">رقم الأمر/القرار الإداري:</span>
+                    <span className="font-mono font-black text-slate-900">{printableLeavePass.orderNumber || 'بدون رقم أمر'}</span>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-emerald-200">
+                    <span className="text-slate-500 text-[10px] font-bold block">تاريخ صدور الأمر:</span>
+                    <span className="font-mono font-black text-slate-900">{printableLeavePass.orderDate || printableLeavePass.startDate}</span>
+                  </div>
+                </div>
+                {printableLeavePass.reason && (
+                  <div className="bg-amber-50 p-2.5 rounded-xl border border-amber-300 text-xs">
+                    <span className="text-amber-950 font-black">سبب ومبرر الإجازة: </span>
+                    <span className="font-bold text-slate-900">{printableLeavePass.reason}</span>
+                  </div>
+                )}
+                {(printableLeavePass.diagnosis || (printableLeavePass.illnessType && printableLeavePass.illnessType !== printableLeavePass.leaveType)) && (
+                  <div className="bg-rose-50 p-2.5 rounded-xl border border-rose-300 text-xs mt-2">
+                    <span className="text-rose-950 font-black">التشخيص ونوع المرض (السجل الطبي): </span>
+                    <span className="font-bold text-rose-900">{printableLeavePass.diagnosis || printableLeavePass.illnessType}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Signatures & Stamp */}
+              <PrintFooter printSettings={printSettings} />
+            </div>
+
+            {/* Footer Modal Actions */}
+            <div className="bg-slate-100 p-3.5 border-t border-slate-200 flex flex-wrap gap-2 justify-between items-center print:hidden">
+              <span className="text-xs text-slate-600 font-bold hidden sm:inline">
+                يمكنك مشاركة صورة التصريح عبر الواتساب أو حفظها كصورة PNG / PDF لتوثيق الإجازة.
+              </span>
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <button
+                  onClick={() => {
+                    const leaveTypeStr = printableLeavePass.leaveType || 'إجازة رسمية';
+                    const summaryText = `🎖️ *تصريح ونموذج إجازة رسمية - القوات المسلحة*
+===================================
+👤 *الاسم الكامل:* ${printableLeavePass.soldierName || printableLeavePass.fullName}
+🎖️ *الرتبة العسكرية:* ${printableLeavePass.rank}
+🆔 *الرقم العسكري:* ${printableLeavePass.militaryNumber}
+🏢 *التشكيل / الوحدة:* ${printableLeavePass.unitName}
+
+📋 *تفاصيل الإجازة والمدة:*
+• *نوع الإجازة:* ${leaveTypeStr}
+• *بداية الإجازة:* ${printableLeavePass.startDate}
+• *تاريخ الانتهاء:* ${printableLeavePass.endDate}
+• *المدة المعتمدة:* ${printableLeavePass.duration} أيام
+• *الجهة المانحة:* ${printableLeavePass.grantingAuthority || 'قيادة الوحدة'}
+• *رقم الأمر الإداري:* ${printableLeavePass.orderNumber || 'غير مدون'}
+
+📌 *حالة الوثيقة:* معتمدة وموثقة رسمياً من قيادة الشؤون العسكرية.`;
+
+                    shareElementViaWhatsApp(
+                      'printable-leave-pass-dashboard',
+                      `تصريح_إجازة_${printableLeavePass.militaryNumber}_${printableLeavePass.startDate}`,
+                      summaryText
+                    );
+                  }}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl cursor-pointer flex items-center gap-1.5 shadow-sm"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 fill-white" />
+                  <span>مشاركة صورة بالواتساب</span>
+                </button>
+                <button
+                  onClick={() => setPrintableLeavePass(null)}
+                  className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl cursor-pointer transition-colors"
+                >
+                  إغلاق المعاينة
+                </button>
+              </div>
+            </div>
+
           </div>
         </div>
       )}

@@ -33,12 +33,14 @@ import {
   PhoneCall,
   UserPlus
 } from 'lucide-react';
-import { Soldier, Unit } from '../types';
+import { Soldier, Unit, PrintSettings } from '../types';
+import { fetchWithRetry } from '../lib/api';
 
 interface SpecialSectionsProps {
   soldiers: Soldier[];
   units: Unit[];
   currentUser?: { id: string; name: string; role: string; unitId?: string | null };
+  printSettings?: PrintSettings;
   onNavigateToSoldier?: (soldierId: string) => void;
 }
 
@@ -124,8 +126,29 @@ export default function SpecialSections({ soldiers = [], units = [], currentUser
     { id: '3', docNo: 'REF-2026-101', title: 'تعميم حوافز ومكافآت الانضباط القتالي والسيطرة الميدانية', date: '2026-07-18', issuer: 'ركن إدارة شؤون الأفراد', category: 'مالي وإداري' },
   ]);
 
+  // Derive unified real-time leaves list synchronized with all soldiers
+  const effectiveLeavesList = useMemo(() => {
+    const soldiersOnLeave = scopedSoldiers.filter(s => s.militaryStatus === 'إجازة' || s.militaryStatus === 'إجازة مرضية').map(s => {
+      const uObj = units.find(u => u.id === s.unitId);
+      return {
+        id: `s_leave_${s.id}`,
+        soldierName: s.fullName,
+        militaryNo: s.militaryNumber,
+        unit: uObj ? uObj.name : 'الكتيبة الأولى',
+        type: s.militaryStatus === 'إجازة مرضية' ? 'إجازة مرضية' : 'إجازة ميدانية',
+        days: '7 أيام',
+        status: 'سارية',
+        returnDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]
+      };
+    });
+
+    const existingNos = new Set(soldiersOnLeave.map(l => l.militaryNo));
+    const extraMock = leavesList.filter(l => !existingNos.has(l.militaryNo));
+    return [...soldiersOnLeave, ...extraMock];
+  }, [scopedSoldiers, units, leavesList]);
+
   // Handlers for modal forms
-  const handleAddLeave = (e: React.FormEvent) => {
+  const handleAddLeave = async (e: React.FormEvent) => {
     e.preventDefault();
     const soldier = soldiers.find(s => s.id === selectedSoldierId);
     const name = soldier ? soldier.fullName : 'جندي ميداني';
@@ -144,9 +167,23 @@ export default function SpecialSections({ soldiers = [], units = [], currentUser
       returnDate: new Date(Date.now() + parseInt(leaveDays) * 86400000).toISOString().split('T')[0]
     };
 
+    if (soldier) {
+      try {
+        const leaveStatus = leaveType.includes('مرضية') ? 'إجازة مرضية' : 'إجازة';
+        await fetchWithRetry(`/api/soldiers/${soldier.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ militaryStatus: leaveStatus })
+        });
+        soldier.militaryStatus = leaveStatus;
+      } catch (err) {
+        console.error('Failed to sync leave status to backend', err);
+      }
+    }
+
     setLeavesList([newEntry, ...leavesList]);
     setActiveModal(null);
-    showToast(`تم توثيق ${leaveType} للفرد (${name}) بنجاح.`);
+    showToast(`تم توثيق ${leaveType} للفرد (${name}) بنجاح وتحديث حالته بالنظام.`);
   };
 
   const handleAddPromotion = (e: React.FormEvent) => {
@@ -385,7 +422,7 @@ export default function SpecialSections({ soldiers = [], units = [], currentUser
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-bold text-slate-800">
-                  {leavesList.map((item) => (
+                  {effectiveLeavesList.map((item) => (
                     <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="p-3 font-black text-slate-900">{item.soldierName}</td>
                       <td className="p-3 font-mono text-emerald-800">{item.militaryNo}</td>

@@ -1,1 +1,137 @@
 @import "tailwindcss";
+
+:root {
+    --bg: #0b0e14;
+    --card-bg: rgba(255, 255, 255, 0.04);
+    --card-border: rgba(255, 255, 255, 0.08);
+    --card-shadow: 0 30px 60px -15px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.1), 0 0 0 1px rgba(255,215,0,0.05) inset;
+    --text-primary: #ffffff;
+    --text-secondary: rgba(255,255,255,0.5);
+    --text-muted: rgba(255,255,255,0.15);
+    --input-bg: rgba(255,255,255,0.03);
+    --input-border: rgba(255,255,255,0.06);
+    --input-text: #f0f4fa;
+    --input-placeholder: rgba(255,255,255,0.15);
+    --input-focus-border: #f5a623;
+    --btn-gradient: linear-gradient(135deg, #f5a623, #d97706, #f5a623);
+    --btn-text: #0b0e14;
+    --link-color: rgba(255,255,255,0.35);
+    --link-hover: #f5a623;
+    --social-bg: rgba(255,255,255,0.03);
+    --social-border: rgba(255,255,255,0.06);
+    --social-color: rgba(255,255,255,0.4);
+    --social-hover-bg: rgba(255,255,255,0.08);
+    --divider-color: rgba(255,255,255,0.12);
+    --toggle-bg: rgba(255,255,255,0.1);
+    --toggle-icon: #f5a623;
+    --blob-opacity: 0.25;
+    --line-opacity: 0.2;
+    --logo-ring-inner-bg: #0b0e14;
+    --remember-check-bg: rgba(255,255,255,0.05);
+    --remember-check-border: rgba(255,255,255,0.1);
+    --remember-check-shadow: inset 0 2px 4px rgba(0,0,0,0.3);
+    --input-focus-shadow: 0 0 0 4px rgba(245,166,35,0.08), inset 0 2px 8px rgba(0,0,0,0.3);
+    --splash-bg: #0b0e14;
+    --splash-text: #ffffff;
+    --splash-accent: #f5a623;
+    --splash-subtle: rgba(245,166,35,0.15);
+}
+
+.light-mode {
+    --bg: #e8ecf1;
+    --card-bg: rgba(255, 255, 255, 0.45);
+    --card-border: rgba(0, 0, 0, 0.06);
+    --card-shadow: 0 20px 50px -15px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.6), 0 0 0 1px rgba(245,166,35,0.08) inset;
+    --text-primary: #1a1a2e;
+    --text-secondary: rgba(0,0,0,0.55);
+    --text-muted: rgba(0,0,0,0.18);
+    --input-bg: rgba(255,255,255,0.65);
+    --input-border: rgba(0,0,0,0.08);
+    --input-text: #1a1a2e;
+    --input-placeholder: rgba(0,0,0,0.3);
+    --input-focus-border: #f5a623;
+    --btn-gradient: linear-gradient(135deg, #f5a623, #e08e0b, #f5a623);
+    --btn-text: #ffffff;
+    --link-color: rgba(0,0,0,0.4);
+    --link-hover: #d97706;
+    --social-bg: rgba(255,255,255,0.6);
+    --social-border: rgba(0,0,0,0.08);
+    --social-color: rgba(0,0,0,0.4);
+    --social-hover-bg: rgba(255,255,255,0.9);
+    --divider-color: rgba(0,0,0,0.1);
+    --toggle-bg: rgba(0,0,0,0.08);
+    --toggle-icon: #f5a623;
+    --blob-opacity: 0.12;
+    --line-opacity: 0.12;
+    --logo-ring-inner-bg: #e8ecf1;
+    --remember-check-bg: rgba(0,0,0,0.03);
+    --remember-check-border: rgba(0,0,0,0.12);
+    --remember-check-shadow: inset 0 2px 4px rgba(0,0,0,0.08);
+    --input-focus-shadow: 0 0 0 4px rgba(245,166,35,0.1), inset 0 2px 8px rgba(0,0,0,0.1);
+    --splash-bg: #f5f7fa;
+    --splash-text: #1a1a2e;
+    --splash-accent: #b8860b;
+    --splash-subtle: rgba(184,134,11,0.12);
+}
+
+@keyframes orbFloat {
+    0% { transform: translate(0,0) scale(1); }
+    100% { transform: translate(20px, -20px) scale(1.1); }
+}
+
+@keyframes ringPulse {
+    0%, 100% { transform: scale(1); opacity: 0.3; }
+    50% { transform: scale(1.05); opacity: 0.6; }
+}
+
+@keyframes subtleGlow {
+    0% { box-shadow: 0 0 20px var(--splash-subtle); }
+    100% { box-shadow: 0 0 40px var(--splash-accent); }
+}
+
+@keyframes dotTyping {
+    0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+    40% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes progressShimmer {
+    0% { background-position: 0% 0; }
+    100% { background-position: 200% 0; }
+}
+
+@keyframes floatBlob {
+    0% { transform: translate(0,0) scale(1) rotate(0deg); }
+    33% { transform: translate(5%,-4%) scale(1.05) rotate(3deg); }
+    66% { transform: translate(-3%,5%) scale(0.95) rotate(-3deg); }
+    100% { transform: translate(2%,3%) scale(1.02) rotate(1deg); }
+}
+
+@keyframes driftLine {
+    0% { transform: translateX(-20%) translateY(0) rotate(15deg); opacity: 0.2; }
+    50% { transform: translateX(40%) translateY(15px) rotate(18deg); opacity: 0.5; }
+    100% { transform: translateX(100%) translateY(0) rotate(15deg); opacity: 0.2; }
+}
+
+@keyframes particleFloat {
+    0%,100% { transform: translate(0,0) scale(1); opacity: 0; }
+    20% { opacity: 0.8; }
+    40% { transform: translate(30px,-40px) scale(1.4); opacity: 0.9; }
+    60% { transform: translate(-20px,-80px) scale(0.8); opacity: 0.4; }
+    80% { transform: translate(15px,-20px) scale(1.2); opacity: 0.7; }
+}
+
+@keyframes goldenPulse {
+    0% { box-shadow: 0 0 10px rgba(245,166,35,0.4); }
+    100% { box-shadow: 0 0 20px rgba(245,166,35,0.8); }
+}
+
+@keyframes shimmerBtn {
+    0%,100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+}
+
+@keyframes dotBounce {
+    0%,80%,100% { transform: scale(0.4); opacity: 0.5; }
+    40% { transform: scale(1); opacity: 1; }
+}
+

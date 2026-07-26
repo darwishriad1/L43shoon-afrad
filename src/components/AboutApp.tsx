@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
 import { 
   Building2, 
   User, 
@@ -58,7 +59,12 @@ export default function AboutApp() {
         </div>
 
         {/* 2. Developer & Info Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <motion.div 
+          initial={{ opacity: 0, y: 15 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, ease: 'easeOut' }}
+          className="grid grid-cols-1 sm:grid-cols-2 gap-2"
+        >
           
           {/* Developer Card */}
           <div className="p-2.5 sm:p-3 bg-slate-50/90 rounded-xl border border-slate-200/80 space-y-2">
@@ -183,7 +189,7 @@ export default function AboutApp() {
             </button>
           </div>
 
-        </div>
+        </motion.div>
 
         {/* 3. Social Media Horizontal Row ( strictly Horizontal 3-column ) */}
         <div className="space-y-1.5 pt-1 border-t border-slate-100">

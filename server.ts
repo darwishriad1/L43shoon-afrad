@@ -13,18 +13,11 @@ import {
   systemSettings 
 } from "./src/db/schema.ts";
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
-import { eq, and, inArray, or, ilike, sql } from "drizzle-orm";
+import { eq, and, inArray, or, ilike, sql, gte, lte } from "drizzle-orm";
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
-
-  // Ensure database schema migrations/columns exist
-  try {
-    await db.execute(sql`ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS print_settings text;`);
-  } catch (err) {
-    console.warn("Auto-migration notice:", err);
-  }
 
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -458,6 +451,7 @@ async function startServer() {
           orderNumber: meta.orderNumber || l.notes || '',
           orderDate: meta.orderDate || l.startDate,
           reason: meta.reason || '',
+          diagnosis: meta.diagnosis || '',
           attachmentUrl: meta.attachmentUrl || null,
           notes: meta.rawNotes !== undefined ? meta.rawNotes : l.notes
         };
@@ -477,7 +471,7 @@ async function startServer() {
       const { 
         startDate, endDate, illnessType, leaveType, duration, 
         doctorName, grantingAuthority, orderNumber, orderDate, 
-        reason, attachmentUrl, status, hospital, notes, 
+        reason, attachmentUrl, status, hospital, notes, diagnosis,
         performedBy, performedByName, performedByRole 
       } = req.body;
 
@@ -489,6 +483,7 @@ async function startServer() {
         orderNumber: orderNumber || '',
         orderDate: orderDate || startDate,
         reason: reason || '',
+        diagnosis: diagnosis || '',
         attachmentUrl: attachmentUrl || null,
         rawNotes: notes || ''
       });
@@ -514,8 +509,8 @@ async function startServer() {
         userId: performedBy || "u1",
         userName: performedByName || "مدير النظام",
         userRole: performedByRole || "admin",
-        actionType: "تعديل",
-        tableName: "soldiers",
+        actionType: "إضافة",
+        tableName: "sick_leaves",
         details: `إصدار إجازة (${finalLeaveType}) للعسكري: ${startDate} إلى ${endDate} - الأمر: ${orderNumber || 'بدون'}`,
         timestamp: new Date().toISOString(),
       });
@@ -527,11 +522,134 @@ async function startServer() {
         orderNumber: orderNumber || '',
         orderDate: orderDate || startDate,
         reason: reason || '',
+        diagnosis: diagnosis || '',
         attachmentUrl: attachmentUrl || null,
         notes: notes || ''
       });
     } catch (error: any) {
       console.error("Error in POST /api/soldiers/:id/sick-leaves:", error);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Update a sick leave
+  app.put("/api/soldiers/:id/sick-leaves/:leaveId", async (req, res) => {
+    try {
+      const { id, leaveId } = req.params;
+      const { 
+        startDate, endDate, illnessType, leaveType, duration, 
+        doctorName, grantingAuthority, orderNumber, orderDate, 
+        reason, attachmentUrl, status, hospital, notes, diagnosis,
+        performedBy, performedByName, performedByRole 
+      } = req.body;
+
+      const finalLeaveType = leaveType || illnessType || "استحقاق";
+      const finalAuthority = grantingAuthority || doctorName || "الكتيبة";
+      const notesMeta = JSON.stringify({
+        leaveType: finalLeaveType,
+        grantingAuthority: finalAuthority,
+        orderNumber: orderNumber || '',
+        orderDate: orderDate || startDate,
+        reason: reason || '',
+        diagnosis: diagnosis || '',
+        attachmentUrl: attachmentUrl || null,
+        rawNotes: notes || ''
+      });
+
+      const updatedData = {
+        startDate,
+        endDate,
+        illnessType: finalLeaveType,
+        duration: parseInt(duration) || 1,
+        doctorName: finalAuthority,
+        status: status || "نشط",
+        hospital: hospital || finalAuthority,
+        notes: notesMeta,
+      };
+
+      await db.update(sickLeaves)
+        .set(updatedData)
+        .where(and(eq(sickLeaves.id, leaveId), eq(sickLeaves.soldierId, id)));
+
+      // Audit log
+      const logId = "log_" + Math.random().toString(36).substring(2, 11);
+      await db.insert(auditLogs).values({
+        id: logId,
+        userId: performedBy || "u1",
+        userName: performedByName || "مدير النظام",
+        userRole: performedByRole || "admin",
+        actionType: "تعديل",
+        tableName: "sick_leaves",
+        details: `تعديل قيد الإجازة (${finalLeaveType}) للعسكري: ${startDate} إلى ${endDate} - الأمر: ${orderNumber || 'بدون'}`,
+        timestamp: new Date().toISOString(),
+      });
+
+      return res.json({
+        id: leaveId,
+        soldierId: id,
+        ...updatedData,
+        leaveType: finalLeaveType,
+        grantingAuthority: finalAuthority,
+        orderNumber: orderNumber || '',
+        orderDate: orderDate || startDate,
+        reason: reason || '',
+        diagnosis: diagnosis || '',
+        attachmentUrl: attachmentUrl || null,
+        notes: notes || ''
+      });
+    } catch (error: any) {
+      console.error("Error in PUT /api/soldiers/:id/sick-leaves/:leaveId:", error);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Delete a sick leave
+  app.delete("/api/soldiers/:id/sick-leaves/:leaveId", async (req, res) => {
+    try {
+      const { id, leaveId } = req.params;
+      await db.delete(sickLeaves).where(and(eq(sickLeaves.id, leaveId), eq(sickLeaves.soldierId, id)));
+
+      // Audit log
+      const logId = "log_" + Math.random().toString(36).substring(2, 11);
+      await db.insert(auditLogs).values({
+        id: logId,
+        userId: "u1",
+        userName: "مدير النظام",
+        userRole: "admin",
+        actionType: "حذف",
+        tableName: "sick_leaves",
+        details: `حذف قيد الإجازة برقم (${leaveId}) للعسكري (${id})`,
+        timestamp: new Date().toISOString(),
+      });
+
+      return res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error in DELETE /api/soldiers/:id/sick-leaves/:leaveId:", error);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Reset attendance range to "لم يتم تحضيره" (delete attendance records)
+  app.post("/api/soldiers/:id/reset-attendance-range", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { startDate, endDate } = req.body;
+
+      if (!startDate || !endDate) {
+        return res.status(400).json({ error: "startDate and endDate are required" });
+      }
+
+      await db.delete(attendance).where(
+        and(
+          eq(attendance.soldierId, id),
+          gte(attendance.date, startDate),
+          lte(attendance.date, endDate)
+        )
+      );
+
+      return res.json({ success: true, message: "تم إعادة تعيين سجل الحضور للفترة المحددة إلى (لم يتم تحضيره)" });
+    } catch (error: any) {
+      console.error("Error in POST /api/soldiers/:id/reset-attendance-range:", error);
       return res.status(500).json({ error: error.message });
     }
   });

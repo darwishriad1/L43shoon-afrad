@@ -15,13 +15,14 @@ import {
   User,
   Info
 } from 'lucide-react';
-import { Unit, Soldier, AttendanceRecord, AttendanceStatusCode } from '../types';
+import { Unit, Soldier, AttendanceRecord, AttendanceStatusCode, PrintSettings } from '../types';
 
 interface AttendanceSheetProps {
   units: Unit[];
   soldiers: Soldier[];
   attendance: AttendanceRecord[];
   currentUser: { id: string; name: string; role: string; unitId: string | null };
+  printSettings?: PrintSettings;
   onUpdateAttendance: (soldierId: string, date: string, status: AttendanceStatusCode) => void;
   onBulkUpdateAttendance: (soldierIds: string[], dates: string[], status: AttendanceStatusCode) => void;
   onAddLog: (actionType: 'إضافة' | 'تعديل' | 'حذف' | 'استيراد' | 'استعادة', tableName: string, details: string) => void;
@@ -151,7 +152,16 @@ export default function AttendanceSheet({
 
   // Cell rendering status fetch
   const getCellStatus = (soldierId: string, date: string): AttendanceStatusCode | '' => {
-    return attendanceMap[`${soldierId}_${date}`] || '';
+    const key = `${soldierId}_${date}`;
+    if (attendanceMap[key]) return attendanceMap[key];
+
+    const s = soldiers.find(item => item.id === soldierId);
+    if (s) {
+      if (s.militaryStatus === 'إجازة' || s.militaryStatus === 'إجازة مرضية') return 'إ';
+      if (s.militaryStatus === 'غياب' || s.militaryStatus === 'موقوف') return 'غ';
+      if (s.militaryStatus === 'مهمة') return 'م';
+    }
+    return '';
   };
 
   // Change single cell handler

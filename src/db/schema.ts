@@ -47,6 +47,7 @@ export const soldiers = pgTable('soldiers', {
   medicalHistory: text('medical_history'),
   promotionHistory: text('promotion_history'), // JSON array of promotions
   assignmentsHistory: text('assignments_history'), // JSON array of past assignments
+  custodiesHistory: text('custodies_history'), // JSON array of military custody records
   attachments: text('attachments'), // JSON array of attachments
   photoUrl: text('photo_url'), // base64 or URL of soldier's photo
 }, (table) => {

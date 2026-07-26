@@ -29,7 +29,7 @@ import {
   AlertTriangle,
   TrendingUp
 } from 'lucide-react';
-import { Unit, Soldier, User } from '../types';
+import { Unit, Soldier, User, PrintSettings } from '../types';
 import { fetchWithRetry, safeJson } from '../lib/api';
 import SoldierProfile from './SoldierProfile';
 
@@ -37,6 +37,7 @@ interface OrgManagerProps {
   units: Unit[];
   soldiers: Soldier[];
   currentUser: { id: string; name: string; role: string; unitId: string | null };
+  printSettings?: PrintSettings;
   selectedSoldierId?: string | null;
   onSelectSoldierId?: (id: string | null) => void;
   onAddUnit: (
@@ -81,6 +82,7 @@ export default function OrgManager({
   units,
   soldiers,
   currentUser,
+  printSettings,
   selectedSoldierId,
   onSelectSoldierId,
   onAddUnit,
@@ -1401,6 +1403,7 @@ export default function OrgManager({
             soldierId={selectedProfileSoldierId}
             currentUser={currentUser}
             units={units}
+            printSettings={printSettings}
             onClose={() => {
               setSelectedProfileSoldierId(null);
               onSelectSoldierId?.(null);

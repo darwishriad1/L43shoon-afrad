@@ -57,6 +57,7 @@ import UsersPermissionsManager from './components/UsersPermissionsManager';
 import AboutApp from './components/AboutApp';
 import SpecialSections from './components/SpecialSections';
 import SplashScreen from './components/SplashScreen';
+import LoginPage from './components/LoginPage';
 import NotificationCenter from './components/NotificationCenter';
 
 // Firebase Client Imports
@@ -987,449 +988,23 @@ export default function App() {
     );
   }
 
-  // --- 2. AUTHENTICATION GATE (Tactical Military UI Theme) ---
+  // --- 2. AUTHENTICATION GATE (New Modern Design) ---
   if (!authUser) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between relative overflow-hidden select-none" dir="rtl">
-        {/* Background Ambient Glows */}
-        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-emerald-950/15 blur-3xl pointer-events-none"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-teal-950/15 blur-3xl pointer-events-none"></div>
-
-        {/* Header/Banner for mobile & branding */}
-        <div className="w-full max-w-7xl mx-auto px-6 py-4 flex items-center justify-between border-b border-slate-900/60 z-10">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-emerald-950/40 border border-emerald-500/30 rounded-xl flex items-center justify-center">
-              <svg className="w-5 h-5 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-              </svg>
-            </div>
-            <div>
-              <span className="text-xs font-black block text-slate-200 tracking-tight">وزارة الدفاع والسيطرة الوطنية</span>
-              <span className="text-[10px] text-teal-500 block font-mono">DIGITAL FORCE READINESS</span>
-            </div>
-          </div>
-          <div className="text-left font-mono text-[10px] text-slate-500 hidden sm:block">
-            SECURITY PROTOCOL: AES-256-GCM
-          </div>
-        </div>
-
-        {/* Main Split Layout container */}
-        <div className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 py-6 md:py-12 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center z-10">
-          
-          {/* Left Panel: Info, stats, animated radar scope (Visible on LG screens) */}
-          <div className="hidden lg:flex lg:col-span-5 flex-col justify-between h-full max-h-[620px] bg-slate-900/45 border border-slate-900 rounded-3xl p-8 relative overflow-hidden backdrop-blur-xs">
-            <div className="absolute inset-0 bg-radial from-emerald-950/5 via-transparent to-transparent pointer-events-none"></div>
-            
-            {/* Top Security Badges */}
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800/50">
-              <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>بوابة الدخول الحكومية الموحدة</span>
-              </span>
-              <span className="text-[10px] font-mono bg-emerald-950/60 text-emerald-400 px-2.5 py-1 rounded-md border border-emerald-500/20">
-                SECURE INTERFACE
-              </span>
-            </div>
-
-            {/* Radar Scope Graphics */}
-            <div className="my-6 flex flex-col items-center justify-center relative py-4">
-              <div className="w-44 h-44 rounded-full border border-slate-800 flex items-center justify-center relative overflow-hidden">
-                <div className="absolute inset-0 border-t border-b border-emerald-500/5 animate-spin-[25s]"></div>
-                <div className="w-32 h-32 rounded-full border border-slate-800/60 flex items-center justify-center relative">
-                  <div className="w-20 h-20 rounded-full border border-slate-800/40 flex items-center justify-center">
-                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/80 animate-ping"></div>
-                  </div>
-                </div>
-                {/* Crosshairs */}
-                <div className="absolute top-0 bottom-0 left-1/2 w-[1px] bg-slate-800/50"></div>
-                <div className="absolute left-0 right-0 top-1/2 h-[1px] bg-slate-800/50"></div>
-                
-                {/* Sweeper arm */}
-                <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-emerald-500/10 to-transparent origin-center animate-spin-[6s]"></div>
-                
-                {/* Pulsing targets */}
-                <div className="absolute top-[30%] right-[25%] w-2 h-2 bg-emerald-400 rounded-full animate-pulse shadow-lg shadow-emerald-400/50"></div>
-                <div className="absolute bottom-[20%] left-[30%] w-1.5 h-1.5 bg-teal-400 rounded-full opacity-60"></div>
-              </div>
-              <div className="text-center mt-4">
-                <span className="text-[9px] text-slate-500 font-mono tracking-widest block uppercase">TACTICAL SHIELD ENGINE</span>
-                <span className="text-xs text-teal-400 font-sans mt-1 block">مراقبة الجاهزية والارتباط العملياتي الفوري</span>
-              </div>
-            </div>
-
-            {/* Interactive Live Security Health Checker Widget */}
-            <div className="bg-slate-950/80 border border-slate-800/80 rounded-2xl p-4 my-2">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                  <Activity className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>فحص سلامة النظام والاتصال الآمن</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSecurityStatus('checking');
-                    setTimeout(() => {
-                      setSecurityStatus('secure');
-                      setSecurityDetails({
-                        ssl: true,
-                        firewalled: true,
-                        dbConnected: true,
-                        integrityCheck: true
-                      });
-                    }, 1200);
-                  }}
-                  disabled={securityStatus === 'checking'}
-                  className="p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-900 rounded transition-all cursor-pointer disabled:opacity-40"
-                  title="تحديث الفحص الفوري للسلامة"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${securityStatus === 'checking' ? 'animate-spin' : ''}`} />
-                </button>
-              </div>
-
-              {securityStatus === 'checking' ? (
-                <div className="space-y-2 py-2">
-                  <div className="h-1.5 bg-slate-900 rounded-full overflow-hidden">
-                    <div className="h-full bg-emerald-500 animate-[pulse_1s_infinite] w-2/3 rounded-full"></div>
-                  </div>
-                  <span className="text-[10px] text-slate-400 font-sans block text-center">جاري فحص بروتوكولات التشفير والمصادقة...</span>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-400 font-sans">
-                  <div className="flex items-center gap-1.5 bg-slate-900/40 p-2 rounded-lg border border-slate-850">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
-                    <span>تشفير SSL: آمن</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 bg-slate-900/40 p-2 rounded-lg border border-slate-850">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
-                    <span>جدار الحماية: مفعل</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 bg-slate-900/40 p-2 rounded-lg border border-slate-850">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
-                    <span>قاعدة البيانات: متصلة</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 bg-slate-900/40 p-2 rounded-lg border border-slate-850">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
-                    <span>سلامة المتصفح: موثق</span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Department stats block */}
-            <div className="grid grid-cols-2 gap-3 pt-4 border-t border-slate-800/50">
-              <div className="p-3 bg-slate-950/40 border border-slate-900 rounded-2xl text-right">
-                <span className="text-[10px] text-slate-500 block font-sans">تزامن البيانات السحابية</span>
-                <span className="text-xs font-black text-slate-300 mt-0.5 block font-sans flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                  نشط ومباشر
-                </span>
-              </div>
-              <div className="p-3 bg-slate-950/40 border border-slate-900 rounded-2xl text-right">
-                <span className="text-[10px] text-slate-500 block font-sans">بروتوكول التحقق الأمني</span>
-                <span className="text-xs font-black text-slate-300 mt-0.5 block font-sans flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-teal-500"></span>
-                  مزدوج العوامل
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Panel: The actual Login Form container */}
-          <div className="lg:col-span-7 flex justify-center w-full">
-            <div className="w-full max-w-lg bg-slate-900/85 border border-slate-800 rounded-3xl p-6 sm:p-10 shadow-2xl relative overflow-hidden transition-all duration-300">
-              
-              {/* Top accent line */}
-              <div className="absolute top-0 right-0 left-0 h-[3px] bg-gradient-to-l from-emerald-500 via-amber-400 to-teal-500"></div>
-
-              {/* Branding and Title */}
-              <div className="mb-6">
-                <h1 className="text-xl sm:text-2xl font-black text-slate-100 font-sans tracking-tight leading-tight mb-2">
-                  المنظومة الرقمية لإدارة جاهزية القوة
-                </h1>
-                <p className="text-xs text-teal-400 font-semibold tracking-wide flex items-center gap-2">
-                  <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  وزارة الدفاع والسيطرة العملياتية الموحدة
-                </p>
-              </div>
-
-              {/* Security Alert Indicator */}
-              <div className="bg-slate-950/65 border border-slate-800/80 rounded-2xl p-4 mb-5 relative overflow-hidden">
-                <div className="absolute -left-4 -bottom-4 opacity-5 text-emerald-400">
-                  <ShieldAlert className="w-16 h-16" />
-                </div>
-                <div className="flex items-center gap-2 text-amber-400 font-bold border-b border-slate-800/80 pb-2 mb-2 text-xs">
-                  <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span>إشعار الأمان القومي والسرية</span>
-                </div>
-                <p className="font-sans text-[11px] leading-relaxed text-slate-400">
-                  يخضع هذا النظام لبروتوكولات الأمان العسكري المتقدمة. يرجى إدخال هويتك الرقمية للوصول الآمن. يمنع منعا كليا الدخول غير المصرح به.
-                </p>
-              </div>
-
-              {/* Interactive authentication tabs just for clean aesthetic (Email / Credentials vs Secure Token ID) */}
-              <div className="grid grid-cols-2 gap-2 p-1 bg-slate-950/80 border border-slate-800/60 rounded-xl mb-5">
-                <button
-                  type="button"
-                  className="py-2.5 px-3 rounded-lg text-xs font-black transition-all bg-slate-900 border border-slate-800 text-emerald-400 flex items-center justify-center gap-1.5"
-                >
-                  <User className="w-3.5 h-3.5" />
-                  <span>حساب العمليات</span>
-                </button>
-                <div
-                  className="py-2.5 px-3 rounded-lg text-xs font-semibold transition-all text-slate-500 flex items-center justify-center gap-1.5 cursor-not-allowed"
-                  title="يتطلب الارتباط بالبطاقة الذكية"
-                >
-                  <Lock className="w-3.5 h-3.5" />
-                  <span>بطاقة الدخول الذكية</span>
-                </div>
-              </div>
-
-              {/* Main Login Form */}
-              <form onSubmit={handleLocalLogin} className="space-y-4">
-                {/* Username Input Group */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-slate-300 mr-1">
-                    اسم المستخدم العسكري
-                  </label>
-                  <div className="relative group">
-                    <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-slate-500 group-focus-within:text-emerald-500 transition-colors">
-                      <User className="w-4 h-4" />
-                    </div>
-                    <input
-                      type="text"
-                      required
-                      value={loginUsername}
-                      onChange={(e) => setLoginUsername(e.target.value)}
-                      placeholder="أدخل اسم المستخدم العسكري الخاص بك"
-                      className="w-full bg-slate-950/90 border border-slate-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 rounded-xl pr-10 pl-4 py-3 text-xs text-slate-100 placeholder-slate-600 focus:outline-none transition-all font-sans text-right font-semibold"
-                    />
-                  </div>
-                </div>
-
-                {/* Password Input Group */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between px-1">
-                    <label className="block text-xs font-bold text-slate-300">
-                      كلمة المرور السرية
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setShowForgotHelp(true)}
-                      className="text-[10px] text-teal-400 hover:text-emerald-300 hover:underline cursor-pointer font-sans"
-                    >
-                      نسيت كلمة السر العسكرية؟
-                    </button>
-                  </div>
-                  <div className="relative group">
-                    <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-slate-500 group-focus-within:text-emerald-500 transition-colors">
-                      <Lock className="w-4 h-4" />
-                    </div>
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      onKeyDown={(e) => {
-                        const isCaps = e.getModifierState && e.getModifierState('CapsLock');
-                        setCapsLockActive(isCaps);
-                      }}
-                      onKeyUp={(e) => {
-                        const isCaps = e.getModifierState && e.getModifierState('CapsLock');
-                        setCapsLockActive(isCaps);
-                      }}
-                      placeholder="أدخل كلمة المرور المشفرة"
-                      className="w-full bg-slate-950/90 border border-slate-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 rounded-xl pr-10 pl-11 py-3 text-xs text-slate-100 placeholder-slate-600 focus:outline-none transition-all font-sans text-right"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-
-                  {/* Caps Lock Alert Widget */}
-                  {capsLockActive && (
-                    <div className="text-amber-400 text-[10px] font-bold text-right flex items-center gap-1 bg-amber-500/10 border border-amber-500/20 p-2 rounded-lg mt-1">
-                      <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
-                      <span>تنبيه: زر الحروف الكبيرة (Caps Lock) نشط حالياً!</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Professional Multi-Factor Authentication (OTP 2FA) option */}
-                <div className="bg-slate-950/40 border border-slate-850 p-3.5 rounded-xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Smartphone className="w-4 h-4 text-teal-400 shrink-0" />
-                      <div>
-                        <span className="text-xs font-bold text-slate-200 block">تفعيل التحقق الثنائي (OTP)</span>
-                        <span className="text-[9px] text-slate-500 block">خطوة أمان إضافية موصى بها لحسابات السيطرة</span>
-                      </div>
-                    </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        checked={otpEnabled} 
-                        onChange={(e) => {
-                          setOtpEnabled(e.target.checked);
-                          if (!e.target.checked) setOtpValue('');
-                        }}
-                        className="sr-only peer" 
-                      />
-                      <div className="w-8 h-4.5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:content-[''] after:content-[''] after:absolute after:top-[2px] after:right-[16px] after:bg-slate-300 after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-emerald-500"></div>
-                    </label>
-                  </div>
-
-                  {otpEnabled && (
-                    <div className="space-y-2 animate-fadeIn">
-                      <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] p-2.5 rounded-lg flex items-start gap-1.5">
-                        <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                        <div>
-                          <p className="font-bold">بروتوكول المحاكاة والتحقق المعتمد</p>
-                          <p className="mt-0.5 text-[9px] text-slate-300 leading-relaxed">لأغراض التدريب والتكامل الرقمي، تم توليد رمز التحقق الثنائي النشط الخاص بهويتك وهو: <strong className="text-emerald-400 underline font-mono text-xs mx-1">482910</strong></p>
-                        </div>
-                      </div>
-
-                      <div className="relative">
-                        <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-slate-500">
-                          <LockKeyhole className="w-4 h-4" />
-                        </div>
-                        <input
-                          type="text"
-                          required={otpEnabled}
-                          maxLength={6}
-                          value={otpValue}
-                          onChange={(e) => setOtpValue(e.target.value.replace(/\D/g, ''))}
-                          placeholder="أدخل رمز التحقق (OTP) المكون من 6 أرقام"
-                          className="w-full bg-slate-950/90 border border-slate-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 rounded-xl pr-10 pl-4 py-2.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none transition-all font-mono tracking-widest text-center"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Error message representation */}
-                {loginError && (
-                  <div className="text-rose-400 text-xs font-bold text-right leading-relaxed bg-rose-500/10 border border-rose-500/20 p-3 rounded-xl flex items-start gap-2.5 animate-pulse">
-                    <ShieldAlert className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
-                    <span>{loginError}</span>
-                  </div>
-                )}
-
-                {/* Primary login button */}
-                <button
-                  type="submit"
-                  disabled={loadingAuth}
-                  className="w-full py-3.5 px-4 bg-gradient-to-l from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold rounded-xl shadow-lg shadow-emerald-950/30 transition-all flex items-center justify-center gap-2 cursor-pointer border border-emerald-500/20 text-xs font-sans mt-4"
-                >
-                  {loadingAuth ? (
-                    <Loader2 className="w-4.5 h-4.5 text-emerald-100 animate-spin" />
-                  ) : (
-                    <LogIn className="w-4.5 h-4.5 text-emerald-100" />
-                  )}
-                  <span>تسجيل الدخول الآمن للمنظومة العسكرية</span>
-                </button>
-              </form>
-
-              {/* Divider lines */}
-              <div className="flex items-center my-5">
-                <div className="flex-1 h-px bg-slate-800/80" />
-                <span className="text-[10px] text-slate-500 px-3 uppercase font-semibold font-sans tracking-wider">أو</span>
-                <div className="flex-1 h-px bg-slate-800/80" />
-              </div>
-
-              {/* Google Sign In option */}
-              <button
-                onClick={handleLogin}
-                disabled={loadingAuth}
-                className="w-full py-3 px-4 bg-slate-950/90 hover:bg-slate-950 disabled:opacity-50 text-slate-300 hover:text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2.5 border border-slate-850 hover:border-emerald-500/30 cursor-pointer text-xs font-sans"
-              >
-                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                  <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                  <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                  <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.85z"/>
-                  <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.85c.87-2.6 3.3-4.53 6.16-4.53z"/>
-                </svg>
-                <span>التحقق عبر النفاذ الموحد (Google Workspace)</span>
-              </button>
-              
-            </div>
-          </div>
-
-        </div>
-
-        {/* Forgot Password Tactical Help Modal Component Overlay */}
-        {showForgotHelp && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fadeIn" dir="rtl">
-            <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 relative shadow-2xl">
-              <button
-                type="button"
-                onClick={() => setShowForgotHelp(false)}
-                className="absolute top-4 left-4 p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-all cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-
-              <div className="flex items-center gap-2.5 text-amber-400 font-bold border-b border-slate-800 pb-3 mb-4 text-sm font-sans">
-                <ShieldCheck className="w-5 h-5" />
-                <span>إجراءات استعادة كلمة المرور العسكرية</span>
-              </div>
-
-              <div className="space-y-4 font-sans text-xs text-slate-300 leading-relaxed">
-                <p>
-                  نظراً لحساسية وسرية البيانات المشفرة داخل المنظومة، لا توجد آلية تلقائية لاستعادة كلمة المرور عبر الإنترنت لأسباب تتعلق بالأمن السيبراني العسكري.
-                </p>
-
-                <div className="bg-slate-950/80 p-4 rounded-xl border border-slate-850 space-y-2.5 font-sans">
-                  <div className="font-bold text-slate-100 flex items-center gap-1 text-xs">
-                    <Info className="w-3.5 h-3.5 text-teal-400" />
-                    <span>نقاط الاتصال بمركز العمليات والسيطرة</span>
-                  </div>
-                  <ul className="space-y-1.5 text-[11px] text-slate-300">
-                    <li className="flex justify-between border-b border-slate-900 pb-1">
-                      <span>رئيس مركز العمليات الرقمية:</span>
-                      <span className="font-mono text-emerald-400 font-bold">تحويلة 4015</span>
-                    </li>
-                    <li className="flex justify-between border-b border-slate-900 pb-1">
-                      <span>مسؤول الخصوصية والأمن السيبراني:</span>
-                      <span className="font-mono text-emerald-400 font-bold">تحويلة 8820</span>
-                    </li>
-                    <li className="flex justify-between">
-                      <span>الدعم الفني المباشر للقوة:</span>
-                      <span className="font-mono text-emerald-400 font-bold">تحويلة 9002</span>
-                    </li>
-                  </ul>
-                </div>
-
-                <div className="p-3 bg-amber-500/5 border border-amber-500/10 rounded-xl text-[11px] text-amber-300">
-                  يرجى مراجعة شعبة النظم في مقر القيادة العامة مصطحباً بطاقتك العسكرية التعريفية السارية لتقديم طلب إعادة تصفير فوري وتعيين كلمة مرور سرية جديدة.
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setShowForgotHelp(false)}
-                className="w-full mt-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-100 font-bold rounded-xl transition-all text-xs cursor-pointer"
-              >
-                إغلاق نافذة الدعم الأمنية
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Footer info line */}
-        <div className="w-full border-t border-slate-900/60 py-4 z-10">
-          <div className="w-full max-w-7xl mx-auto px-6 flex flex-col sm:flex-row justify-between items-center gap-2 text-[10px] text-slate-500">
-            <span>المنظومة الرقمية للسيطرة وإدارة جاهزية القوة © ٢٠٢٦ - نسخة آمنة مرخصة رسمياً</span>
-            <span className="flex items-center gap-1 text-slate-400 font-sans">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-              <span>نطاق عسكري محمي بالكامل</span>
-            </span>
-          </div>
-        </div>
-      </div>
+      <LoginPage
+        loginUsername={loginUsername}
+        setLoginUsername={setLoginUsername}
+        loginPassword={loginPassword}
+        setLoginPassword={setLoginPassword}
+        loginError={loginError}
+        loadingAuth={loadingAuth}
+        handleLocalLogin={handleLocalLogin}
+        handleGoogleLogin={handleLogin}
+        otpEnabled={otpEnabled}
+        setOtpEnabled={setOtpEnabled}
+        otpValue={otpValue}
+        setOtpValue={setOtpValue}
+      />
     );
   }
 
@@ -1826,6 +1401,7 @@ export default function App() {
             attendance={attendance}
             users={users}
             auditLogs={auditLogs}
+            printSettings={settings.printSettings}
             onNavigate={(tab) => {
               setActiveTab(tab);
               setIsMoreBottomSheetOpen(false);
@@ -1849,6 +1425,7 @@ export default function App() {
             soldiers={soldiers}
             attendance={attendance}
             currentUser={currentUser}
+            printSettings={settings.printSettings}
             onUpdateAttendance={handleUpdateAttendance}
             onBulkUpdateAttendance={handleBulkUpdateAttendance}
             onAddLog={handleAddLog}
@@ -1860,6 +1437,7 @@ export default function App() {
             units={units}
             soldiers={soldiers}
             currentUser={currentUser}
+            printSettings={settings.printSettings}
             selectedSoldierId={selectedSoldierIdForProfile}
             onSelectSoldierId={setSelectedSoldierIdForProfile}
             onAddUnit={handleAddUnit}
@@ -1878,6 +1456,7 @@ export default function App() {
             soldiers={soldiers}
             units={units}
             currentUser={currentUser}
+            printSettings={settings.printSettings}
             onNavigateToSoldier={(soldierId) => {
               setSelectedSoldierIdForProfile(soldierId);
               setActiveTab('org_manager');
@@ -1891,6 +1470,7 @@ export default function App() {
             soldiers={soldiers}
             attendance={attendance}
             currentUser={currentUser}
+            printSettings={settings.printSettings}
             googleAccessToken={googleAccessToken}
             onSetGoogleAccessToken={setGoogleAccessToken}
           />
