@@ -15,9 +15,14 @@ import {
   CheckCircle,
   AlertCircle,
   Download,
+  Upload,
+  FileSpreadsheet,
+  Settings,
+  ArrowRight,
   RefreshCw,
   FileText,
   Activity,
+  History,
   Wifi,
   Radio,
   Terminal,
@@ -27,19 +32,36 @@ import {
   X,
   ChevronDown,
   AlertTriangle,
-  TrendingUp
+  TrendingUp,
+  CheckSquare,
+  Square,
+  Check,
+  Sliders,
+  Shield,
+  Phone,
+  HeartPulse
 } from 'lucide-react';
-import { Unit, Soldier, User, PrintSettings } from '../types';
+import * as XLSX from 'xlsx';
+import ExcelImporter from './ExcelImporter';
+import { Unit, Soldier, User, PrintSettings, AuditLog, AttendanceRecord } from '../types';
 import { fetchWithRetry, safeJson } from '../lib/api';
 import SoldierProfile from './SoldierProfile';
 
 interface OrgManagerProps {
   units: Unit[];
   soldiers: Soldier[];
+  attendance?: AttendanceRecord[];
   currentUser: { id: string; name: string; role: string; unitId: string | null };
+  auditLogs?: AuditLog[];
   printSettings?: PrintSettings;
   selectedSoldierId?: string | null;
   onSelectSoldierId?: (id: string | null) => void;
+  onAttendanceUpdated?: () => void;
+  onImportCompleted?: (importedData: {
+    units: Unit[];
+    soldiers: Soldier[];
+    attendance: AttendanceRecord[];
+  }) => void;
   onAddUnit: (
     name: string, 
     parentId: string | null, 
@@ -81,10 +103,14 @@ const MILITARY_RANKS = [
 export default function OrgManager({
   units,
   soldiers,
+  attendance: propsAttendance = [],
   currentUser,
+  auditLogs: propsAuditLogs = [],
   printSettings,
   selectedSoldierId,
   onSelectSoldierId,
+  onAttendanceUpdated,
+  onImportCompleted: propsOnImportCompleted,
   onAddUnit,
   onEditUnit,
   onDeleteUnit,
@@ -95,7 +121,198 @@ export default function OrgManager({
   onAddLog
 }: OrgManagerProps) {
   // Tabs: Units Management, Soldiers Management
-  const [activeTab, setActiveTab] = useState<'units' | 'soldiers'>('units');
+  const [activeTab, setActiveTab] = useState<'units' | 'soldiers'>('soldiers');
+  const [selectedProfileSoldierId, setSelectedProfileSoldierId] = useState<string | null>(null);
+
+  // Settings Modal State
+  const [isOrgSettingsOpen, setIsOrgSettingsOpen] = useState(false);
+  const [settingsSubTab, setSettingsSubTab] = useState<'menu' | 'import' | 'export_settings'>('menu');
+
+  // Export Settings Fields Config State
+  const EXPORT_FIELDS_OPTIONS = useMemo(() => [
+    // البيانات الأساسية والعسكرية
+    { id: 'militaryNumber', label: 'الرقم العسكري', category: 'البيانات الأساسية والعسكرية', defaultChecked: true, getValue: (s: Soldier) => s.militaryNumber || '' },
+    { id: 'rank', label: 'الرتبة العسكرية', category: 'البيانات الأساسية والعسكرية', defaultChecked: true, getValue: (s: Soldier) => s.rank || '' },
+    { id: 'fullName', label: 'الاسم الكامل', category: 'البيانات الأساسية والعسكرية', defaultChecked: true, getValue: (s: Soldier) => s.fullName || '' },
+    { id: 'unitName', label: 'الوحدة العسكرية / التشكيل', category: 'البيانات الأساسية والعسكرية', defaultChecked: true, getValue: (s: Soldier, u: string) => u },
+    { id: 'militaryStatus', label: 'الحالة الميدانية (على رأس العمل/إجازة...)', category: 'البيانات الأساسية والعسكرية', defaultChecked: true, getValue: (s: Soldier) => s.militaryStatus || (s.isActive ? 'على رأس العمل' : 'مستبعد') },
+    { id: 'isActive', label: 'حالة القوة (نشط / مستبعد)', category: 'البيانات الأساسية والعسكرية', defaultChecked: true, getValue: (s: Soldier) => s.isActive ? 'نشط / جاهز' : 'مستبعد / احتياط' },
+
+    // بيانات الهوية والتواصل
+    { id: 'nationalId', label: 'رقم البطاقة / الهوية الوطنية', category: 'بيانات الهوية والتواصل', defaultChecked: true, getValue: (s: Soldier) => s.nationalId || '' },
+    { id: 'phoneNumber', label: 'رقم الهاتف الخاص', category: 'بيانات الهوية والتواصل', defaultChecked: true, getValue: (s: Soldier) => s.phoneNumber || '' },
+    { id: 'emergencyContact', label: 'أرقام المقربين / أرقام الطوارئ', category: 'بيانات الهوية والتواصل', defaultChecked: true, getValue: (s: Soldier) => s.emergencyContact || '' },
+    { id: 'address', label: 'العنوان / مكان السكن', category: 'بيانات الهوية والتواصل', defaultChecked: true, getValue: (s: Soldier) => s.address || '' },
+
+    // البيانات الشخصية والطبية
+    { id: 'bloodType', label: 'فصيلة الدم', category: 'البيانات الشخصية والطبية', defaultChecked: true, getValue: (s: Soldier) => s.bloodType || '' },
+    { id: 'birthDate', label: 'تاريخ الميلاد', category: 'البيانات الشخصية والطبية', defaultChecked: true, getValue: (s: Soldier) => s.birthDate || '' },
+    { id: 'qualification', label: 'المؤهل العلمي', category: 'البيانات الشخصية والطبية', defaultChecked: true, getValue: (s: Soldier) => s.qualification || '' },
+    { id: 'specialization', label: 'التخصص العسكري / المهني', category: 'البيانات الشخصية والطبية', defaultChecked: true, getValue: (s: Soldier) => s.specialization || '' },
+    { id: 'medicalHistory', label: 'السجل الطبي / الحالة الصحية', category: 'البيانات الشخصية والطبية', defaultChecked: false, getValue: (s: Soldier) => s.medicalHistory || '' },
+
+    // الهيكل التنظيمي والإداري
+    { id: 'joinDate', label: 'تاريخ الانضمام / بدء الخدمة', category: 'الهيكل التنظيمي والإداري', defaultChecked: true, getValue: (s: Soldier) => s.joinDate || '' },
+    { id: 'battalion', label: 'الكتيبة', category: 'الهيكل التنظيمي والإداري', defaultChecked: false, getValue: (s: Soldier) => s.battalion || '' },
+    { id: 'company', label: 'السرية', category: 'الهيكل التنظيمي والإداري', defaultChecked: false, getValue: (s: Soldier) => s.company || '' },
+    { id: 'platoon', label: 'الفصيلة', category: 'الهيكل التنظيمي والإداري', defaultChecked: false, getValue: (s: Soldier) => s.platoon || '' },
+    { id: 'assignedTasks', label: 'المهام والتكليفات الرسمية', category: 'الهيكل التنظيمي والإداري', defaultChecked: false, getValue: (s: Soldier) => s.assignedTasks || '' },
+    { id: 'accountUsername', label: 'اسم مستخدم حساب البوابة', category: 'الهيكل التنظيمي والإداري', defaultChecked: false, getValue: (s: Soldier) => s.accountUsername || '' },
+    { id: 'createdAt', label: 'تاريخ التسجيل بالنظام', category: 'الهيكل التنظيمي والإداري', defaultChecked: false, getValue: (s: Soldier) => s.createdAt ? new Date(s.createdAt).toLocaleDateString('ar-SA') : '' },
+  ], []);
+
+  const [selectedExportFields, setSelectedExportFields] = useState<string[]>(() =>
+    EXPORT_FIELDS_OPTIONS.filter(f => f.defaultChecked).map(f => f.id)
+  );
+  const [exportScopeFilter, setExportScopeFilter] = useState<'all' | 'active_only'>('all');
+
+  // Toggle field helper
+  const toggleExportField = (fieldId: string) => {
+    setSelectedExportFields(prev => 
+      prev.includes(fieldId) ? prev.filter(id => id !== fieldId) : [...prev, fieldId]
+    );
+  };
+
+  // Custom Excel Export Handler
+  const handleCustomExportExcel = () => {
+    if (!soldiers || soldiers.length === 0) {
+      alert('لا توجد بيانات أفراد مجهزة للتصدير');
+      return;
+    }
+
+    if (selectedExportFields.length === 0) {
+      alert('يرجى تحديد حقل واحد على الأقل للتصدير');
+      return;
+    }
+
+    let targetSoldiers = soldiers;
+    if (exportScopeFilter === 'active_only') {
+      targetSoldiers = soldiers.filter(s => s.isActive);
+    }
+
+    if (targetSoldiers.length === 0) {
+      alert('لا توجد سجلات أفراد تطابق النطاق المحدد للتصدير');
+      return;
+    }
+
+    const activeOptions = EXPORT_FIELDS_OPTIONS.filter(opt => selectedExportFields.includes(opt.id));
+
+    const exportData = targetSoldiers.map((soldier, index) => {
+      const unitName = units.find(u => u.id === soldier.unitId)?.name || 'غير محدد';
+      const rowObj: Record<string, any> = {
+        'م': index + 1
+      };
+      activeOptions.forEach(opt => {
+        rowObj[opt.label] = opt.getValue(soldier, unitName);
+      });
+      return rowObj;
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'كشف القوة والأفراد');
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    XLSX.writeFile(workbook, `كشف_القوة_والأفراد_${todayStr}.xlsx`);
+
+    if (onAddLog) {
+      onAddLog('تصدير', 'الأفراد', `تصدير بيانات القوة والأفراد لعدد (${targetSoldiers.length}) فرد مع تحديد (${activeOptions.length}) حقل مخصص بصيغة Excel.`);
+    }
+
+    setIsOrgSettingsOpen(false);
+    setSettingsSubTab('menu');
+  };
+
+  // Excel Template Download Handler
+  const handleDownloadExcelTemplate = () => {
+    const templateData = [
+      {
+        'الرقم العسكري': '10001',
+        'الرتبة العسكرية': 'جندي أول',
+        'الاسم الكامل': 'محمد أحمد علي سالم',
+        'الوحدة العسكرية': units[0]?.name || 'الكتيبة الأولى',
+        'حالة الفرد': 'نشط'
+      },
+      {
+        'الرقم العسكري': '10002',
+        'الرتبة العسكرية': 'رقيب',
+        'الاسم الكامل': 'خالد عمر حسن صالح',
+        'الوحدة العسكرية': units[0]?.name || 'الكتيبة الأولى',
+        'حالة الفرد': 'نشط'
+      }
+    ];
+
+    const worksheet = XLSX.utils.json_to_sheet(templateData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'نموذج_إدخال_الأفراد');
+    XLSX.writeFile(workbook, 'نموذج_إدخال_بيانات_الأفراد.xlsx');
+  };
+
+  // Recent Operations Audit Log State
+  const [fetchedAuditLogs, setFetchedAuditLogs] = useState<AuditLog[]>([]);
+  const [loadingAuditLogs, setLoadingAuditLogs] = useState<boolean>(false);
+
+  const loadRecentAuditLogs = async () => {
+    try {
+      setLoadingAuditLogs(true);
+      const res = await fetchWithRetry('/api/audit-logs');
+      if (res.ok) {
+        const data = await safeJson(res);
+        if (Array.isArray(data)) {
+          setFetchedAuditLogs(data);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load recent audit logs:', err);
+    } finally {
+      setLoadingAuditLogs(false);
+    }
+  };
+
+  React.useEffect(() => {
+    loadRecentAuditLogs();
+  }, []);
+
+  const displayAuditLogs = useMemo(() => {
+    const combined = propsAuditLogs && propsAuditLogs.length > 0 ? propsAuditLogs : fetchedAuditLogs;
+    return [...combined]
+      .filter(log => {
+        const details = log.details || '';
+        const tableName = log.tableName || '';
+
+        // Exclude leaves / vacations
+        if (
+          tableName.includes('sick_leaves') || 
+          tableName.includes('leave') || 
+          details.includes('إجاز') || 
+          details.includes('اجاز')
+        ) {
+          return false;
+        }
+
+        // Include key soldier operations: soldier edit, transfer, delete/exclude, add/register, promotion
+        return (
+          tableName.includes('الأفراد') ||
+          tableName.includes('soldier') ||
+          details.includes('عسكري') ||
+          details.includes('فرد') ||
+          details.includes('تعديل') ||
+          details.includes('ترقية') ||
+          details.includes('نقل') ||
+          details.includes('حذف') ||
+          details.includes('استبعاد') ||
+          details.includes('تسجيل') ||
+          details.includes('إضافة') ||
+          details.includes('توظيف')
+        );
+      })
+      .sort((a, b) => {
+        const timeA = new Date(a.timestamp).getTime() || 0;
+        const timeB = new Date(b.timestamp).getTime() || 0;
+        return timeB - timeA;
+      })
+      .slice(0, 10);
+  }, [propsAuditLogs, fetchedAuditLogs]);
 
   // Sync selectedSoldierId from prop
   React.useEffect(() => {
@@ -261,7 +478,6 @@ export default function OrgManager({
   const [page, setPage] = useState<number>(0);
   const [hasMore, setHasMore] = useState<boolean>(false);
   const [fetchingIndividualSoldier, setFetchingIndividualSoldier] = useState(false);
-  const [selectedProfileSoldierId, setSelectedProfileSoldierId] = useState<string | null>(null);
 
   // Virtual Scrolling States and Refs for smooth rendering of thousands of records
   const [desktopScrollTop, setDesktopScrollTop] = useState(0);
@@ -271,6 +487,13 @@ export default function OrgManager({
 
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
+  const hasActiveFilters = useMemo(() => {
+    return (debouncedSearch && debouncedSearch.trim() !== '') || 
+           soldierRankFilter !== 'all' || 
+           soldierUnitFilter !== 'all' || 
+           soldierStatusFilter !== 'all';
+  }, [debouncedSearch, soldierRankFilter, soldierUnitFilter, soldierStatusFilter]);
+
   // Debounce search input
   React.useEffect(() => {
     const handler = setTimeout(() => {
@@ -278,13 +501,6 @@ export default function OrgManager({
     }, 400);
     return () => clearTimeout(handler);
   }, [soldierSearch]);
-
-  const hasActiveFilters = useMemo(() => {
-    return debouncedSearch.trim() !== '' || 
-           soldierRankFilter !== 'all' || 
-           soldierUnitFilter !== 'all' || 
-           soldierStatusFilter !== 'all';
-  }, [debouncedSearch, soldierRankFilter, soldierUnitFilter, soldierStatusFilter]);
 
   const fetchSoldiers = async (pageIndex: number, resetList: boolean) => {
     setLoadingSoldiers(true);
@@ -345,7 +561,7 @@ export default function OrgManager({
     setMobileScrollTop(0);
     if (desktopContainerRef.current) desktopContainerRef.current.scrollTop = 0;
     if (mobileContainerRef.current) mobileContainerRef.current.scrollTop = 0;
-  }, [debouncedSearch, soldierRankFilter, soldierUnitFilter, soldierStatusFilter]);
+  }, [debouncedSearch, soldierRankFilter, soldierUnitFilter, soldierStatusFilter, hasActiveFilters]);
 
   // Infinite scroll support
   React.useEffect(() => {
@@ -541,18 +757,37 @@ export default function OrgManager({
     }
 
     if (editingSoldier) {
+      const changes: string[] = [];
+      if (editingSoldier.fullName !== soldierName) {
+        changes.push(`تعديل الاسم من [${editingSoldier.fullName}] إلى [${soldierName}]`);
+      }
+      if (editingSoldier.militaryNumber !== soldierMilNumber) {
+        changes.push(`تعديل الرقم العسكري من [${editingSoldier.militaryNumber}] إلى [${soldierMilNumber}]`);
+      }
+      if (editingSoldier.rank !== soldierRank) {
+        changes.push(`ترقية/تعديل الرتبة من [${editingSoldier.rank}] إلى [${soldierRank}]`);
+      }
+      if (editingSoldier.unitId !== soldierUnitId) {
+        const oldUnit = units.find(u => u.id === editingSoldier.unitId)?.name || 'غير محدد';
+        const newUnit = units.find(u => u.id === soldierUnitId)?.name || 'غير محدد';
+        changes.push(`نقل/تعديل الوحدة من [${oldUnit}] إلى [${newUnit}]`);
+      }
+      if (editingSoldier.isActive !== soldierActive) {
+        changes.push(`تعديل الحالة إلى [${soldierActive ? 'نشط/جاهز' : 'مستبعد/احتياط'}]`);
+      }
+
+      const detailsMsg = changes.length > 0 
+        ? `تعديل ملف العسكري (${soldierRank}/ ${soldierName}): تم [${changes.join('، ')}].`
+        : `تعديل ملف العسكري: ${soldierRank}/ ${soldierName} (رقم عسكري: ${soldierMilNumber}).`;
+
       onEditSoldier(editingSoldier.id, soldierMilNumber, soldierName, soldierRank, soldierUnitId, soldierActive);
-      onAddLog(
-        'تعديل', 
-        'الأفراد', 
-        `تعديل بيانات العسكري: ${soldierRank}/ ${soldierName} (رقم عسكري: ${soldierMilNumber}).`
-      );
+      onAddLog('تعديل', 'الأفراد', detailsMsg);
     } else {
       onAddSoldier(soldierMilNumber, soldierName, soldierRank, soldierUnitId);
       onAddLog(
         'إضافة', 
         'الأفراد', 
-        `تسجيل عسكري جديد: ${soldierRank}/ ${soldierName} في وحدة (${units.find(u => u.id === soldierUnitId)?.name}).`
+        `تسجيل عسكري جديد بالقوة: ${soldierRank}/ ${soldierName} (رقم عسكري: ${soldierMilNumber}) بالوحدة (${units.find(u => u.id === soldierUnitId)?.name || 'غير محدد'}).`
       );
     }
 
@@ -676,19 +911,9 @@ export default function OrgManager({
 
   return (
     <div className="space-y-6 text-right font-sans" dir="rtl">
-      {/* Tab Switcher Panel with Premium Branding Header */}
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs gap-5">
-        <div className="flex items-center gap-3">
-          <div className="p-3 bg-emerald-50 text-emerald-800 rounded-xl border border-emerald-100 hidden sm:block">
-            <ShieldCheck className="w-6 h-6" />
-          </div>
-          <div>
-            <h2 className="text-lg font-black text-slate-800 tracking-tight">إدارة القوة وهيكل الوحدات العسكرية</h2>
-            <p className="text-xs text-slate-500 mt-1">تنسيق وتوزيع السيطرة التكتيكية ومراقبة جاهزية العديد والقيادة الحية</p>
-          </div>
-        </div>
-
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
+      {/* Tab Switcher Panel */}
+      <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center bg-white p-3 sm:p-4 rounded-2xl border border-slate-200/80 shadow-xs gap-3">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full">
           <div className="grid grid-cols-2 w-full sm:flex bg-slate-100 p-1 rounded-xl gap-1 border border-slate-200 sm:w-auto">
             <button
               onClick={() => setActiveTab('units')}
@@ -726,13 +951,27 @@ export default function OrgManager({
                   إضافة وحدة عسكرية
                 </button>
               ) : (
-                <button
-                  onClick={() => handleOpenSoldierModal(null)}
-                  className="w-full flex items-center justify-center gap-2 bg-emerald-800 hover:bg-emerald-900 text-white px-5 py-2.5 rounded-xl text-xs font-black shadow-xs hover:shadow-md transition-all cursor-pointer border border-emerald-700/30"
-                >
-                  <UserPlus className="w-4 h-4" />
-                  تسجيل عسكري جديد
-                </button>
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <button
+                    onClick={() => handleOpenSoldierModal(null)}
+                    className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-emerald-800 hover:bg-emerald-900 text-white px-5 py-2.5 rounded-xl text-xs font-black shadow-xs hover:shadow-md transition-all cursor-pointer border border-emerald-700/30"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span>تسجيل عسكري جديد</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettingsSubTab('menu');
+                      setIsOrgSettingsOpen(true);
+                    }}
+                    className="flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2.5 rounded-xl text-xs font-black shadow-xs hover:shadow-md transition-all cursor-pointer border border-slate-700 shrink-0"
+                    title="إعدادات القوة والأفراد (تصدير واستيراد Excel)"
+                  >
+                    <Settings className="w-4 h-4 text-emerald-400" />
+                    <span>الإعدادات</span>
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -1411,137 +1650,194 @@ export default function OrgManager({
             onSoldierUpdated={() => {
               fetchSoldiers(0, true);
             }}
+            onAttendanceUpdated={onAttendanceUpdated}
             onOpenTransfer={(soldier) => {
               handleOpenTransfer(soldier);
             }}
           />
         ) : (
-          <div className="bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs space-y-5 animate-in fade-in duration-200">
+          <div className="bg-white p-3 sm:p-4 rounded-2xl border border-slate-200/80 shadow-xs space-y-3 sm:space-y-4 animate-in fade-in duration-200">
             
-            {/* Advanced Search & Filter Dashboard Card */}
-          <div className="bg-slate-50 border border-slate-200 p-5 rounded-2xl flex flex-col xl:flex-row justify-between items-stretch xl:items-center gap-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:flex xl:flex-wrap gap-3 w-full xl:w-auto items-stretch xl:items-center">
-              {/* Tactical Search Box */}
-              <div className="relative w-full md:w-72">
-                <Search className="absolute right-3.5 top-3 w-4 h-4 text-slate-400" />
-                <input 
-                  type="text" 
-                  placeholder="ابحث بالاسم، الرقم العسكري..."
-                  value={soldierSearch}
-                  onChange={(e) => setSoldierSearch(e.target.value)}
-                  className="w-full pr-10 pl-4 py-2.5 bg-white border border-slate-200 text-slate-800 placeholder-slate-400 rounded-xl text-xs font-bold focus:outline-hidden focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700/30 transition-all font-sans"
-                />
-              </div>
+            {/* Compact Single-Line Search & Filter Bar */}
+            <div className="bg-slate-100/90 border border-slate-200/90 p-2 sm:p-2.5 rounded-xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 shadow-2xs">
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:gap-2 flex-1 w-full">
+                {/* Search Box */}
+                <div className="relative flex-1 min-w-[140px] sm:min-w-[200px]">
+                  <Search className="absolute right-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
+                  <input 
+                    type="text" 
+                    placeholder="ابحث بالاسم، الرقم العسكري..."
+                    value={soldierSearch}
+                    onChange={(e) => setSoldierSearch(e.target.value)}
+                    className="w-full pr-8 pl-3 py-1.5 bg-white border border-slate-200 text-slate-800 placeholder-slate-400 rounded-lg text-xs font-bold focus:outline-hidden focus:border-emerald-700 transition-all font-sans"
+                  />
+                </div>
 
-              {/* Advanced Unit Filter Dropdown */}
-              {currentUser.role !== 'commander_unit' && currentUser.role !== 'data_writer' ? (
-                <div className="relative w-full md:w-60">
+                {/* Unit Dropdown */}
+                {currentUser.role !== 'commander_unit' && currentUser.role !== 'data_writer' ? (
                   <select
                     value={soldierUnitFilter}
                     onChange={(e) => setSoldierUnitFilter(e.target.value)}
-                    className="w-full bg-white border border-slate-200 text-slate-800 rounded-xl pr-4 pl-10 py-2.5 text-xs font-bold focus:outline-hidden focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700/20 cursor-pointer appearance-none"
+                    className="bg-white border border-slate-200 text-slate-800 rounded-lg px-2 py-1.5 text-xs font-bold focus:outline-hidden cursor-pointer max-w-[150px] truncate"
                   >
-                    <option value="all">كل الوحدات والكتائب العسكرية</option>
+                    <option value="all">كل الوحدات</option>
                     {units.map(u => (
                       <option key={u.id} value={u.id}>{u.name}</option>
                     ))}
                   </select>
-                  <div className="absolute left-3.5 top-3.5 pointer-events-none w-3.5 h-3.5 text-slate-500">
-                    <Building className="w-3.5 h-3.5" />
+                ) : (
+                  <div className="bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-lg text-[10px] font-black text-emerald-800 flex items-center gap-1 shrink-0">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span>الكتيبة فقط</span>
                   </div>
-                </div>
-              ) : (
-                <div className="bg-emerald-50 border border-emerald-100 px-4 py-2.5 rounded-xl text-xs font-black text-emerald-800 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  عرض القوة الخاصة بالكتيبة فقط
-                </div>
-              )}
+                )}
 
-              {/* Advanced Rank Filter */}
-              <div className="relative w-full md:w-44">
+                {/* Rank Filter */}
                 <select
                   value={soldierRankFilter}
                   onChange={(e) => setSoldierRankFilter(e.target.value)}
-                  className="w-full bg-white border border-slate-200 text-slate-800 rounded-xl pr-4 pl-10 py-2.5 text-xs font-bold focus:outline-hidden focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700/20 cursor-pointer appearance-none"
+                  className="bg-white border border-slate-200 text-slate-800 rounded-lg px-2 py-1.5 text-xs font-bold focus:outline-hidden cursor-pointer max-w-[120px] truncate"
                 >
-                  <option value="all">كل الرتب العسكرية</option>
+                  <option value="all">كل الرتب</option>
                   {MILITARY_RANKS.map(r => (
                     <option key={r} value={r}>{r}</option>
                   ))}
                 </select>
-                <div className="absolute left-3.5 top-3.5 pointer-events-none w-3.5 h-3.5 text-slate-500">
-                  <ShieldCheck className="w-3.5 h-3.5" />
-                </div>
-              </div>
 
-              {/* Advanced Status Filter */}
-              <div className="relative w-full md:w-44">
+                {/* Status Filter */}
                 <select
                   value={soldierStatusFilter}
                   onChange={(e) => setSoldierStatusFilter(e.target.value)}
-                  className="w-full bg-white border border-slate-200 text-slate-800 rounded-xl pr-4 pl-10 py-2.5 text-xs font-bold focus:outline-hidden focus:border-emerald-700 focus:ring-1 focus:ring-emerald-700/20 cursor-pointer appearance-none"
+                  className="bg-white border border-slate-200 text-slate-800 rounded-lg px-2 py-1.5 text-xs font-bold focus:outline-hidden cursor-pointer max-w-[110px] truncate"
                 >
-                  <option value="all">كل الحالات العملياتية</option>
-                  <option value="true">جاهز / نشط</option>
+                  <option value="all">كل الحالات</option>
+                  <option value="true">نشط / جاهز</option>
                   <option value="false">مستبعد / احتياط</option>
                 </select>
-                <div className="absolute left-3.5 top-3.5 pointer-events-none w-3.5 h-3.5 text-slate-500">
-                  <Activity className="w-3.5 h-3.5" />
-                </div>
+              </div>
+
+              {/* Matched Count & Loader Badge */}
+              <div className="flex items-center gap-1.5 shrink-0 justify-between sm:justify-end border-t sm:border-t-0 pt-1.5 sm:pt-0 border-slate-200/80">
+                {loadingSoldiers && (
+                  <div className="flex items-center gap-1 px-2 py-1 bg-amber-50 text-amber-800 border border-amber-200/80 rounded-lg text-[10px] font-bold animate-pulse">
+                    <RefreshCw className="w-3 h-3 animate-spin text-amber-700" />
+                    <span>استعلام...</span>
+                  </div>
+                )}
+                <span className="bg-slate-200/80 text-slate-700 px-2.5 py-1 rounded-lg text-[10px] sm:text-xs font-black font-sans whitespace-nowrap">
+                  المطابق: {totalCount}
+                </span>
               </div>
             </div>
 
-            {/* Quick Summary Badge & Loader inside Filter Header */}
-            <div className="flex items-center gap-2 self-start xl:self-auto shrink-0 mt-2 xl:mt-0">
-              {loadingSoldiers && (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-800 border border-amber-100 rounded-xl text-xs font-bold animate-pulse">
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-700" />
-                  <span>جاري الاستعلام الفوري...</span>
+            {/* Conditional Display: Recent Operations vs Soldiers List */}
+            {!hasActiveFilters ? (
+              <div className="bg-slate-50/90 border border-slate-200/90 rounded-xl p-3 sm:p-4 space-y-2.5 animate-in fade-in duration-200">
+                <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200/80">
+                  <div className="flex items-center gap-2">
+                    <History className="w-4 h-4 text-emerald-700 shrink-0" />
+                    <h4 className="text-xs sm:text-sm font-black text-slate-800 tracking-wide">
+                      سجل العمليات الأخيرة (آخر 10 عمليات)
+                    </h4>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-200/80 px-2 py-0.5 rounded-full font-bold shrink-0">
+                      تحديث تلقائي ⏱️
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loadRecentAuditLogs}
+                    className="p-1 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer flex items-center gap-1 text-[10px] font-bold"
+                    title="تحديث سجل العمليات"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${loadingAuditLogs ? 'animate-spin text-emerald-600' : ''}`} />
+                    <span className="hidden sm:inline">تحديث</span>
+                  </button>
                 </div>
-              )}
-              <span className="bg-slate-200/60 text-slate-700 px-3 py-1.5 rounded-xl text-xs font-black font-sans">
-                المطابق للبحث: {totalCount} عسكري
-              </span>
-            </div>
-          </div>
 
-          {/* Conditional Rendering of Soldiers List */}
-          {!hasActiveFilters ? (
-            <div className="bg-slate-50 border border-dashed border-slate-200 rounded-2xl p-12 text-center text-slate-500 font-sans max-w-lg mx-auto my-8">
-              <Users className="w-12 h-12 text-slate-400 mx-auto mb-4 stroke-[1.5]" />
-              <h4 className="text-sm font-extrabold text-slate-800">شاشة إدارة الأفراد الذكية</h4>
-              <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-                تم تحسين أداء هذا القسم لسرعة فائقة مع قواعد البيانات الكبيرة. لم يتم تحميل أي سجلات عند فتح الشاشة لتوفير استهلاك الذاكرة وسرعة استجابة النظام.
-              </p>
-              <div className="mt-5 inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-800 rounded-xl text-[11px] font-bold">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                الرجاء استخدام الفلاتر أو كتابة الاسم / الرقم العسكري في مربع البحث لبدء عرض البيانات.
+                {displayAuditLogs.length === 0 ? (
+                  <div className="text-center py-4 text-xs text-slate-400 font-bold font-sans">
+                    لا توجد سجلات عمليات مسجلة بالنظام حالياً.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {displayAuditLogs.map((log, index) => {
+                      let badgeLabel = log.actionType || 'إجراء';
+                      let badgeClass = "bg-blue-100 text-blue-800 border-blue-200";
+
+                      const detailsStr = log.details || '';
+                      if (detailsStr.includes('ترقية') || detailsStr.includes('الرتبة')) {
+                        badgeLabel = 'ترقية';
+                        badgeClass = "bg-indigo-100 text-indigo-800 border-indigo-200";
+                      } else if (detailsStr.includes('نقل')) {
+                        badgeLabel = 'نقل عسكري';
+                        badgeClass = "bg-sky-100 text-sky-800 border-sky-200";
+                      } else if (log.actionType === 'إضافة' || detailsStr.includes('تسجيل') || detailsStr.includes('توظيف')) {
+                        badgeLabel = 'تسجيل/إضافة';
+                        badgeClass = "bg-emerald-100 text-emerald-800 border-emerald-200";
+                      } else if (log.actionType === 'تعديل') {
+                        badgeLabel = 'تعديل ملف';
+                        badgeClass = "bg-amber-100 text-amber-800 border-amber-200";
+                      } else if (log.actionType === 'حذف' || detailsStr.includes('استبعاد')) {
+                        badgeLabel = 'حذف/استبعاد';
+                        badgeClass = "bg-rose-100 text-rose-800 border-rose-200";
+                      } else if (log.actionType === 'استيراد' || log.actionType === 'استعادة') {
+                        badgeClass = "bg-purple-100 text-purple-800 border-purple-200";
+                      }
+
+                      return (
+                        <div 
+                          key={log.id || `audit_${index}`} 
+                          className="bg-white p-2.5 rounded-lg border border-slate-200/80 shadow-2xs flex flex-col justify-between gap-1.5 text-xs hover:border-slate-300 transition-all font-sans"
+                        >
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${badgeClass}`}>
+                              {badgeLabel}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono font-bold dir-ltr">
+                              {log.timestamp ? new Date(log.timestamp).toLocaleString('ar-SA', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
+                            </span>
+                          </div>
+                          <p className="text-slate-800 font-bold line-clamp-3 text-[11px] leading-relaxed">
+                            {log.details || 'بدون تفاصيل'}
+                          </p>
+                          <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-100 font-sans">
+                            <span>المستخدم: <strong className="text-slate-700 font-black">{log.userName || 'النظام'}</strong></span>
+                            <span className="text-slate-500 font-bold">{log.tableName || ''}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            </div>
-          ) : soldierSearchError ? (
-            <div className="bg-rose-50 border border-rose-200 text-rose-800 p-8 rounded-2xl text-center max-w-md mx-auto my-8 font-sans">
-              <AlertCircle className="w-10 h-10 text-rose-500 mx-auto mb-2" />
-              <h4 className="font-extrabold text-sm">حدث خطأ أثناء الاستعلام عن البيانات</h4>
-              <p className="text-xs text-rose-600 mt-1">{soldierSearchError}</p>
-              <button
-                onClick={() => fetchSoldiers(0, true)}
-                className="mt-4 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold cursor-pointer transition-all"
-              >
-                إعادة المحاولة
-              </button>
-            </div>
-          ) : loadingSoldiers && searchedSoldiers.length === 0 ? (
-            <div className="p-16 text-center font-sans">
-              <RefreshCw className="w-8 h-8 text-emerald-700 animate-spin mx-auto mb-3" />
-              <p className="text-xs text-slate-500 font-bold">جاري استعلام ومعالجة السجلات من قاعدة البيانات العسكرية...</p>
-            </div>
-          ) : searchedSoldiers.length === 0 ? (
-            <div className="bg-slate-50 border border-slate-150 p-12 rounded-2xl text-center text-slate-400 font-bold text-xs max-w-md mx-auto my-8 font-sans">
-              <Users className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-              لا توجد نتائج تطابق معايير البحث والفلترة المحددة. يرجى تعديل خيارات البحث.
-            </div>
-          ) : (
-            <>
+            ) : (
+              /* Conditional Rendering of Soldiers List (Visible only when searching/filtering) */
+              <>
+                {soldierSearchError ? (
+                  <div className="bg-rose-50 border border-rose-200 text-rose-800 p-8 rounded-2xl text-center max-w-md mx-auto my-8 font-sans">
+                    <AlertCircle className="w-10 h-10 text-rose-500 mx-auto mb-2" />
+                    <h4 className="font-extrabold text-sm">حدث خطأ أثناء الاستعلام عن البيانات</h4>
+                    <p className="text-xs text-rose-600 mt-1">{soldierSearchError}</p>
+                    <button
+                      onClick={() => fetchSoldiers(0, true)}
+                      className="mt-4 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold cursor-pointer transition-all"
+                    >
+                      إعادة المحاولة
+                    </button>
+                  </div>
+                ) : loadingSoldiers && searchedSoldiers.length === 0 ? (
+                  <div className="p-16 text-center font-sans">
+                    <RefreshCw className="w-8 h-8 text-emerald-700 animate-spin mx-auto mb-3" />
+                    <p className="text-xs text-slate-500 font-bold">جاري استعلام ومعالجة السجلات من قاعدة البيانات العسكرية...</p>
+                  </div>
+                ) : searchedSoldiers.length === 0 ? (
+                  <div className="bg-slate-50 border border-slate-150 p-12 rounded-2xl text-center text-slate-400 font-bold text-xs max-w-md mx-auto my-8 font-sans">
+                    <Users className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                    لا توجد نتائج تطابق معايير البحث والفلترة المحددة. يرجى تعديل خيارات البحث.
+                  </div>
+                ) : (
+                  <>
+                    {/* Soldiers Table - Desktop Only */}
               {/* Soldiers Table - Desktop Only with High-Contrast Military Design */}
               <div 
                 ref={desktopContainerRef}
@@ -1823,9 +2119,11 @@ export default function OrgManager({
               )}
             </>
           )}
-        </div>
-      )
-    )}
+        </>
+      )}
+    </div>
+  )
+)}
 
       {/* ---- UNIT ADD/EDIT MODAL DIALOG ---- */}
       {isUnitModalOpen && (
@@ -2461,6 +2759,323 @@ export default function OrgManager({
           <div className="bg-white px-6 py-4 rounded-2xl border border-slate-200/80 shadow-2xl flex items-center gap-3 font-sans">
             <RefreshCw className="w-5 h-5 text-emerald-800 animate-spin" />
             <span className="text-xs font-black text-slate-800">جاري تحميل الملف الكامل للفرد بأمان...</span>
+          </div>
+        </div>
+      )}
+
+      {/* ---- ORG SETTINGS MODAL (إعدادات القوة والأفراد - استيراد وتصدير) ---- */}
+      {isOrgSettingsOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150" dir="rtl">
+          <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+            
+            {/* Modal Header */}
+            <div className="bg-slate-900 text-white p-4 sm:p-5 flex items-center justify-between border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/30">
+                  <Settings className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black font-sans text-white">
+                    إعدادات إدارة القوة والأفراد
+                  </h3>
+                  <p className="text-xs text-slate-400 font-sans mt-0.5">
+                    خيارات التصدير والاستيراد لبيانات القوة والسجلات العسكرية
+                  </p>
+                </div>
+              </div>
+
+              {/* Exit / Close button (X) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOrgSettingsOpen(false);
+                  setSettingsSubTab('menu');
+                }}
+                className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-all cursor-pointer border border-transparent hover:border-slate-700"
+                title="إغلاق النافذة (X)"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-5 sm:p-6 overflow-y-auto space-y-6 font-sans">
+              {settingsSubTab === 'menu' ? (
+                <div className="space-y-4">
+                  <p className="text-xs font-bold text-slate-500 text-right">
+                    اختر الإجراء المطلوب لإدارة وتداول بيانات الأفراد مع ملفات Excel:
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    
+                    {/* Option 1: Import Excel */}
+                    <div 
+                      onClick={() => setSettingsSubTab('import')}
+                      className="group bg-emerald-50/60 hover:bg-emerald-100/80 border-2 border-emerald-200/90 hover:border-emerald-500 p-5 rounded-2xl cursor-pointer transition-all shadow-2xs hover:shadow-md flex flex-col justify-between text-right"
+                    >
+                      <div>
+                        <div className="w-12 h-12 bg-emerald-700 text-white rounded-2xl flex items-center justify-center mb-3 group-hover:scale-105 transition-transform shadow-xs">
+                          <Upload className="w-6 h-6" />
+                        </div>
+                        <h4 className="text-sm font-black text-emerald-950 mb-1">
+                          إستيراد اكسل
+                        </h4>
+                        <p className="text-xs text-emerald-800/80 leading-relaxed font-sans">
+                          رفع ملف كشف الأفراد والقوة العسكرية بصيغة Excel (.xlsx, .xls) وإضافتهم تلقائياً للنظام مع المطابقة الذكية.
+                        </p>
+                      </div>
+                      <div className="mt-4 pt-3 border-t border-emerald-200/60 flex items-center justify-between text-xs font-black text-emerald-900">
+                        <span>فتح واجهة الاستيراد الذكية</span>
+                        <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
+                      </div>
+                    </div>
+
+                    {/* Option 2: Export Excel */}
+                    <div 
+                      onClick={() => setSettingsSubTab('export_settings')}
+                      className="group bg-blue-50/60 hover:bg-blue-100/80 border-2 border-blue-200/90 hover:border-blue-500 p-5 rounded-2xl cursor-pointer transition-all shadow-2xs hover:shadow-md flex flex-col justify-between text-right"
+                    >
+                      <div>
+                        <div className="w-12 h-12 bg-blue-700 text-white rounded-2xl flex items-center justify-center mb-3 group-hover:scale-105 transition-transform shadow-xs">
+                          <Sliders className="w-6 h-6" />
+                        </div>
+                        <h4 className="text-sm font-black text-blue-950 mb-1">
+                          تصدير اكسل (إعدادات الحقول)
+                        </h4>
+                        <p className="text-xs text-blue-800/80 leading-relaxed font-sans">
+                          تخصيص البيانات والحقول المطلوبة للتصدير (رقم الهوية، رقم الهاتف، فصيلة الدم، أرقام المقربين، وغيرها) واستخراج كشف Excel مخصص.
+                        </p>
+                      </div>
+                      <div className="mt-4 pt-3 border-t border-blue-200/60 flex items-center justify-between text-xs font-black text-blue-900">
+                        <span>فتح إعدادات وتحديد حقول التصدير</span>
+                        <FileSpreadsheet className="w-4 h-4 text-blue-700" />
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* Template Download Section */}
+                  <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-right">
+                    <div>
+                      <h5 className="text-xs font-black text-slate-800">تحميل نموذج Excel المفرغ</h5>
+                      <p className="text-[11px] text-slate-500 mt-0.5">احصل على كشف مفرغ بالهيكلية الرسمية لتعبئة بيانات الأفراد واستيرادها بسهولة.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleDownloadExcelTemplate}
+                      className="px-3.5 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>تحميل النموذج</span>
+                    </button>
+                  </div>
+
+                </div>
+              ) : settingsSubTab === 'export_settings' ? (
+                /* Sub-tab: Export Excel Custom Settings */
+                <div className="space-y-5 text-right font-sans">
+                  
+                  {/* Header Sub-bar */}
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setSettingsSubTab('menu')}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-lg transition-all cursor-pointer"
+                    >
+                      <ArrowRight className="w-4 h-4" />
+                      <span>العودة للقائمة</span>
+                    </button>
+
+                    <span className="text-xs font-black text-blue-800 bg-blue-50 px-3 py-1 rounded-md border border-blue-200 flex items-center gap-1.5">
+                      <Sliders className="w-3.5 h-3.5 text-blue-600" />
+                      <span>نافذة إعدادات تصدير ملف Excel</span>
+                    </span>
+                  </div>
+
+                  {/* Toolbar Controls */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedExportFields(EXPORT_FIELDS_OPTIONS.map(f => f.id))}
+                          className="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1 shadow-xs"
+                        >
+                          <CheckSquare className="w-3.5 h-3.5" />
+                          <span>تحديد الكل</span>
+                        </button>
+                        
+                        <button
+                          type="button"
+                          onClick={() => setSelectedExportFields([])}
+                          className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1"
+                        >
+                          <Square className="w-3.5 h-3.5" />
+                          <span>إلغاء تحديد الكل</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setSelectedExportFields(EXPORT_FIELDS_OPTIONS.filter(f => f.defaultChecked).map(f => f.id))}
+                          className="px-2.5 py-1.5 text-slate-600 hover:text-slate-900 text-xs font-bold transition-all cursor-pointer underline"
+                        >
+                          استعادة الافتراضي
+                        </button>
+                      </div>
+
+                      <div className="bg-emerald-50 text-emerald-900 border border-emerald-200 px-3 py-1 rounded-xl text-xs font-black flex items-center gap-1.5">
+                        <span>الحقول المختارة:</span>
+                        <span className="text-emerald-700 font-extrabold">{selectedExportFields.length}</span>
+                        <span className="text-slate-400">/</span>
+                        <span>{EXPORT_FIELDS_OPTIONS.length}</span>
+                      </div>
+                    </div>
+
+                    {/* Scope Filter */}
+                    <div className="pt-2.5 border-t border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-slate-700">نطاق الأفراد المراد تصديرهم:</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setExportScopeFilter('all')}
+                          className={`px-3 py-1.5 text-xs font-black rounded-lg transition-all cursor-pointer ${
+                            exportScopeFilter === 'all'
+                              ? 'bg-blue-900 text-white shadow-xs'
+                              : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          جميع الأفراد بالقوة ({soldiers.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setExportScopeFilter('active_only')}
+                          className={`px-3 py-1.5 text-xs font-black rounded-lg transition-all cursor-pointer ${
+                            exportScopeFilter === 'active_only'
+                              ? 'bg-blue-900 text-white shadow-xs'
+                              : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          الأفراد النشطون فقط ({soldiers.filter(s => s.isActive).length})
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Categorized Fields Grid */}
+                  <div className="space-y-4 max-h-[45vh] overflow-y-auto pr-1">
+                    {Array.from(new Set(EXPORT_FIELDS_OPTIONS.map(f => f.category))).map(category => {
+                      const categoryFields = EXPORT_FIELDS_OPTIONS.filter(f => f.category === category);
+                      const selectedInCategoryCount = categoryFields.filter(f => selectedExportFields.includes(f.id)).length;
+
+                      return (
+                        <div key={category} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs space-y-3">
+                          
+                          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                            <div className="flex items-center gap-2">
+                              {category === 'البيانات الأساسية والعسكرية' && <Shield className="w-4 h-4 text-emerald-800" />}
+                              {category === 'بيانات الهوية والتواصل' && <Phone className="w-4 h-4 text-blue-800" />}
+                              {category === 'البيانات الشخصية والطبية' && <HeartPulse className="w-4 h-4 text-rose-800" />}
+                              {category === 'الهيكل التنظيمي والإداري' && <Building className="w-4 h-4 text-amber-800" />}
+                              <h4 className="text-xs font-black text-slate-900">{category}</h4>
+                            </div>
+
+                            <span className="text-[11px] text-slate-500 font-bold bg-slate-100 px-2 py-0.5 rounded-md">
+                              محدد ({selectedInCategoryCount} / {categoryFields.length})
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                            {categoryFields.map(field => {
+                              const isSelected = selectedExportFields.includes(field.id);
+                              return (
+                                <div
+                                  key={field.id}
+                                  onClick={() => toggleExportField(field.id)}
+                                  className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-xs font-bold cursor-pointer transition-all select-none ${
+                                    isSelected
+                                      ? 'bg-emerald-50/90 border-emerald-300 text-emerald-950 shadow-2xs'
+                                      : 'bg-slate-50/50 border-slate-200 text-slate-600 hover:bg-slate-100/70 hover:border-slate-300'
+                                  }`}
+                                >
+                                  <div className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 transition-colors ${
+                                    isSelected ? 'bg-emerald-700 border-emerald-800 text-white' : 'border-slate-300 bg-white'
+                                  }`}>
+                                    {isSelected && <Check className="w-3 h-3 stroke-[3]" />}
+                                  </div>
+                                  <span className="truncate">{field.label}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Confirm & Export Button */}
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={handleCustomExportExcel}
+                      className="w-full py-3.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs sm:text-sm font-black shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 border border-emerald-700/50"
+                    >
+                      <FileSpreadsheet className="w-5 h-5 text-emerald-300" />
+                      <span>تأكيد وتصدير ملف Excel ({selectedExportFields.length} حقل مخصص)</span>
+                    </button>
+                  </div>
+
+                </div>
+              ) : (
+                /* Sub-tab: Embedded Excel Importer */
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setSettingsSubTab('menu')}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-lg transition-all cursor-pointer"
+                    >
+                      <ArrowRight className="w-4 h-4" />
+                      <span>العودة لقائمة الإعدادات</span>
+                    </button>
+                    <span className="text-xs font-black text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
+                      مستورد البيانات الذكي
+                    </span>
+                  </div>
+
+                  <ExcelImporter
+                    units={units}
+                    soldiers={soldiers}
+                    attendance={propsAttendance}
+                    currentUser={currentUser}
+                    onImportCompleted={(data) => {
+                      if (propsOnImportCompleted) {
+                        propsOnImportCompleted(data);
+                      }
+                      setSettingsSubTab('menu');
+                      setIsOrgSettingsOpen(false);
+                    }}
+                    onAddLog={onAddLog}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="bg-slate-50 p-4 border-t border-slate-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOrgSettingsOpen(false);
+                  setSettingsSubTab('menu');
+                }}
+                className="px-5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <X className="w-4 h-4 text-slate-600" />
+                <span>خروج (X)</span>
+              </button>
+            </div>
+
           </div>
         </div>
       )}

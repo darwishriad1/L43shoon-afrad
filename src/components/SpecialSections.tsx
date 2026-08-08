@@ -31,10 +31,13 @@ import {
   ShieldAlert, 
   Sparkle,
   PhoneCall,
-  UserPlus
+  UserPlus,
+  Send
 } from 'lucide-react';
-import { Soldier, Unit, PrintSettings } from '../types';
+import { Soldier, Unit, PrintSettings, SoldierActionRequest } from '../types';
 import { fetchWithRetry } from '../lib/api';
+import RequestsSurveysManager from './RequestsSurveysManager';
+import SupplyManagement from './SupplyManagement';
 
 interface SpecialSectionsProps {
   soldiers: Soldier[];
@@ -42,9 +45,21 @@ interface SpecialSectionsProps {
   currentUser?: { id: string; name: string; role: string; unitId?: string | null };
   printSettings?: PrintSettings;
   onNavigateToSoldier?: (soldierId: string) => void;
+  soldierRequests?: SoldierActionRequest[];
+  onRefreshRequests?: () => void;
+  onAddLog?: (log: any) => void;
 }
 
-export default function SpecialSections({ soldiers = [], units = [], currentUser, onNavigateToSoldier }: SpecialSectionsProps) {
+export default function SpecialSections({ 
+  soldiers = [], 
+  units = [], 
+  currentUser, 
+  printSettings,
+  onNavigateToSoldier,
+  soldierRequests = [],
+  onRefreshRequests,
+  onAddLog
+}: SpecialSectionsProps) {
   const isRestrictedUser = useMemo(() => {
     return currentUser && currentUser.role !== 'admin' && currentUser.role !== 'commander_formation' && Boolean(currentUser.unitId);
   }, [currentUser]);
@@ -63,7 +78,7 @@ export default function SpecialSections({ soldiers = [], units = [], currentUser
     return units;
   }, [units, isRestrictedUser, currentUser]);
 
-  const [activeSubTab, setActiveSubTab] = useState<'leaves' | 'promotions' | 'welfare' | 'equipment' | 'archive' | 'discipline'>('leaves');
+  const [activeSubTab, setActiveSubTab] = useState<'requests_surveys' | 'leaves' | 'promotions' | 'welfare' | 'equipment' | 'archive' | 'discipline'>('requests_surveys');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUnitFilter, setSelectedUnitFilter] = useState('ALL');
   
@@ -306,6 +321,21 @@ export default function SpecialSections({ soldiers = [], units = [], currentUser
       <div className="bg-white p-2 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between gap-1 overflow-x-auto font-sans">
         
         <button
+          onClick={() => setActiveSubTab('requests_surveys')}
+          className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer ${
+            activeSubTab === 'requests_surveys'
+              ? 'bg-emerald-900 text-white shadow-sm'
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+          }`}
+        >
+          <FileText className="w-4 h-4 text-emerald-400" />
+          <span>قسم الطلبات والاستبيانات</span>
+          <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${activeSubTab === 'requests_surveys' ? 'bg-emerald-700 text-emerald-100' : 'bg-slate-200 text-slate-700'}`}>
+            {soldierRequests.length}
+          </span>
+        </button>
+
+        <button
           onClick={() => setActiveSubTab('leaves')}
           className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer ${
             activeSubTab === 'leaves'
@@ -359,9 +389,9 @@ export default function SpecialSections({ soldiers = [], units = [], currentUser
           }`}
         >
           <Briefcase className="w-4 h-4" />
-          <span>العهد والتجهيزات العسكرية</span>
+          <span>إدارة التوريد والصرف والعهد</span>
           <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${activeSubTab === 'equipment' ? 'bg-emerald-700 text-emerald-100' : 'bg-slate-200 text-slate-700'}`}>
-            {equipmentList.length}
+            تفاعلي 📦
           </span>
         </button>
 
@@ -381,6 +411,18 @@ export default function SpecialSections({ soldiers = [], units = [], currentUser
         </button>
 
       </div>
+
+      {/* 3. SUB TAB 0: REQUESTS AND SURVEYS MANAGER */}
+      {activeSubTab === 'requests_surveys' && (
+        <RequestsSurveysManager
+          soldiers={scopedSoldiers}
+          units={scopedUnits}
+          currentUser={currentUser || { id: 'admin', name: 'مدير شؤون الأفراد', role: 'admin' }}
+          requests={soldierRequests}
+          onRefreshRequests={onRefreshRequests}
+          onAddLog={onAddLog}
+        />
+      )}
 
       {/* 3. SUB TAB 1: LEAVES & FIELD MISSIONS */}
       {activeSubTab === 'leaves' && (
@@ -576,62 +618,15 @@ export default function SpecialSections({ soldiers = [], units = [], currentUser
         </div>
       )}
 
-      {/* 6. SUB TAB 4: EQUIPMENT & ARMS */}
+      {/* 6. SUB TAB 4: SUPPLY, EQUIPMENT & ISSUANCE MANAGEMENT */}
       {activeSubTab === 'equipment' && (
-        <div className="space-y-4">
-          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
-            
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-              <div>
-                <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
-                  <Briefcase className="w-4 h-4 text-emerald-700" />
-                  <span>كشوفات العهد العسكرية والأسلحة والتجهيزات الفردية</span>
-                </h3>
-                <p className="text-[11px] text-slate-400 font-bold mt-0.5">توثيق الأسلحة الشخصية والأجهزة اللاسلكية والتجهيزات المسلمة لكل فرد</p>
-              </div>
-
-              <button
-                onClick={() => setActiveModal('add_equipment')}
-                className="px-4 py-2 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs w-full sm:w-auto"
-              >
-                <Plus className="w-4 h-4" />
-                <span>تسليم عهدة عسكرية جديدة</span>
-              </button>
-            </div>
-
-            <div className="overflow-x-auto rounded-xl border border-slate-200">
-              <table className="w-full text-right text-xs">
-                <thead className="bg-slate-50 text-slate-700 font-black border-b border-slate-200">
-                  <tr>
-                    <th className="p-3">الفرد المستلم</th>
-                    <th className="p-3">الرقم العسكري</th>
-                    <th className="p-3">تفاصيل العهدة المسلمة</th>
-                    <th className="p-3">الرقم التسلسلي (S/N)</th>
-                    <th className="p-3">تاريخ الصرف</th>
-                    <th className="p-3">حالة العهدة</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-bold text-slate-800">
-                  {equipmentList.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="p-3 font-black text-slate-900">{item.soldierName}</td>
-                      <td className="p-3 font-mono text-emerald-800">{item.militaryNo}</td>
-                      <td className="p-3 text-slate-800">{item.item}</td>
-                      <td className="p-3 font-mono text-slate-600 bg-slate-50 px-2 py-1 rounded w-fit">{item.serial}</td>
-                      <td className="p-3 font-mono text-slate-500">{item.issueDate}</td>
-                      <td className="p-3">
-                        <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full font-black text-[10px]">
-                          {item.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-          </div>
-        </div>
+        <SupplyManagement
+          soldiers={scopedSoldiers}
+          units={scopedUnits}
+          currentUser={currentUser}
+          printSettings={printSettings}
+          onAddLog={onAddLog}
+        />
       )}
 
       {/* 7. SUB TAB 5: ARCHIVE & DIRECTIVES */}

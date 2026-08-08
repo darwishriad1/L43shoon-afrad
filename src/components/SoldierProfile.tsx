@@ -7,13 +7,14 @@ import {
   Download, Trash2, User, RefreshCw, FileText, CheckCircle2, Upload,
   Lock, Check, Building, Camera, X, MessageSquare, Stethoscope, ChevronRight, ChevronLeft, Filter,
   Clock, Sparkles, Grid, List, Shield, Medal, Search, FileSpreadsheet, Eye, SlidersHorizontal, Flag, GraduationCap,
-  PackageCheck, Box, ShieldAlert, Key, Package, FileCheck2, CheckSquare, Layers, LayoutGrid
+  PackageCheck, Box, ShieldAlert, Key, Package, FileCheck2, CheckSquare, Layers, LayoutGrid, LogOut
 } from 'lucide-react';
 import { Soldier, SickLeave, AttendanceRecord, AuditLog, User as SystemUser, Unit, PrintSettings, MilitaryCustody } from '../types';
 import { fetchWithRetry, safeJson } from '../lib/api';
 import { downloadElementAsPdf, downloadElementAsImage, shareElementViaWhatsApp } from '../utils/pdfGenerator';
 import WhatsAppShareModal from './WhatsAppShareModal';
 import SoldierMonthlyAttendanceModal from './SoldierMonthlyAttendanceModal';
+import SoldierAccountTasksTab from './SoldierAccountTasksTab';
 import { PrintHeader, PrintFooter } from './PrintHeaderFooter';
 
 const MONTHS_LIST = [
@@ -39,7 +40,9 @@ interface SoldierProfileProps {
   units: Unit[];
   printSettings?: PrintSettings;
   onClose: () => void;
+  onLogout?: () => void;
   onSoldierUpdated?: () => void;
+  onAttendanceUpdated?: () => void;
   onOpenTransfer?: (soldier: Soldier) => void;
 }
 
@@ -49,7 +52,9 @@ export default function SoldierProfile({
   units, 
   printSettings,
   onClose,
+  onLogout,
   onSoldierUpdated,
+  onAttendanceUpdated,
   onOpenTransfer
 }: SoldierProfileProps) {
   
@@ -58,7 +63,7 @@ export default function SoldierProfile({
   const [error, setError] = useState<string | null>(null);
 
   // Lazy loaded states per tab
-  const [activeTab, setActiveTab] = useState<'personal' | 'military' | 'medical' | 'attendance' | 'timeline' | 'operational_history' | 'custody'>('personal');
+  const [activeTab, setActiveTab] = useState<'personal' | 'military' | 'medical' | 'attendance' | 'timeline' | 'operational_history' | 'custody' | 'account_tasks'>('personal');
   const [sickLeavesList, setSickLeavesList] = useState<SickLeave[]>([]);
   const [attendanceHistory, setAttendanceHistory] = useState<AttendanceRecord[]>([]);
   const [auditLogsList, setAuditLogsList] = useState<AuditLog[]>([]);
@@ -148,8 +153,8 @@ export default function SoldierProfile({
   const currentYearStr = useMemo(() => String(today.getFullYear()), [today]);
   const currentMonthStr = useMemo(() => String(today.getMonth() + 1).padStart(2, '0'), [today]);
 
-  const [selectedAttendanceYear, setSelectedAttendanceYear] = useState<string>('2026');
-  const [selectedAttendanceMonth, setSelectedAttendanceMonth] = useState<string>('07');
+  const [selectedAttendanceYear, setSelectedAttendanceYear] = useState<string>(currentYearStr);
+  const [selectedAttendanceMonth, setSelectedAttendanceMonth] = useState<string>(currentMonthStr);
   const [monthlyFilter, setMonthlyFilter] = useState<'all' | 'sick_only' | 'absent_only'>('all');
   const [isMonthlyAttendanceModalOpen, setIsMonthlyAttendanceModalOpen] = useState(false);
   const [printableMonthlySheet, setPrintableMonthlySheet] = useState<{ month: string; year: string } | null>(null);
@@ -243,12 +248,13 @@ export default function SoldierProfile({
       const rawCode = record ? record.statusCode : null;
 
       let normCode = 'unrecorded';
-      if (rawCode === 'ح' || rawCode === 'حاضر') normCode = 'ح';
-      else if (rawCode === 'غ' || rawCode === 'غائب' || rawCode === 'غياب') normCode = 'غ';
-      else if (rawCode === 'إ' || rawCode === 'إجازة' || rawCode === 'مجاز') normCode = 'إ';
-      else if (rawCode === 'م' || rawCode === 'مأمورية' || rawCode === 'مأموريات') normCode = 'م';
-      else if (rawCode === 'ع' || rawCode === 'مريض' || rawCode === 'طبي' || rawCode === 'ط' || rawCode === 'مرضية') normCode = 'ع';
-      else if (rawCode === 'ت' || rawCode === 'تأخير' || rawCode === 'تأخر') normCode = 'ت';
+      const rCode = rawCode as string;
+      if (rCode === 'ح' || rCode === 'حاضر') normCode = 'ح';
+      else if (rCode === 'غ' || rCode === 'غائب' || rCode === 'غياب') normCode = 'غ';
+      else if (rCode === 'إ' || rCode === 'إجازة' || rCode === 'مجاز') normCode = 'إ';
+      else if (rCode === 'م' || rCode === 'مأمورية' || rCode === 'مأموريات') normCode = 'م';
+      else if (rCode === 'ع' || rCode === 'مريض' || rCode === 'طبي' || rCode === 'ط' || rCode === 'مرضية') normCode = 'ع';
+      else if (rCode === 'ت' || rCode === 'تأخير' || rCode === 'تأخر') normCode = 'ت';
 
       return {
         dayNum,
@@ -306,9 +312,9 @@ export default function SoldierProfile({
   // Discipline & Attendance Analytics Stats
   const disciplineStats = useMemo(() => {
     const totalDaysCount = attendanceHistory.length;
-    const presentDaysCount = attendanceHistory.filter(r => r.statusCode === 'ح' || r.statusCode === 'حاضر').length;
-    const absentDaysCount = attendanceHistory.filter(r => r.statusCode === 'غ' || r.statusCode === 'غائب').length;
-    const dutyDaysCount = attendanceHistory.filter(r => r.statusCode === 'م' || r.statusCode === 'مأمورية').length;
+    const presentDaysCount = attendanceHistory.filter(r => (r.statusCode as string) === 'ح' || (r.statusCode as string) === 'حاضر').length;
+    const absentDaysCount = attendanceHistory.filter(r => (r.statusCode as string) === 'غ' || (r.statusCode as string) === 'غائب').length;
+    const dutyDaysCount = attendanceHistory.filter(r => (r.statusCode as string) === 'م' || (r.statusCode as string) === 'مأمورية').length;
     const rate = totalDaysCount > 0 ? Math.round(((presentDaysCount + dutyDaysCount) / totalDaysCount) * 100) : 100;
 
     const sorted = [...attendanceHistory].sort((a, b) => a.date.localeCompare(b.date));
@@ -317,7 +323,7 @@ export default function SoldierProfile({
     let tempAbsence = 0;
 
     for (const r of sorted) {
-      const code = r.statusCode;
+      const code = r.statusCode as string;
       if (code === 'ح' || code === 'حاضر') {
         currentStreak++;
         tempAbsence = 0;
@@ -728,8 +734,8 @@ export default function SoldierProfile({
 • أيام الحضور (ح): ${presentDays} يوم
 • أيام الغياب (غ): ${absentDays} يوم
 • المأموريات (م): ${dutyDays} يوم
-• الإجازات المعتمدة (إ): ${attendanceHistory.filter(a => a.statusCode === 'إ' || a.statusCode === 'إجازة').length} يوم
-• المرضية والعذر (ع): ${attendanceHistory.filter(a => a.statusCode === 'ع' || a.statusCode === 'مريض').length} يوم
+• الإجازات المعتمدة (إ): ${attendanceHistory.filter(a => (a.statusCode as string) === 'إ' || (a.statusCode as string) === 'إجازة').length} يوم
+• المرضية والعذر (ع): ${attendanceHistory.filter(a => (a.statusCode as string) === 'ع' || (a.statusCode as string) === 'مريض').length} يوم
 ----------------------------------
 *⚖️ الجزاءات والانضباط:* ${disciplinaryRecords.length > 0 ? `تم تسجيل (${disciplinaryRecords.length}) إجراء انضباطي` : 'لا توجد جزاءات مقيدة'}
 ----------------------------------
@@ -792,6 +798,7 @@ export default function SoldierProfile({
         const data = await safeJson(res, []);
         setAttendanceHistory(data);
       }
+      onAttendanceUpdated?.();
     } catch (err) {
       console.error("Error refreshing attendance history:", err);
     }
@@ -1419,9 +1426,9 @@ export default function SoldierProfile({
         categoryLabel: 'بداية الخدمة',
         title: 'مباشرة الخدمة والالتحاق العسكري الرسمي',
         date: soldier.joinDate,
-        authority: soldier.recruitmentOffice || 'مركز التجنيد وإدارة القوة البشرية',
+        authority: (soldier as any).recruitmentOffice || 'مركز التجنيد وإدارة القوة البشرية',
         details: `مباشرة الخدمة العسكرية الرسمية والتعيين الأولي على ملاك وحدة (${soldierUnitName}).`,
-        notes: `جهة التجنيد الأولى: ${soldier.recruitmentOffice || 'مركز التجنيد الرئيسي'} - رقم الملف العسكري: ${soldier.militaryNumber}`,
+        notes: `جهة التجنيد الأولى: ${(soldier as any).recruitmentOffice || 'مركز التجنيد الرئيسي'} - رقم الملف العسكري: ${soldier.militaryNumber}`,
         issuerName: 'إدارة الشؤون العسكرية والتجنيد'
       });
     }
@@ -1432,7 +1439,7 @@ export default function SoldierProfile({
       category: 'promotions',
       categoryLabel: 'الترقيات',
       title: `ترقية استحقاق عسكري - رتبة (${soldier.rank})`,
-      date: soldier.lastPromotionDate || soldier.joinDate || todayDateStr,
+      date: (soldier as any).lastPromotionDate || soldier.joinDate || todayDateStr,
       authority: 'القيادة العامة / إدارة شؤون الضباط والأفراد',
       orderNumber: `أ.ع/${soldier.militaryNumber}/2025`,
       details: `الترقية إلى رتبة (${soldier.rank}) بقرار رسمي معتمد وتعديل المسار الوظيفي بالفرد.`,
@@ -1548,12 +1555,12 @@ export default function SoldierProfile({
     if (timelineSearchQuery.trim()) {
       const q = timelineSearchQuery.toLowerCase();
       list = list.filter(item => 
-        item.title.toLowerCase().includes(q) ||
-        item.details.toLowerCase().includes(q) ||
+        (item.title && item.title.toLowerCase().includes(q)) ||
+        (item.details && item.details.toLowerCase().includes(q)) ||
         (item.orderNumber && item.orderNumber.toLowerCase().includes(q)) ||
         (item.authority && item.authority.toLowerCase().includes(q)) ||
         (item.notes && item.notes.toLowerCase().includes(q)) ||
-        item.date.includes(q)
+        (item.date && String(item.date).includes(q))
       );
     }
 
@@ -1632,12 +1639,16 @@ export default function SoldierProfile({
   }
 
   // Military rank badges color helper
-  const isOfficer = soldier.rank.includes('عميد') || 
-                    soldier.rank.includes('عقيد') || 
-                    soldier.rank.includes('مقدم') || 
-                    soldier.rank.includes('رائد') || 
-                    soldier.rank.includes('نقيب') || 
-                    soldier.rank.includes('ملازم');
+  const isOfficer = Boolean(
+    soldier?.rank && (
+      soldier.rank.includes('عميد') || 
+      soldier.rank.includes('عقيد') || 
+      soldier.rank.includes('مقدم') || 
+      soldier.rank.includes('رائد') || 
+      soldier.rank.includes('نقيب') || 
+      soldier.rank.includes('ملازم')
+    )
+  );
 
   // Handle file attachment upload for Leave Form
   const handleLeaveFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1739,6 +1750,10 @@ export default function SoldierProfile({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ records: attendanceRecords })
         });
+
+        if (onSaveAttendanceBatch) {
+          onSaveAttendanceBatch([soldierId], attendanceRecords.map(r => r.date), statusCodeToUse as any);
+        }
       }
 
       // 4. Send notification to authorized users
@@ -2059,6 +2074,11 @@ export default function SoldierProfile({
                 🎖️ {soldier.rank}
               </span>
               <h3 className="text-sm sm:text-base font-black text-white truncate tracking-tight">{soldier.fullName}</h3>
+              {currentUser.role === 'soldier' && (
+                <span className="hidden lg:inline-block px-2 py-0.5 bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-black rounded-full">
+                  بوابة الخدمة الذاتية للفرد
+                </span>
+              )}
             </div>
             <p className="text-[10px] sm:text-xs text-slate-400 font-bold truncate mt-0.5">
               الرقم العسكري: <span className="font-mono text-emerald-400 tracking-wider">{soldier.militaryNumber}</span> • {soldierUnitName}
@@ -2093,10 +2113,10 @@ export default function SoldierProfile({
           </button>
           <button 
             onClick={onClose}
-            className="p-2 bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 rounded-xl transition-all cursor-pointer border border-rose-500/20 min-h-[40px] flex items-center justify-center"
-            title="إغلاق الشاشة"
+            className="w-10 h-10 rounded-xl bg-rose-600/30 hover:bg-rose-600 text-rose-300 hover:text-white flex items-center justify-center transition-all cursor-pointer border border-rose-500/50 shadow-lg active:scale-95 shrink-0"
+            title="إغلاق الصفحة (X)"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5 font-black" />
           </button>
         </div>
       </div>
@@ -2196,6 +2216,21 @@ export default function SoldierProfile({
                 }`}>
                   {custodiesList.filter(c => c.status === 'نشط').length}
                 </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab('account_tasks')}
+              className={`px-3.5 sm:px-4 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer shrink-0 min-h-[42px] flex items-center justify-center gap-2 relative ${
+                activeTab === 'account_tasks' 
+                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20 font-black scale-[1.02]' 
+                  : 'bg-slate-900 text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-800'
+              }`}
+            >
+              <ShieldCheck className={`w-4 h-4 ${activeTab === 'account_tasks' ? 'text-slate-950' : 'text-sky-400'}`} />
+              <span>{currentUser.role === 'soldier' ? 'المهام والإجراءات المطلوب منك' : 'حساب الفرد وتحديد المهام'}</span>
+              {soldier?.hasAccount && (
+                <span className={`w-2 h-2 rounded-full ${activeTab === 'account_tasks' ? 'bg-slate-950' : 'bg-emerald-400'}`} />
               )}
             </button>
           </div>
@@ -2313,24 +2348,24 @@ export default function SoldierProfile({
                       {/* Status Card */}
                       <div className="bg-slate-900/90 border border-slate-800 p-2.5 rounded-xl space-y-0.5 text-right">
                         <span className="text-[10px] text-slate-400 font-black block">الحالة العسكرية</span>
-                        {soldier.militaryStatus === 'على رأس العمل' || soldier.status === 'على رأس العمل' ? (
+                        {soldier.militaryStatus === 'على رأس العمل' || (soldier as any).status === 'على رأس العمل' ? (
                           <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-400">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
                             على رأس العمل
                           </span>
-                        ) : soldier.militaryStatus === 'إجازة' || soldier.status === 'إجازة' ? (
+                        ) : soldier.militaryStatus === 'إجازة' || (soldier as any).status === 'إجازة' ? (
                           <span className="inline-flex items-center gap-1 text-[11px] font-black text-amber-400">
                             <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
                             إجازة رسمية
                           </span>
-                        ) : soldier.militaryStatus === 'موقوف' || soldier.status === 'موقوف' ? (
+                        ) : soldier.militaryStatus === 'موقوف' || (soldier as any).status === 'موقوف' ? (
                           <span className="inline-flex items-center gap-1 text-[11px] font-black text-rose-400">
                             <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
                             موقوف
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[11px] font-black text-slate-400">
-                            {soldier.militaryStatus || soldier.status || 'منقول'}
+                            {soldier.militaryStatus || (soldier as any).status || 'منقول'}
                           </span>
                         )}
                       </div>
@@ -2355,7 +2390,7 @@ export default function SoldierProfile({
                       <div className="bg-slate-900/90 border border-slate-800 p-2.5 rounded-xl space-y-0.5 text-right">
                         <span className="text-[10px] text-slate-400 font-black block">التواصل</span>
                         <span className="text-[11px] font-black text-slate-200 font-mono dir-ltr truncate block">
-                          {soldier.phoneNumber || soldier.phone || '0540000000'}
+                          {soldier.phoneNumber || (soldier as any).phone || '0540000000'}
                         </span>
                       </div>
                     </div>
@@ -2364,89 +2399,94 @@ export default function SoldierProfile({
                 </div>
 
                 {/* Tactical Quick Actions Panel (لوحة الأوامر والإجراءات السريعة للفرد) */}
-                <div className="bg-slate-950/80 border border-slate-800 p-3 sm:p-4 rounded-2xl print:hidden shadow-lg">
-                  <div className="flex items-center justify-between mb-2.5">
-                    <h4 className="text-xs font-black text-amber-400 flex items-center gap-2">
-                      <Activity className="w-4 h-4 text-amber-400" />
+                <div className="bg-slate-950/90 border border-slate-800/90 p-2.5 sm:p-3.5 rounded-2xl print:hidden shadow-lg backdrop-blur-sm">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-xs font-black text-amber-400 flex items-center gap-1.5">
+                      <Activity className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 shrink-0" />
                       <span>لوحة الأوامر والإجراءات السريعة للفرد</span>
                     </h4>
-                    <span className="text-[10px] text-slate-400 font-bold bg-slate-800 px-2.5 py-0.5 rounded-full border border-slate-700">
+                    <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold bg-slate-900 px-2 py-0.5 rounded-md border border-slate-800">
                       صلاحيات: {currentUser.role === 'admin' ? 'مدير النظام' : currentUser.role === 'commander' ? 'قائد وحدة' : 'ركن عمليات'}
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2 sm:gap-3">
+                  <div className="grid grid-cols-4 md:grid-cols-8 gap-1 sm:gap-2">
                     
                     {/* Military Custody Shortcut (العهد والأمانات) */}
                     <button
                       onClick={() => setActiveTab('custody')}
-                      className="flex flex-col items-center justify-center p-3 bg-slate-900 hover:bg-amber-950/40 border border-slate-800 hover:border-amber-500/40 rounded-xl gap-1.5 transition-all group cursor-pointer text-center min-h-[70px] shadow-sm active:scale-95"
+                      className="flex flex-col items-center justify-center p-1.5 sm:p-2.5 bg-slate-900/90 hover:bg-amber-950/50 border border-slate-800 hover:border-amber-500/50 rounded-xl gap-1 transition-all group cursor-pointer text-center min-h-[54px] sm:min-h-[64px] shadow-xs active:scale-95"
+                      title="العهد والأمانات"
                     >
-                      <div className="p-2 bg-amber-500/10 text-amber-400 rounded-lg group-hover:bg-amber-500/20 transition-colors">
-                        <PackageCheck className="w-4 h-4 stroke-[2.5]" />
+                      <div className="p-1 sm:p-1.5 bg-amber-500/10 text-amber-400 rounded-lg group-hover:bg-amber-500/20 transition-colors shrink-0">
+                        <PackageCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 stroke-[2.5]" />
                       </div>
-                      <span className="text-[11px] font-black text-slate-200 group-hover:text-amber-300 leading-tight">العهد والأمانات</span>
+                      <span className="text-[9px] sm:text-[11px] font-black text-slate-200 group-hover:text-amber-300 leading-tight">العهد والأمانات</span>
                     </button>
                     
                     {/* Grant Leave Button (منح إجازة) */}
                     {currentUser.role !== 'operations' ? (
                       <button
                         onClick={() => setIsGrantLeaveModalOpen(true)}
-                        className="flex flex-col items-center justify-center p-3 bg-slate-900 hover:bg-emerald-950/40 border border-slate-800 hover:border-emerald-500/40 rounded-xl gap-1.5 transition-all group cursor-pointer text-center min-h-[70px] shadow-sm active:scale-95"
+                        className="flex flex-col items-center justify-center p-1.5 sm:p-2.5 bg-slate-900/90 hover:bg-emerald-950/50 border border-slate-800 hover:border-emerald-500/50 rounded-xl gap-1 transition-all group cursor-pointer text-center min-h-[54px] sm:min-h-[64px] shadow-xs active:scale-95"
+                        title="منح إجازة"
                       >
-                        <div className="p-2 bg-emerald-500/10 text-emerald-400 rounded-lg group-hover:bg-emerald-500/20 transition-colors">
-                          <Plus className="w-4 h-4 stroke-[2.5]" />
+                        <div className="p-1 sm:p-1.5 bg-emerald-500/10 text-emerald-400 rounded-lg group-hover:bg-emerald-500/20 transition-colors shrink-0">
+                          <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4 stroke-[2.5]" />
                         </div>
-                        <span className="text-[11px] font-black text-slate-200 group-hover:text-emerald-300 leading-tight">منح إجازة</span>
+                        <span className="text-[9px] sm:text-[11px] font-black text-slate-200 group-hover:text-emerald-300 leading-tight">منح إجازة</span>
                       </button>
                     ) : (
-                      <div className="flex flex-col items-center justify-center p-3 bg-slate-900/50 border border-slate-800/50 rounded-xl gap-1.5 opacity-40 text-center min-h-[70px]">
-                        <div className="p-2 bg-slate-800 text-slate-500 rounded-lg">
-                          <Lock className="w-4 h-4" />
+                      <div className="flex flex-col items-center justify-center p-1.5 sm:p-2.5 bg-slate-900/50 border border-slate-800/50 rounded-xl gap-1 opacity-40 text-center min-h-[54px] sm:min-h-[64px]">
+                        <div className="p-1 sm:p-1.5 bg-slate-800 text-slate-500 rounded-lg shrink-0">
+                          <Lock className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                         </div>
-                        <span className="text-[11px] font-black text-slate-500 leading-tight">منح إجازة</span>
+                        <span className="text-[9px] sm:text-[11px] font-black text-slate-500 leading-tight">منح إجازة</span>
                       </div>
                     )}
 
                     {/* Medical Record Shortcut */}
                     <button
                       onClick={() => setActiveTab('medical')}
-                      className="flex flex-col items-center justify-center p-3 bg-slate-900 hover:bg-emerald-950/40 border border-slate-800 hover:border-emerald-500/40 rounded-xl gap-1.5 transition-all group cursor-pointer text-center min-h-[70px] shadow-sm active:scale-95"
+                      className="flex flex-col items-center justify-center p-1.5 sm:p-2.5 bg-slate-900/90 hover:bg-emerald-950/50 border border-slate-800 hover:border-emerald-500/50 rounded-xl gap-1 transition-all group cursor-pointer text-center min-h-[54px] sm:min-h-[64px] shadow-xs active:scale-95"
+                      title="السجل الطبي"
                     >
-                      <div className="p-2 bg-emerald-500/10 text-emerald-400 rounded-lg group-hover:bg-emerald-500/20 transition-colors">
-                        <HeartPulse className="w-4 h-4" />
+                      <div className="p-1 sm:p-1.5 bg-emerald-500/10 text-emerald-400 rounded-lg group-hover:bg-emerald-500/20 transition-colors shrink-0">
+                        <HeartPulse className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                       </div>
-                      <span className="text-[11px] font-black text-slate-200 group-hover:text-emerald-300 leading-tight">السجل الطبي</span>
+                      <span className="text-[9px] sm:text-[11px] font-black text-slate-200 group-hover:text-emerald-300 leading-tight">السجل الطبي</span>
                     </button>
 
                     {/* Attendance Shortcut */}
                     <button
                       onClick={() => setActiveTab('attendance')}
-                      className="flex flex-col items-center justify-center p-3 bg-slate-900 hover:bg-indigo-950/40 border border-slate-800 hover:border-indigo-500/40 rounded-xl gap-1.5 transition-all group cursor-pointer text-center min-h-[70px] shadow-sm active:scale-95"
+                      className="flex flex-col items-center justify-center p-1.5 sm:p-2.5 bg-slate-900/90 hover:bg-indigo-950/50 border border-slate-800 hover:border-indigo-500/50 rounded-xl gap-1 transition-all group cursor-pointer text-center min-h-[54px] sm:min-h-[64px] shadow-xs active:scale-95"
+                      title="التحضير والغياب"
                     >
-                      <div className="p-2 bg-indigo-500/10 text-indigo-400 rounded-lg group-hover:bg-indigo-500/20 transition-colors">
-                        <Calendar className="w-4 h-4" />
+                      <div className="p-1 sm:p-1.5 bg-indigo-500/10 text-indigo-400 rounded-lg group-hover:bg-indigo-500/20 transition-colors shrink-0">
+                        <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                       </div>
-                      <span className="text-[11px] font-black text-slate-200 group-hover:text-indigo-300 leading-tight">التحضير والغياب</span>
+                      <span className="text-[9px] sm:text-[11px] font-black text-slate-200 group-hover:text-indigo-300 leading-tight">التحضير والغياب</span>
                     </button>
 
                     {/* Transfer Soldier */}
                     {currentUser.role !== 'operations' && onOpenTransfer ? (
                       <button
                         onClick={() => onOpenTransfer(soldier)}
-                        className="flex flex-col items-center justify-center p-3 bg-slate-900 hover:bg-amber-950/40 border border-slate-800 hover:border-amber-500/40 rounded-xl gap-1.5 transition-all group cursor-pointer text-center min-h-[70px] shadow-sm active:scale-95"
+                        className="flex flex-col items-center justify-center p-1.5 sm:p-2.5 bg-slate-900/90 hover:bg-amber-950/50 border border-slate-800 hover:border-amber-500/50 rounded-xl gap-1 transition-all group cursor-pointer text-center min-h-[54px] sm:min-h-[64px] shadow-xs active:scale-95"
+                        title="نقل وتبعية"
                       >
-                        <div className="p-2 bg-amber-500/10 text-amber-400 rounded-lg group-hover:bg-amber-500/20 transition-colors">
-                          <ArrowLeftRight className="w-4 h-4" />
+                        <div className="p-1 sm:p-1.5 bg-amber-500/10 text-amber-400 rounded-lg group-hover:bg-amber-500/20 transition-colors shrink-0">
+                          <ArrowLeftRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                         </div>
-                        <span className="text-[11px] font-black text-slate-200 group-hover:text-amber-300 leading-tight">نقل وتبعية</span>
+                        <span className="text-[9px] sm:text-[11px] font-black text-slate-200 group-hover:text-amber-300 leading-tight">نقل وتبعية</span>
                       </button>
                     ) : (
-                      <div className="flex flex-col items-center justify-center p-3 bg-slate-900/50 border border-slate-800/50 rounded-xl gap-1.5 opacity-40 text-center min-h-[70px]">
-                        <div className="p-2 bg-slate-800 text-slate-500 rounded-lg">
-                          <Lock className="w-4 h-4" />
+                      <div className="flex flex-col items-center justify-center p-1.5 sm:p-2.5 bg-slate-900/50 border border-slate-800/50 rounded-xl gap-1 opacity-40 text-center min-h-[54px] sm:min-h-[64px]">
+                        <div className="p-1 sm:p-1.5 bg-slate-800 text-slate-500 rounded-lg shrink-0">
+                          <Lock className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                         </div>
-                        <span className="text-[11px] font-black text-slate-500 leading-tight">نقل وتبعية</span>
+                        <span className="text-[9px] sm:text-[11px] font-black text-slate-500 leading-tight">نقل وتبعية</span>
                       </div>
                     )}
 
@@ -2454,42 +2494,45 @@ export default function SoldierProfile({
                     {currentUser.role !== 'operations' ? (
                       <button
                         onClick={() => setIsEditModalOpen(true)}
-                        className="flex flex-col items-center justify-center p-3 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-xl gap-1.5 transition-all group cursor-pointer text-center min-h-[70px] shadow-sm active:scale-95"
+                        className="flex flex-col items-center justify-center p-1.5 sm:p-2.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-xl gap-1 transition-all group cursor-pointer text-center min-h-[54px] sm:min-h-[64px] shadow-xs active:scale-95"
+                        title="تعديل الملف"
                       >
-                        <div className="p-2 bg-slate-800 text-slate-300 rounded-lg group-hover:bg-slate-700 transition-colors">
-                          <Edit className="w-4 h-4 text-amber-400" />
+                        <div className="p-1 sm:p-1.5 bg-slate-800 text-slate-300 rounded-lg group-hover:bg-slate-700 transition-colors shrink-0">
+                          <Edit className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
                         </div>
-                        <span className="text-[11px] font-black text-slate-200 leading-tight">تعديل الملف</span>
+                        <span className="text-[9px] sm:text-[11px] font-black text-slate-200 leading-tight">تعديل الملف</span>
                       </button>
                     ) : (
-                      <div className="flex flex-col items-center justify-center p-3 bg-slate-900/50 border border-slate-800/50 rounded-xl gap-1.5 opacity-40 text-center min-h-[70px]">
-                        <div className="p-2 bg-slate-800 text-slate-500 rounded-lg">
-                          <Lock className="w-4 h-4" />
+                      <div className="flex flex-col items-center justify-center p-1.5 sm:p-2.5 bg-slate-900/50 border border-slate-800/50 rounded-xl gap-1 opacity-40 text-center min-h-[54px] sm:min-h-[64px]">
+                        <div className="p-1 sm:p-1.5 bg-slate-800 text-slate-500 rounded-lg shrink-0">
+                          <Lock className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                         </div>
-                        <span className="text-[11px] font-black text-slate-500 leading-tight">تعديل الملف</span>
+                        <span className="text-[9px] sm:text-[11px] font-black text-slate-500 leading-tight">تعديل الملف</span>
                       </div>
                     )}
 
                     {/* Attachments */}
                     <button
                       onClick={() => setIsAttachmentModalOpen(true)}
-                      className="flex flex-col items-center justify-center p-3 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-xl gap-1.5 transition-all group cursor-pointer text-center min-h-[70px] shadow-sm active:scale-95"
+                      className="flex flex-col items-center justify-center p-1.5 sm:p-2.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 rounded-xl gap-1 transition-all group cursor-pointer text-center min-h-[54px] sm:min-h-[64px] shadow-xs active:scale-95"
+                      title="مرفقات الخدمة"
                     >
-                      <div className="p-2 bg-slate-800 text-slate-300 rounded-lg group-hover:bg-slate-700 transition-colors">
-                        <Paperclip className="w-4 h-4 text-slate-300" />
+                      <div className="p-1 sm:p-1.5 bg-slate-800 text-slate-300 rounded-lg group-hover:bg-slate-700 transition-colors shrink-0">
+                        <Paperclip className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-300" />
                       </div>
-                      <span className="text-[11px] font-black text-slate-200 leading-tight">مرفقات الخدمة</span>
+                      <span className="text-[9px] sm:text-[11px] font-black text-slate-200 leading-tight">مرفقات الخدمة</span>
                     </button>
 
                     {/* Print Sellsheet */}
                     <button
                       onClick={handlePrint}
-                      className="flex flex-col items-center justify-center p-3 bg-amber-500 hover:bg-amber-400 text-slate-950 border border-amber-400 rounded-xl gap-1.5 transition-all group cursor-pointer text-center col-span-2 sm:col-span-1 min-h-[70px] shadow-md shadow-amber-950/30 active:scale-95"
+                      className="flex flex-col items-center justify-center p-1.5 sm:p-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 border border-amber-400 rounded-xl gap-1 transition-all group cursor-pointer text-center min-h-[54px] sm:min-h-[64px] shadow-md shadow-amber-950/30 active:scale-95"
+                      title="طباعة السجل"
                     >
-                      <div className="p-2 bg-slate-950/10 rounded-lg">
-                        <Printer className="w-4 h-4 stroke-[2.5]" />
+                      <div className="p-1 sm:p-1.5 bg-slate-950/10 rounded-lg shrink-0">
+                        <Printer className="w-3.5 h-3.5 sm:w-4 sm:h-4 stroke-[2.5]" />
                       </div>
-                      <span className="text-[11px] font-black leading-tight">طباعة السجل</span>
+                      <span className="text-[9px] sm:text-[11px] font-black leading-tight">طباعة السجل</span>
                     </button>
 
                   </div>
@@ -2959,7 +3002,7 @@ export default function SoldierProfile({
                         <p className="text-xs text-slate-300 font-bold mt-0.5">
                           الحالة الحالية: {todayRecord ? (
                             <span className="text-amber-400 font-black">
-                              ({todayRecord.statusCode === 'ح' ? 'حاضر بالكتيبة 🟢' : todayRecord.statusCode === 'غ' ? 'غائب غير مبرر 🔴' : todayRecord.statusCode === 'إ' ? 'إجازة رسمية 🟡' : todayRecord.statusCode === 'م' ? 'في مأمورية 🔵' : todayRecord.statusCode === 'ت' ? 'متأخر عن الموعد 🟧' : 'مرضية 🩺'})
+                              ({(todayRecord.statusCode as string) === 'ح' ? 'حاضر بالكتيبة 🟢' : (todayRecord.statusCode as string) === 'غ' ? 'غائب غير مبرر 🔴' : (todayRecord.statusCode as string) === 'إ' ? 'إجازة رسمية 🟡' : (todayRecord.statusCode as string) === 'م' ? 'في مأمورية 🔵' : (todayRecord.statusCode as string) === 'ت' ? 'متأخر عن الموعد 🟧' : 'مرضية 🩺'})
                             </span>
                           ) : (
                             <span className="text-slate-400 italic">لم يتم تحضيره اليوم بعد ⏳</span>
@@ -3072,7 +3115,7 @@ export default function SoldierProfile({
                         type="button"
                         onClick={() => handleSingleDayAttendanceChange(todayDateStr, 'ت')}
                         className={`px-3 py-2 rounded-xl border flex items-center justify-center gap-1 cursor-pointer transition-all ${
-                          todayRecord?.statusCode === 'ت'
+                          (todayRecord?.statusCode as string) === 'ت'
                             ? 'bg-orange-600 text-white border-orange-400 shadow-sm ring-2 ring-orange-400'
                             : 'bg-slate-800 hover:bg-orange-950/70 text-orange-300 border-slate-700'
                         }`}
@@ -4192,13 +4235,13 @@ export default function SoldierProfile({
                   if (custodySearch.trim()) {
                     const q = custodySearch.toLowerCase();
                     filtered = filtered.filter(item =>
-                      item.custodyNumber.toLowerCase().includes(q) ||
-                      item.type.toLowerCase().includes(q) ||
-                      item.description.toLowerCase().includes(q) ||
+                      (item.custodyNumber && item.custodyNumber.toLowerCase().includes(q)) ||
+                      (item.type && item.type.toLowerCase().includes(q)) ||
+                      (item.description && item.description.toLowerCase().includes(q)) ||
                       (item.orderRef && item.orderRef.toLowerCase().includes(q)) ||
                       (item.notes && item.notes.toLowerCase().includes(q)) ||
-                      item.issuingDept.toLowerCase().includes(q) ||
-                      item.issuingOfficer.toLowerCase().includes(q)
+                      (item.issuingDept && item.issuingDept.toLowerCase().includes(q)) ||
+                      (item.issuingOfficer && item.issuingOfficer.toLowerCase().includes(q))
                     );
                   }
                   if (custodyStatusFilter !== 'all') {
@@ -4598,6 +4641,25 @@ export default function SoldierProfile({
                     </div>
                   );
                 })()}
+              </motion.div>
+            )}
+
+            {/* TAB 8: Soldier Account Settings & Assigned Tasks */}
+            {activeTab === 'account_tasks' && soldier && (
+              <motion.div
+                initial={{ opacity: 0, y: 5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -5 }}
+                transition={{ duration: 0.15 }}
+              >
+                <SoldierAccountTasksTab
+                  soldier={soldier}
+                  currentUser={currentUser}
+                  onAccountUpdated={() => {
+                    fetchFullSoldier();
+                    if (onSoldierUpdated) onSoldierUpdated();
+                  }}
+                />
               </motion.div>
             )}
 
@@ -6116,7 +6178,7 @@ export default function SoldierProfile({
                 </div>
                 <div>
                   <span className="text-slate-500 block text-[10px]">الحالة الوظيفية:</span>
-                  <span className="text-slate-900 font-black text-sm">{soldier.status}</span>
+                  <span className="text-slate-900 font-black text-sm">{soldier.militaryStatus || (soldier as any).status}</span>
                 </div>
               </div>
 
@@ -7179,7 +7241,6 @@ export default function SoldierProfile({
         onClose={() => setIsWhatsAppModalOpen(false)}
         units={units}
         attendanceRecords={attendanceHistory}
-        printSettings={printSettings}
       />
 
       </div>

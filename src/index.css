@@ -135,3 +135,411 @@
     40% { transform: scale(1); opacity: 1; }
 }
 
+/* --- GLOBAL LIGHT MODE COMPONENT OVERRIDES --- */
+.light-mode {
+  color-scheme: light;
+}
+
+.light-mode body {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+/* Backgrounds in Light Mode */
+.light-mode .bg-slate-950 {
+  background-color: #f8fafc !important;
+}
+
+.light-mode .bg-slate-900 {
+  background-color: #ffffff !important;
+}
+
+.light-mode .bg-slate-800 {
+  background-color: #f1f5f9 !important;
+}
+
+.light-mode .bg-slate-700 {
+  background-color: #e2e8f0 !important;
+}
+
+/* Modal Scrim Backdrop Overrides in Light Mode */
+.light-mode .fixed.inset-0.bg-slate-950\/80,
+.light-mode .fixed.inset-0.bg-slate-950\/85,
+.light-mode .fixed.inset-0.bg-slate-950\/90,
+.light-mode .fixed.inset-0.bg-slate-950\/60,
+.light-mode .fixed.inset-0.bg-slate-950\/70 {
+  background-color: rgba(15, 23, 42, 0.55) !important;
+}
+
+.light-mode .bg-slate-950\/80,
+.light-mode .bg-slate-950\/90,
+.light-mode .bg-slate-950\/95,
+.light-mode .bg-slate-950\/60 {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+}
+
+.light-mode .bg-slate-900\/90,
+.light-mode .bg-slate-900\/80,
+.light-mode .bg-slate-900\/60,
+.light-mode .bg-slate-900\/50,
+.light-mode .bg-slate-900\/40 {
+  background-color: rgba(248, 250, 252, 0.95) !important;
+}
+
+.light-mode .bg-slate-800\/80,
+.light-mode .bg-slate-800\/60,
+.light-mode .bg-slate-800\/50,
+.light-mode .bg-slate-800\/40 {
+  background-color: rgba(241, 245, 249, 0.9) !important;
+}
+
+/* Gradients in Light Mode */
+.light-mode .from-slate-900,
+.light-mode .from-slate-950 {
+  --tw-gradient-from: #ffffff var(--tw-gradient-from-position) !important;
+}
+
+.light-mode .via-slate-900,
+.light-mode .via-slate-950,
+.light-mode .via-slate-900\/90 {
+  --tw-gradient-via: #f8fafc var(--tw-gradient-via-position) !important;
+}
+
+.light-mode .to-slate-900,
+.light-mode .to-slate-950 {
+  --tw-gradient-to: #f1f5f9 var(--tw-gradient-to-position) !important;
+}
+
+/* Borders in Light Mode */
+.light-mode .border-slate-800,
+.light-mode .border-slate-800\/80,
+.light-mode .border-slate-800\/60,
+.light-mode .border-slate-800\/40,
+.light-mode .border-slate-700,
+.light-mode .border-slate-700\/80,
+.light-mode .border-slate-700\/50,
+.light-mode .border-slate-600 {
+  border-color: #cbd5e1 !important;
+}
+
+/* Typography in Light Mode - High Contrast Fixes */
+.light-mode .text-white {
+  color: #0f172a !important;
+}
+
+.light-mode .text-slate-100,
+.light-mode .text-slate-200,
+.light-mode .text-slate-300 {
+  color: #1e293b !important;
+}
+
+.light-mode .text-slate-400 {
+  color: #475569 !important;
+}
+
+.light-mode .text-slate-500 {
+  color: #64748b !important;
+}
+
+/* Accent Colors tuned for Light Background Readability */
+.light-mode .text-amber-300,
+.light-mode .text-amber-400 {
+  color: #b45309 !important; /* amber-700 for high-contrast on white */
+}
+
+.light-mode .text-emerald-300,
+.light-mode .text-emerald-400 {
+  color: #047857 !important; /* emerald-700 */
+}
+
+.light-mode .text-rose-300,
+.light-mode .text-rose-400 {
+  color: #be123c !important; /* rose-700 */
+}
+
+.light-mode .text-cyan-300,
+.light-mode .text-cyan-400,
+.light-mode .text-sky-400 {
+  color: #0369a1 !important; /* sky-700 */
+}
+
+.light-mode .text-blue-300,
+.light-mode .text-blue-400 {
+  color: #1d4ed8 !important; /* blue-700 */
+}
+
+/* Form Inputs, Selects & Textareas in Light Mode */
+.light-mode input,
+.light-mode select,
+.light-mode textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+.light-mode select option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+.light-mode input::placeholder,
+.light-mode textarea::placeholder {
+  color: #64748b !important;
+}
+
+/* Hover and Active State Overrides in Light Mode */
+.light-mode .hover\:bg-slate-800:hover,
+.light-mode .hover\:bg-slate-800\/80:hover {
+  background-color: #e2e8f0 !important;
+}
+
+.light-mode .hover\:bg-slate-700:hover,
+.light-mode .hover\:bg-slate-700\/80:hover {
+  background-color: #cbd5e1 !important;
+}
+
+.light-mode .hover\:bg-slate-900:hover,
+.light-mode .hover\:bg-slate-900\/80:hover {
+  background-color: #f1f5f9 !important;
+}
+
+.light-mode .hover\:bg-slate-950:hover {
+  background-color: #ffffff !important;
+}
+
+.light-mode .active\:bg-slate-700:active {
+  background-color: #cbd5e1 !important;
+}
+
+/* Contrast Protection for Dark Text on Amber/Colored Accent Buttons */
+.light-mode .text-slate-900,
+.light-mode .text-slate-950 {
+  color: #020617 !important;
+}
+
+.light-mode .bg-amber-500 .text-slate-950,
+.light-mode .bg-amber-500.text-slate-950,
+.light-mode .bg-amber-400 .text-slate-950,
+.light-mode .bg-amber-400.text-slate-950 {
+  color: #020617 !important;
+}
+
+/* Light Mode Custom Scrollbar */
+.light-mode ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.light-mode ::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+.light-mode ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.light-mode ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Table Overrides in Light Mode */
+.light-mode table thead {
+  background-color: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+}
+
+.light-mode table thead tr th {
+  color: #0f172a !important;
+}
+
+.light-mode table tbody tr {
+  border-color: #e2e8f0 !important;
+}
+
+.light-mode table tbody tr:hover {
+  background-color: #f8fafc !important;
+}
+
+/* Soft Light Mode Drop Shadows */
+.light-mode .shadow-2xl,
+.light-mode .shadow-xl,
+.light-mode .shadow-lg {
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.03) !important;
+}
+
+/* Preserve Authentic Military Dark ID Card Appearance in Light Mode */
+.light-mode .military-id-card {
+  background: linear-gradient(to bottom right, #0f172a, #020617, #0f172a) !important;
+  border-color: rgba(245, 158, 11, 0.7) !important;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3) !important;
+}
+
+.light-mode .military-id-card .text-white {
+  color: #ffffff !important;
+}
+
+.light-mode .military-id-card .text-slate-100,
+.light-mode .military-id-card .text-slate-200,
+.light-mode .military-id-card .text-slate-300 {
+  color: #cbd5e1 !important;
+}
+
+.light-mode .military-id-card .text-slate-400 {
+  color: #94a3b8 !important;
+}
+
+.light-mode .military-id-card .text-amber-300,
+.light-mode .military-id-card .text-amber-400 {
+  color: #fcd34d !important;
+}
+
+.light-mode .military-id-card .text-emerald-400 {
+  color: #34d399 !important;
+}
+
+.light-mode .military-id-card .bg-slate-950\/80 {
+  background-color: rgba(2, 6, 23, 0.8) !important;
+}
+
+/* --- HIGH CONTRAST MODE (وضع التباين العالي) --- */
+:root.high-contrast-mode,
+.high-contrast-mode {
+    --bg: #000000;
+    --card-bg: #000000;
+    --card-border: #ffffff;
+    --card-shadow: 0 0 0 2px #ffffff;
+    --text-primary: #ffffff;
+    --text-secondary: #ffff00;
+    --text-muted: #e0e0e0;
+    --input-bg: #000000;
+    --input-border: #ffffff;
+    --input-text: #ffffff;
+    --input-placeholder: #cccccc;
+    --input-focus-border: #ffff00;
+    --btn-gradient: #ffff00;
+    --btn-text: #000000;
+    --link-color: #ffff00;
+    --link-hover: #ffffff;
+    --divider-color: #ffffff;
+    --toggle-bg: #333333;
+    --toggle-icon: #ffff00;
+    --splash-bg: #000000;
+    --splash-text: #ffffff;
+    --splash-accent: #ffff00;
+    --splash-subtle: rgba(255, 255, 0, 0.3);
+    color-scheme: dark;
+}
+
+.high-contrast-mode {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+}
+
+.high-contrast-mode body {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+}
+
+.high-contrast-mode * {
+  border-color: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.high-contrast-mode button,
+.high-contrast-mode input,
+.high-contrast-mode select,
+.high-contrast-mode textarea {
+  border: 2px solid #ffffff !important;
+}
+
+.high-contrast-mode button:focus,
+.high-contrast-mode button:focus-visible,
+.high-contrast-mode input:focus,
+.high-contrast-mode input:focus-visible,
+.high-contrast-mode select:focus,
+.high-contrast-mode select:focus-visible,
+.high-contrast-mode textarea:focus,
+.high-contrast-mode textarea:focus-visible {
+  outline: 3px solid #ffff00 !important;
+  outline-offset: 2px !important;
+}
+
+.high-contrast-mode .text-slate-300,
+.high-contrast-mode .text-slate-400,
+.high-contrast-mode .text-slate-500,
+.high-contrast-mode .text-slate-600,
+.high-contrast-mode .text-slate-700,
+.high-contrast-mode .text-slate-800,
+.high-contrast-mode .text-slate-900,
+.high-contrast-mode .text-slate-950 {
+  color: #ffffff !important;
+}
+
+.high-contrast-mode .bg-slate-50,
+.high-contrast-mode .bg-slate-100,
+.high-contrast-mode .bg-slate-200,
+.high-contrast-mode .bg-slate-300,
+.high-contrast-mode .bg-slate-700,
+.high-contrast-mode .bg-slate-800,
+.high-contrast-mode .bg-slate-900,
+.high-contrast-mode .bg-slate-950,
+.high-contrast-mode .bg-white {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+}
+
+.high-contrast-mode .text-amber-300,
+.high-contrast-mode .text-amber-400,
+.high-contrast-mode .text-amber-500,
+.high-contrast-mode .text-amber-600,
+.high-contrast-mode .text-amber-700,
+.high-contrast-mode .text-amber-800,
+.high-contrast-mode .text-amber-900 {
+  color: #ffee00 !important;
+}
+
+.high-contrast-mode .text-emerald-300,
+.high-contrast-mode .text-emerald-400,
+.high-contrast-mode .text-emerald-500,
+.high-contrast-mode .text-emerald-600,
+.high-contrast-mode .text-emerald-700,
+.high-contrast-mode .text-emerald-800,
+.high-contrast-mode .text-emerald-900 {
+  color: #00ff66 !important;
+}
+
+.high-contrast-mode .text-rose-300,
+.high-contrast-mode .text-rose-400,
+.high-contrast-mode .text-rose-500,
+.high-contrast-mode .text-rose-600,
+.high-contrast-mode .text-rose-700,
+.high-contrast-mode .text-rose-800 {
+  color: #ff3366 !important;
+}
+
+.high-contrast-mode .text-sky-300,
+.high-contrast-mode .text-sky-400,
+.high-contrast-mode .text-sky-500,
+.high-contrast-mode .text-sky-600,
+.high-contrast-mode .text-sky-700 {
+  color: #00e5ff !important;
+}
+
+.high-contrast-mode .bg-emerald-600,
+.high-contrast-mode .bg-emerald-700,
+.high-contrast-mode .bg-emerald-800 {
+  background-color: #008000 !important;
+  color: #ffffff !important;
+  border: 2px solid #00ff66 !important;
+}
+
+.high-contrast-mode .bg-amber-500,
+.high-contrast-mode .bg-amber-600 {
+  background-color: #996600 !important;
+  color: #ffffff !important;
+  border: 2px solid #ffee00 !important;
+}
+
+
+

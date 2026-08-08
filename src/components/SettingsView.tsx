@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Sliders, 
   Bell, 
@@ -30,13 +30,17 @@ import {
   Trash2,
   Eye,
   FileText,
-  X
+  X,
+  Sparkles,
+  CheckCircle2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { SystemSettings, Unit, Soldier, AttendanceRecord, AuditLog, PrintSettings } from '../types';
+import { SystemSettings, Unit, Soldier, AttendanceRecord, AuditLog, PrintSettings, PrintTemplateId } from '../types';
+import { PRINT_TEMPLATES, PrintHeader, PrintFooter, PrintWrapper } from './PrintHeaderFooter';
 import { downloadElementAsPdf } from '../utils/pdfGenerator';
 import BackupRestore from './BackupRestore';
 import UsersPermissionsManager from './UsersPermissionsManager';
+import PWAInstallBanner from './PWAInstallBanner';
 
 interface SettingsViewProps {
   settings: SystemSettings;
@@ -204,20 +208,57 @@ export default function SettingsView({
   initialSubTab,
   onSubTabChange
 }: SettingsViewProps) {
-  const [warningThreshold, setWarningThreshold] = useState(settings.warningThreshold);
-  const [dailyReminderEnabled, setDailyReminderEnabled] = useState(settings.dailyReminderEnabled);
-  const [dailyReminderTime, setDailyReminderTime] = useState(settings.dailyReminderTime);
-  const [autoBackupEnabled, setAutoBackupEnabled] = useState(settings.autoBackupEnabled);
-  const [hijriSupport, setHijriSupport] = useState(settings.hijriSupport);
+  const safeSettings = settings || {
+    warningThreshold: 70,
+    dailyReminderEnabled: true,
+    dailyReminderTime: '08:30',
+    autoBackupEnabled: true,
+    hijriSupport: true,
+    highContrastMode: false,
+    printSettings: undefined
+  };
+
+  const [warningThreshold, setWarningThreshold] = useState(safeSettings.warningThreshold ?? 70);
+  const [dailyReminderEnabled, setDailyReminderEnabled] = useState(safeSettings.dailyReminderEnabled ?? true);
+  const [dailyReminderTime, setDailyReminderTime] = useState(safeSettings.dailyReminderTime ?? '08:30');
+  const [autoBackupEnabled, setAutoBackupEnabled] = useState(safeSettings.autoBackupEnabled ?? true);
+  const [hijriSupport, setHijriSupport] = useState(safeSettings.hijriSupport ?? true);
+  const [highContrastMode, setHighContrastMode] = useState(safeSettings.highContrastMode || false);
+
+  useEffect(() => {
+    if (settings) {
+      if (settings.warningThreshold !== undefined) setWarningThreshold(settings.warningThreshold);
+      if (settings.dailyReminderEnabled !== undefined) setDailyReminderEnabled(settings.dailyReminderEnabled);
+      if (settings.dailyReminderTime !== undefined) setDailyReminderTime(settings.dailyReminderTime);
+      if (settings.autoBackupEnabled !== undefined) setAutoBackupEnabled(settings.autoBackupEnabled);
+      if (settings.hijriSupport !== undefined) setHijriSupport(settings.hijriSupport);
+      if (settings.highContrastMode !== undefined) setHighContrastMode(settings.highContrastMode);
+    }
+  }, [settings]);
   
   // Clean settings subtabs
   const [subTabState, setSubTabState] = useState<'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'print'>(initialSubTab || 'menu');
-  
+
+  // Permission check for General Readiness Settings
+  const canAccessGeneralSettings = useMemo(() => {
+    if (currentUserRole === 'admin' || currentUser?.role === 'admin') return true;
+    if (currentUser?.canManageSettings || currentUser?.canManageReadinessSettings) return true;
+    if (currentUser?.permissions?.['النظام']?.manageSettings) return true;
+    if (currentUser?.permissions?.manageSettings) return true;
+    return false;
+  }, [currentUserRole, currentUser]);
+
   useEffect(() => {
     if (initialSubTab) {
       setSubTabState(initialSubTab);
     }
   }, [initialSubTab]);
+
+  useEffect(() => {
+    if (subTabState === 'settings' && !canAccessGeneralSettings) {
+      setSubTabState('menu');
+    }
+  }, [subTabState, canAccessGeneralSettings]);
 
   const setSubTab = (tab: 'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'print') => {
     setSubTabState(tab);
@@ -229,26 +270,27 @@ export default function SettingsView({
   const subTab = subTabState;
   
   // Print Settings State
-  const [logoUrl, setLogoUrl] = useState<string | null>(settings.printSettings?.logoUrl || null);
-  const [signatureUrl, setSignatureUrl] = useState<string | null>(settings.printSettings?.signatureUrl || null);
-  const [sealUrl, setSealUrl] = useState<string | null>(settings.printSettings?.sealUrl || null);
-  const [countryName, setCountryName] = useState<string>(settings.printSettings?.countryName || 'المملكة العربية السعودية');
-  const [ministryName, setMinistryName] = useState<string>(settings.printSettings?.ministryName || 'وزارة الدفاع - القيادة العامة');
-  const [commandName, setCommandName] = useState<string>(settings.printSettings?.commandName || 'قيادة القوات البرية / المنطقة الشمالية الغربية');
-  const [unitName, setUnitName] = useState<string>(settings.printSettings?.unitName || 'كتيبة المشاة الآلية الثانية');
-  const [headerText, setHeaderText] = useState<string>(settings.printSettings?.headerText || 'إشعار وتحضير قوة الجاهزية القتالية العاجلة');
-  const [footerText, setFooterText] = useState<string>(settings.printSettings?.footerText || 'هذا المستند سري ومحدود، ويخضع للتعليمات والأوامر العسكرية الصادرة.');
-  const [showLogo, setShowLogo] = useState<boolean>(settings.printSettings?.showLogo ?? true);
-  const [showSignature, setShowSignature] = useState<boolean>(settings.printSettings?.showSignature ?? true);
-  const [showSeal, setShowSeal] = useState<boolean>(settings.printSettings?.showSeal ?? true);
-  const [paperSize, setPaperSize] = useState<'A4' | 'A5' | 'Letter'>(settings.printSettings?.paperSize || 'A4');
-  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>(settings.printSettings?.orientation || 'portrait');
+  const [logoUrl, setLogoUrl] = useState<string | null>(safeSettings.printSettings?.logoUrl || null);
+  const [signatureUrl, setSignatureUrl] = useState<string | null>(safeSettings.printSettings?.signatureUrl || null);
+  const [sealUrl, setSealUrl] = useState<string | null>(safeSettings.printSettings?.sealUrl || null);
+  const [countryName, setCountryName] = useState<string>(safeSettings.printSettings?.countryName || 'المملكة العربية السعودية');
+  const [ministryName, setMinistryName] = useState<string>(safeSettings.printSettings?.ministryName || 'وزارة الدفاع - القيادة العامة');
+  const [commandName, setCommandName] = useState<string>(safeSettings.printSettings?.commandName || 'قيادة القوات البرية / المنطقة الشمالية الغربية');
+  const [unitName, setUnitName] = useState<string>(safeSettings.printSettings?.unitName || 'كتيبة المشاة الآلية الثانية');
+  const [headerText, setHeaderText] = useState<string>(safeSettings.printSettings?.headerText || 'إشعار وتحضير قوة الجاهزية القتالية العاجلة');
+  const [footerText, setFooterText] = useState<string>(safeSettings.printSettings?.footerText || 'هذا المستند سري ومحدود، ويخضع للتعليمات والأوامر العسكرية الصادرة.');
+  const [showLogo, setShowLogo] = useState<boolean>(safeSettings.printSettings?.showLogo ?? true);
+  const [showSignature, setShowSignature] = useState<boolean>(safeSettings.printSettings?.showSignature ?? true);
+  const [showSeal, setShowSeal] = useState<boolean>(safeSettings.printSettings?.showSeal ?? true);
+  const [paperSize, setPaperSize] = useState<'A4' | 'A5' | 'Letter'>(safeSettings.printSettings?.paperSize || 'A4');
+  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>(safeSettings.printSettings?.orientation || 'portrait');
+  const [templateId, setTemplateId] = useState<PrintTemplateId>(safeSettings.printSettings?.templateId || 'royal_gold');
 
   const [isPrintSaved, setIsPrintSaved] = useState(false);
   const [showFullPrintPreviewModal, setShowFullPrintPreviewModal] = useState(false);
 
   useEffect(() => {
-    if (settings.printSettings) {
+    if (settings?.printSettings) {
       if (settings.printSettings.logoUrl !== undefined) setLogoUrl(settings.printSettings.logoUrl);
       if (settings.printSettings.signatureUrl !== undefined) setSignatureUrl(settings.printSettings.signatureUrl);
       if (settings.printSettings.sealUrl !== undefined) setSealUrl(settings.printSettings.sealUrl);
@@ -263,8 +305,9 @@ export default function SettingsView({
       if (settings.printSettings.showSeal !== undefined) setShowSeal(settings.printSettings.showSeal);
       if (settings.printSettings.paperSize) setPaperSize(settings.printSettings.paperSize);
       if (settings.printSettings.orientation) setOrientation(settings.printSettings.orientation);
+      if (settings.printSettings.templateId) setTemplateId(settings.printSettings.templateId);
     }
-  }, [settings.printSettings]);
+  }, [settings?.printSettings]);
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -332,7 +375,8 @@ export default function SettingsView({
       showSignature,
       showSeal,
       paperSize,
-      orientation
+      orientation,
+      templateId
     };
 
     onUpdateSettings({
@@ -367,21 +411,23 @@ export default function SettingsView({
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    if (currentUserRole !== 'admin') {
-      alert('عذراً! هذه الإعدادات الإستراتيجية مخصصة لمدير النظام والقيادة العليا فقط.');
+    if (!canAccessGeneralSettings) {
+      alert('عذراً! هذه الإعدادات الإستراتيجية مخصصة لمدير النظام أو من يُمنح هذه الصلاحية فقط.');
       return;
     }
 
     onUpdateSettings({
+      ...settings,
       warningThreshold,
       dailyReminderEnabled,
       dailyReminderTime,
       autoBackupEnabled,
-      hijriSupport
+      hijriSupport,
+      highContrastMode
     });
 
     setIsSaved(true);
-    onAddLog('تعديل', 'إعدادات النظام', `تحديث إعدادات المنظومة: حد الجاهزية (${warningThreshold}%)، التذكير اليومي (${dailyReminderEnabled ? 'نشط' : 'ملغى'})، التقويم الهجري (${hijriSupport ? 'نشط' : 'ملغى'}).`);
+    onAddLog('تعديل', 'إعدادات النظام', `تحديث إعدادات المنظومة: حد الجاهزية (${warningThreshold}%)، التذكير اليومي (${dailyReminderEnabled ? 'نشط' : 'ملغى'})، وضع التباين العالي (${highContrastMode ? 'مفعل' : 'معطل'}).`);
     
     setTimeout(() => {
       setIsSaved(false);
@@ -442,13 +488,17 @@ export default function SettingsView({
   ] as const;
 
   // Sidebar navigation options for dual pane on desktop
-  const sidebarTabs = [
+  const rawSidebarTabs = [
     { id: 'settings', label: 'الضبط العام والجاهزية', desc: 'معايير حضور اللواء والتقويم', icon: Sliders },
     { id: 'notifications', label: 'قنوات الإشعار والتنبيه', desc: 'التحضير اليومي والإنذار المبكر', icon: Bell },
     { id: 'users', label: 'صلاحيات الحسابات والوصول', desc: 'إدارة المستخدمين والأدوار والولوج', icon: ShieldCheck },
     { id: 'backup', label: 'النسخ السحابي والبيانات', desc: 'حفظ الكشوفات والمزامنة المشفرة', icon: Database },
     { id: 'print', label: 'إعدادات الطباعة', desc: 'الهوية الرسمية والشعار والختم والتوقيع', icon: Printer }
   ] as const;
+
+  const sidebarTabs = useMemo(() => {
+    return rawSidebarTabs.filter(tab => tab.id !== 'settings' || canAccessGeneralSettings);
+  }, [rawSidebarTabs, canAccessGeneralSettings]);
 
   return (
     <div className="space-y-6 text-right font-sans" dir="rtl">
@@ -465,32 +515,39 @@ export default function SettingsView({
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              <span className="text-xs font-black text-slate-800 tracking-wider">لوحة الضبط والتحكم بالمنظومة القيادية</span>
+              <span className="text-xs font-black text-slate-800 tracking-wider">لوحة الضبط والتحكم بالمنظومة القيادية (PWA)</span>
             </div>
             <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-800 border border-emerald-100 text-[10px] font-black px-2.5 py-1 rounded-full">
               <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping shrink-0" />
-              منظومة مؤمنة نشطة
+              منظومة PWA مؤمنة نشطة
             </span>
+          </div>
+
+          {/* PWA Integration Widget */}
+          <div className="mb-5">
+            <PWAInstallBanner />
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5 relative z-10">
             {/* TILE 1: General & Readiness */}
-            <motion.button 
-              whileHover={{ y: -4, scale: 1.015, boxShadow: '0 12px 24px -10px rgba(16,185,129,0.18)' }}
-              whileTap={{ scale: 0.97 }}
-              onClick={() => setSubTab('settings')}
-              className="flex flex-col items-center justify-between p-3 pb-2.5 rounded-2xl bg-white hover:bg-slate-50/40 border border-slate-200/80 shadow-[0_2px_8px_rgba(0,0,0,0.02)] transition-all duration-300 cursor-pointer group relative h-[126px] w-full overflow-hidden"
-              title="الضبط العام والجاهزية"
-            >
-              <div className="absolute top-0 inset-x-0 h-[3.5px] bg-emerald-500 rounded-t-2xl transition-all duration-300 group-hover:h-[5px]" />
-              <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center border bg-emerald-50/85 text-emerald-650 border-emerald-100/50 group-hover:bg-emerald-500 group-hover:text-white transition-all duration-300 shadow-xs group-hover:scale-105">
-                <Sliders className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-3" />
-              </div>
-              <span className="text-[10px] sm:text-[11px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight mt-1 truncate w-full px-1">الضبط والجاهزية</span>
-              <span className="px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded-lg border bg-emerald-50/60 text-emerald-700 border-emerald-100/30 group-hover:bg-emerald-100/80 group-hover:text-emerald-900 transition-all duration-300 truncate max-w-full">
-                {hijriSupport ? 'هجري + ميلادي' : 'ميلادي فقط'}
-              </span>
-            </motion.button>
+            {canAccessGeneralSettings && (
+              <motion.button 
+                whileHover={{ y: -4, scale: 1.015, boxShadow: '0 12px 24px -10px rgba(16,185,129,0.18)' }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => setSubTab('settings')}
+                className="flex flex-col items-center justify-between p-3 pb-2.5 rounded-2xl bg-white hover:bg-slate-50/40 border border-slate-200/80 shadow-[0_2px_8px_rgba(0,0,0,0.02)] transition-all duration-300 cursor-pointer group relative h-[126px] w-full overflow-hidden"
+                title="الضبط العام والجاهزية"
+              >
+                <div className="absolute top-0 inset-x-0 h-[3.5px] bg-emerald-500 rounded-t-2xl transition-all duration-300 group-hover:h-[5px]" />
+                <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center border bg-emerald-50/85 text-emerald-650 border-emerald-100/50 group-hover:bg-emerald-500 group-hover:text-white transition-all duration-300 shadow-xs group-hover:scale-105">
+                  <Sliders className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-3" />
+                </div>
+                <span className="text-[10px] sm:text-[11px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight mt-1 truncate w-full px-1">الضبط والجاهزية</span>
+                <span className="px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded-lg border bg-emerald-50/60 text-emerald-700 border-emerald-100/30 group-hover:bg-emerald-100/80 group-hover:text-emerald-900 transition-all duration-300 truncate max-w-full">
+                  {hijriSupport ? 'هجري + ميلادي' : 'ميلادي فقط'}
+                </span>
+              </motion.button>
+            )}
 
             {/* TILE 2: Notifications */}
             <motion.button 
@@ -699,6 +756,26 @@ export default function SettingsView({
                         icon={Calendar}
                       />
 
+                      {/* High Contrast Mode toggle */}
+                      <ToggleSwitch 
+                        checked={highContrastMode}
+                        onChange={(val) => {
+                          setHighContrastMode(val);
+                          onUpdateSettings({
+                            ...settings,
+                            warningThreshold,
+                            dailyReminderEnabled,
+                            dailyReminderTime,
+                            autoBackupEnabled,
+                            hijriSupport,
+                            highContrastMode: val
+                          });
+                        }}
+                        label="وضع التباين العالي (High Contrast Mode)"
+                        description="تعزيز القابلية للرؤية بتباين عالٍ للحدود والنصوص والألوان"
+                        icon={Eye}
+                      />
+
                       {/* Inactive Session timeout selection */}
                       <div className="flex flex-col justify-between p-4 bg-slate-50/60 hover:bg-slate-50 border border-slate-100 rounded-2xl transition-all duration-200">
                         <div className="flex items-start justify-between gap-3">
@@ -904,6 +981,7 @@ export default function SettingsView({
                     <UsersPermissionsManager 
                       users={users}
                       units={units}
+                      soldiers={soldiers}
                       currentUser={currentUser}
                       onAddUser={onAddUser || (async () => {})}
                       onEditUser={onEditUser || (async () => {})}
@@ -970,7 +1048,85 @@ export default function SettingsView({
                     </button>
                   </div>
 
-                  {/* Section 1: Header & Official Text */}
+                  {/* Section: Print Templates Gallery (نماذج وقوالب الطباعة الهيكلية) */}
+                  <div className="bg-purple-900/5 p-5 rounded-2xl border border-purple-200/80 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h4 className="text-xs font-black text-purple-950 uppercase tracking-wider flex items-center gap-2">
+                          <Sparkles className="w-4 h-4 text-purple-600" />
+                          <span>اختيار نموذج الطباعة والهوية الموحدة للسندات والتقارير</span>
+                        </h4>
+                        <p className="text-[11px] text-slate-500 font-medium mt-1">
+                          اختر أحد النماذج الجاهزة التالية لتطبيق تصميمه وهويته البصرية فوراً على كافة السندات، الكشوفات، والتقارير الرسمية.
+                        </p>
+                      </div>
+                      <span className="text-xs font-black px-3 py-1 bg-purple-100 text-purple-800 rounded-full border border-purple-300">
+                        6 تصاميم احترافية
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {PRINT_TEMPLATES.map((tmpl) => {
+                        const isSelected = templateId === tmpl.id;
+                        return (
+                          <div
+                            key={tmpl.id}
+                            onClick={() => setTemplateId(tmpl.id)}
+                            className={`relative p-4 rounded-xl border-2 transition-all cursor-pointer flex flex-col justify-between space-y-3 ${
+                              isSelected
+                                ? 'border-purple-600 bg-white shadow-md ring-2 ring-purple-500/20'
+                                : 'border-slate-200 bg-white hover:border-purple-300 hover:shadow-xs'
+                            }`}
+                          >
+                            {isSelected && (
+                              <div className="absolute top-3 left-3 bg-purple-600 text-white rounded-full p-1 shadow-xs">
+                                <CheckCircle2 className="w-4 h-4" />
+                              </div>
+                            )}
+
+                            <div>
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded border ${tmpl.badgeBg}`}>
+                                  {tmpl.badge}
+                                </span>
+                                <h5 className="text-xs font-black text-slate-900">{tmpl.name}</h5>
+                              </div>
+                              <p className="text-[11px] text-slate-500 leading-relaxed font-medium">
+                                {tmpl.description}
+                              </p>
+                            </div>
+
+                            {/* Mini Visual Mockup */}
+                            <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-[10px] font-bold space-y-1.5 pointer-events-none">
+                              <div className={`p-1.5 rounded border text-center text-[9px] font-black ${tmpl.headerBg} ${tmpl.borderColor}`}>
+                                ترويسة {tmpl.name}
+                              </div>
+                              <div className="flex justify-between items-center text-[9px] text-slate-400 px-1">
+                                <span>السندات والتقارير</span>
+                                <span>محتوى الكشف</span>
+                              </div>
+                              <div className="h-1 rounded w-full" style={{ backgroundColor: tmpl.accentColor }} />
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setTemplateId(tmpl.id);
+                              }}
+                              className={`w-full py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                                isSelected
+                                  ? 'bg-purple-600 text-white'
+                                  : 'bg-slate-100 hover:bg-purple-50 text-slate-700 hover:text-purple-700'
+                              }`}
+                            >
+                              {isSelected ? 'القالب المعتمد حالياً ✓' : 'تطبيق هذا القالب'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                   <div className="bg-slate-50/70 p-4 sm:p-5 rounded-2xl border border-slate-200/80 space-y-4">
                     <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
                       <Building className="w-4 h-4 text-slate-600" />
@@ -1189,58 +1345,25 @@ export default function SettingsView({
                     <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                       <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
                         <Eye className="w-4 h-4 text-purple-600" />
-                        <span>معاينة حية لترويسة التقرير الموحدة</span>
+                        <span>معاينة حية لترويسة التقرير الموحدة والقالب المختار</span>
                       </span>
                       <span className="text-[10px] font-bold text-slate-400">تطبيق تلقائي عند طباعة أي كشف أو أمر</span>
                     </div>
 
-                    <div className="bg-amber-50/20 border border-amber-200/60 p-4 sm:p-6 rounded-xl font-serif text-slate-900 space-y-4">
-                      {/* Top Header Grid */}
-                      <div className="grid grid-cols-3 items-center text-center text-xs sm:text-sm font-black border-b border-amber-900/10 pb-4">
-                        <div className="text-right space-y-1">
-                          <p className="text-slate-900">{countryName}</p>
-                          <p className="text-slate-700 text-[11px]">{ministryName}</p>
-                          <p className="text-slate-600 text-[10px]">{commandName}</p>
-                          <p className="text-purple-900 text-[10px] font-black">{unitName}</p>
-                        </div>
-
-                        <div className="flex flex-col items-center justify-center">
-                          {showLogo && logoUrl ? (
-                            <img src={logoUrl} alt="الشعار" className="h-16 max-w-[120px] object-contain" />
-                          ) : (
-                            <div className="w-14 h-14 rounded-full border-2 border-dashed border-amber-800/30 flex items-center justify-center text-[10px] text-amber-900/50 font-sans">
-                              شعار الجهة
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="text-left space-y-1 font-sans text-[11px]">
-                          <p className="text-slate-700">التاريخ: <span className="font-mono">{new Date().toISOString().split('T')[0]}</span></p>
-                          <p className="text-slate-700">الرقم: <span className="font-mono">442 / م / 102</span></p>
-                          <p className="text-slate-700">المرفقات: <span className="font-semibold">يوجد</span></p>
-                        </div>
+                    <PrintWrapper printSettings={{ logoUrl, signatureUrl, sealUrl, countryName, ministryName, commandName, unitName, headerText, footerText, showLogo, showSignature, showSeal, paperSize, orientation, templateId }}>
+                      <PrintHeader
+                        printSettings={{ logoUrl, signatureUrl, sealUrl, countryName, ministryName, commandName, unitName, headerText, footerText, showLogo, showSignature, showSeal, paperSize, orientation, templateId }}
+                        documentTitle={headerText}
+                        documentSubtitle="نموذج كشف تحضير وسند معتمد للكتيبة"
+                        documentRef="442 / م / 102"
+                      />
+                      <div className="py-6 text-center text-xs text-slate-500 font-semibold border-y border-slate-100 my-4">
+                        [ منطقة محتوى السند / التقرير الموحد - تُعرض هنا بيانات العهد أو الكشوفات الميدانية ]
                       </div>
-
-                      {/* Main Document Title Sample */}
-                      <div className="text-center py-2">
-                        <h2 className="text-base sm:text-lg font-black underline decoration-double decoration-slate-400 underline-offset-4">
-                          {headerText}
-                        </h2>
-                      </div>
-
-                      {/* Bottom Footer Sample */}
-                      <div className="pt-4 border-t border-slate-200/60 flex items-center justify-between text-[11px] text-slate-500 font-sans">
-                        <span>{footerText}</span>
-                        <div className="flex items-center gap-4">
-                          {showSeal && sealUrl && (
-                            <span className="text-[10px] text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">الختم مفعّل</span>
-                          )}
-                          {showSignature && signatureUrl && (
-                            <span className="text-[10px] text-sky-800 font-bold bg-sky-50 px-2 py-0.5 rounded border border-sky-200">التوقيع مفعّل</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
+                      <PrintFooter
+                        printSettings={{ logoUrl, signatureUrl, sealUrl, countryName, ministryName, commandName, unitName, headerText, footerText, showLogo, showSignature, showSeal, paperSize, orientation, templateId }}
+                      />
+                    </PrintWrapper>
                   </div>
 
                   {/* Save Settings Action Button */}
@@ -1328,87 +1451,65 @@ export default function SettingsView({
               </div>
 
               {/* Printable Page Visual Box */}
-              <div className="bg-amber-50/30 border border-slate-300 p-8 sm:p-12 rounded-2xl shadow-inner font-serif text-slate-900 space-y-8" id="settings-print-preview">
-                
-                {/* Header */}
-                <div className="grid grid-cols-3 items-center text-center font-black border-b-2 border-slate-900 pb-6">
-                  <div className="text-right space-y-1 text-xs sm:text-sm">
-                    <p>{countryName}</p>
-                    <p className="text-slate-800">{ministryName}</p>
-                    <p className="text-slate-700">{commandName}</p>
-                    <p className="text-purple-900">{unitName}</p>
+              <div id="settings-print-preview" className="space-y-6">
+                <PrintWrapper printSettings={{ logoUrl, signatureUrl, sealUrl, countryName, ministryName, commandName, unitName, headerText, footerText, showLogo, showSignature, showSeal, paperSize, orientation, templateId }}>
+                  <PrintHeader
+                    printSettings={{ logoUrl, signatureUrl, sealUrl, countryName, ministryName, commandName, unitName, headerText, footerText, showLogo, showSignature, showSeal, paperSize, orientation, templateId }}
+                    documentTitle={headerText}
+                    documentSubtitle="أمر إداري وسند معتمد موحد لكافة القطاعات والوحدات"
+                    documentRef="1098 / ق / 2026"
+                  />
+
+                  {/* Body Content Placeholder */}
+                  <div className="space-y-4 font-sans text-xs sm:text-sm leading-relaxed text-slate-800 border-y border-slate-200 py-6 my-6">
+                    <p className="font-bold">إلى: جميع أركان ووحدات اللواء والكتائب الميدانية</p>
+                    <p>
+                      بناءً على الصلاحيات الممنوحة والأوامر الإدارية المنظمة لجاهزية القوات، يُعتمد هذا النموذج الرسمي كمرجع موحد لجميع المطبوعات والسندات والكشوفات والتقارير اليومية الصادرة من المنظومة القيادية.
+                    </p>
+                    <div className="bg-amber-50 p-4 rounded-xl border-r-4 border-amber-600 font-semibold text-slate-900 text-xs flex items-center justify-between">
+                      <span>ملاحظة: تُحفظ هذه الإعدادات وتُطبق فوراً كـ "هوية موحدة" على كشوفات السندات، الإجازات، والعهد.</span>
+                      <span className="text-[10px] font-black px-2 py-1 bg-amber-100 rounded text-amber-900">هوية موحدة</span>
+                    </div>
+
+                    {/* Sample Table showing bond / report identity */}
+                    <div className="overflow-x-auto pt-2">
+                      <table className="w-full text-right text-xs border-collapse border border-slate-300">
+                        <thead>
+                          <tr className="bg-slate-100 font-black text-slate-800 border-b border-slate-300">
+                            <th className="p-2 border border-slate-300">م</th>
+                            <th className="p-2 border border-slate-300">نوع البند / السند</th>
+                            <th className="p-2 border border-slate-300">البيان الرسمي</th>
+                            <th className="p-2 border border-slate-300">الحالة</th>
+                            <th className="p-2 border border-slate-300">ملاحظات الاعتماد</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200 text-slate-700">
+                          <tr>
+                            <td className="p-2 border border-slate-300 font-mono">1</td>
+                            <td className="p-2 border border-slate-300 font-bold">سند تسليم عهدة عسكرية</td>
+                            <td className="p-2 border border-slate-300">عتاد وأجهزة اتصال ميدانية tactical-01</td>
+                            <td className="p-2 border border-slate-300"><span className="text-emerald-700 font-black">نشط ومصادق</span></td>
+                            <td className="p-2 border border-slate-300">مطابق للمواصفات</td>
+                          </tr>
+                          <tr>
+                            <td className="p-2 border border-slate-300 font-mono">2</td>
+                            <td className="p-2 border border-slate-300 font-bold">تقرير الجاهزية القتالية</td>
+                            <td className="p-2 border border-slate-300">كشف القوة الفعلية والتحضير اليومي</td>
+                            <td className="p-2 border border-slate-300"><span className="text-sky-700 font-black">جاهز للطباعة</span></td>
+                            <td className="p-2 border border-slate-300">مكتمل 100%</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
 
-                  <div className="flex items-center justify-center">
-                    {showLogo && logoUrl ? (
-                      <img src={logoUrl} alt="الشعار الرسمى" className="h-20 max-w-[140px] object-contain" />
-                    ) : (
-                      <div className="w-16 h-16 rounded-full border-2 border-dashed border-slate-400 flex items-center justify-center text-xs text-slate-400 font-sans">
-                        شعار المطبوعات
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="text-left space-y-1 font-sans text-xs">
-                    <p>التاريخ: <span className="font-mono">{new Date().toISOString().split('T')[0]}</span></p>
-                    <p>رقم الأمر: <span className="font-mono">1098 / ق</span></p>
-                    <p>الدرجة: <span className="font-bold text-rose-700">سري ومحدود</span></p>
-                  </div>
-                </div>
-
-                {/* Title */}
-                <div className="text-center py-2">
-                  <h1 className="text-xl sm:text-2xl font-black underline decoration-2 underline-offset-8">
-                    {headerText}
-                  </h1>
-                </div>
-
-                {/* Body Content Placeholder */}
-                <div className="space-y-4 font-sans text-xs sm:text-sm leading-relaxed text-slate-800 border-y border-slate-200 py-6">
-                  <p className="font-bold">إلى: جميع أركان ووحدات اللواء والكتائب الميدانية</p>
-                  <p>
-                    بناءً على الصلاحيات الممنوحة والأوامر الإدارية المنظمة لجاهزية القوات، يُعتمد هذا النموذج الرسمي كمرجع موحد لجميع المطبوعات والكشوفات والتقارير اليومية الصادرة من المنظومة القيادية.
-                  </p>
-                  <p className="bg-amber-100/50 p-3 rounded-lg border-r-4 border-amber-600 font-semibold text-slate-900">
-                    ملاحظة: تُحفظ هذه الإعدادات تلقائياً وتُطبق فوراً على جميع كشوفات التحضير اليومي، ومنح الإجازات، والبيانات الإحصائية.
-                  </p>
-                </div>
-
-                {/* Signatures & Seal Section */}
-                <div className="grid grid-cols-2 gap-8 pt-6 font-sans">
-                  
-                  {/* Seal Box */}
-                  <div className="flex flex-col items-center justify-center p-4 border border-slate-200 rounded-xl bg-white/50 space-y-2">
-                    <span className="text-xs font-bold text-slate-500">الختم الرسمي للمنظومة</span>
-                    {showSeal && sealUrl ? (
-                      <img src={sealUrl} alt="الختم الرسمي" className="h-20 object-contain mix-blend-multiply opacity-90" />
-                    ) : (
-                      <div className="w-20 h-20 rounded-full border-2 border-dashed border-slate-300 flex items-center justify-center text-[10px] text-slate-400">
-                        الختم الرسمي
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Signature Box */}
-                  <div className="flex flex-col items-center justify-center p-4 border border-slate-200 rounded-xl bg-white/50 space-y-2 text-center">
-                    <span className="text-xs font-extrabold text-slate-900">قائد اللواء / المعتمد</span>
-                    <span className="text-[11px] text-slate-600 font-semibold">{brigadeCommander}</span>
-                    {showSignature && signatureUrl ? (
-                      <img src={signatureUrl} alt="التوقيع" className="h-16 object-contain mix-blend-multiply" />
-                    ) : (
-                      <div className="h-12 border-b border-dashed border-slate-400 w-36 flex items-end justify-center text-[10px] text-slate-400">
-                        التوقيع والاعتماد
-                      </div>
-                    )}
-                  </div>
-
-                </div>
-
-                {/* Footer Note */}
-                <div className="text-center pt-4 border-t border-slate-300 text-xs text-slate-500 font-sans">
-                  {footerText}
-                </div>
-
+                  <PrintFooter
+                    printSettings={{ logoUrl, signatureUrl, sealUrl, countryName, ministryName, commandName, unitName, headerText, footerText, showLogo, showSignature, showSeal, paperSize, orientation, templateId }}
+                    rightTitle="ركن القوة البشرية"
+                    centerTitle="اعتماد قائد اللواء / الكتيبة"
+                    leftTitle="ركن العمليات والسيطرة"
+                  />
+                </PrintWrapper>
               </div>
 
               {/* Close Button */}

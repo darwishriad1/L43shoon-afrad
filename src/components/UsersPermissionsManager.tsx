@@ -38,11 +38,14 @@ import {
   ChevronLeft
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { Unit, User, UserRole } from '../types';
+import { Unit, User, UserRole, Soldier } from '../types';
+import { triggerToast } from './ToastContainer';
+import SoldierAccountsSection from './SoldierAccountsSection';
 
 interface UsersPermissionsManagerProps {
   users: User[];
   units: Unit[];
+  soldiers?: Soldier[];
   currentUser: any;
   onAddUser: (user: any) => Promise<void>;
   onEditUser: (id: string, updatedPayload: any) => Promise<void>;
@@ -105,6 +108,7 @@ interface ActiveSession {
 export default function UsersPermissionsManager({
   users,
   units,
+  soldiers,
   currentUser,
   onAddUser,
   onEditUser,
@@ -112,7 +116,33 @@ export default function UsersPermissionsManager({
   onAddLog
 }: UsersPermissionsManagerProps) {
   // Current tab state
-  const [activeTab, setActiveTab] = useState<'menu' | 'dashboard' | 'users' | 'roles' | 'delegation' | 'sessions' | 'policies' | 'monitoring'>('menu');
+  const [activeTab, setActiveTab] = useState<'menu' | 'dashboard' | 'users' | 'roles' | 'delegation' | 'sessions' | 'policies' | 'monitoring' | 'soldier_accounts'>('menu');
+
+  // Soldiers list state for account creation section
+  const [soldiersList, setSoldiersList] = useState<Soldier[]>(soldiers || []);
+
+  // Refresh soldiers helper function
+  const refreshSoldiers = async () => {
+    try {
+      const res = await fetch('/api/soldiers');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setSoldiersList(data);
+        }
+      }
+    } catch (err) {
+      console.error("Error refreshing soldiers:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (soldiers && soldiers.length > 0) {
+      setSoldiersList(soldiers);
+    } else {
+      refreshSoldiers();
+    }
+  }, [soldiers]);
 
   // Interactive local states
   const [searchTerm, setSearchTerm] = useState('');
@@ -285,6 +315,33 @@ export default function UsersPermissionsManager({
     return map;
   });
 
+  // Keep extendedUsers synchronized when users prop changes
+  useEffect(() => {
+    setExtendedUsers(prev => {
+      let changed = false;
+      const nextMap = { ...prev };
+      users.forEach((u, idx) => {
+        if (!nextMap[u.id]) {
+          changed = true;
+          nextMap[u.id] = {
+            militaryNo: (u as any).militaryNo || `١٠٠٢٣${idx + 4}`,
+            rank: (u as any).rank || (idx % 3 === 0 ? 'رائد' : idx % 3 === 1 ? 'نقيب' : 'ملازم أول'),
+            position: (u as any).position || (idx % 2 === 0 ? 'ركن شؤون عسكرية' : 'مدقق سجلات الحضور'),
+            department: (u as any).department || 'إدارة القوة البشرية',
+            phone: (u as any).phone || ('٠٥٠١٢٣٤٥٦' + (idx % 10)),
+            lastLogin: (u as any).lastLogin || 'حديثاً',
+            lastIp: (u as any).lastIp || ('10.100.1.' + (20 + (idx % 80))),
+            lastDevice: (u as any).lastDevice || 'Secure Station RHEL 9',
+            status: (u as any).status || 'active',
+            forcePasswordChange: (u as any).forcePasswordChange || false,
+            email: u.email || `${u.username || 'user'}@military.local`,
+          };
+        }
+      });
+      return changed ? nextMap : prev;
+    });
+  }, [users]);
+
   // User modal Form States
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
@@ -300,6 +357,7 @@ export default function UsersPermissionsManager({
   const [formDepartment, setFormDepartment] = useState('إدارة القوة البشرية');
   const [formStatus, setFormStatus] = useState<'active' | 'suspended' | 'locked'>('active');
   const [formForcePass, setFormForcePass] = useState(false);
+  const [formCanManageSettings, setFormCanManageSettings] = useState(false);
 
   // Password Complexity Metrics calculation
   const passwordMetrics = useMemo(() => {
@@ -447,6 +505,7 @@ export default function UsersPermissionsManager({
     setFormDepartment('إدارة القوة البشرية');
     setFormStatus('active');
     setFormForcePass(false);
+    setFormCanManageSettings(false);
     setIsUserModalOpen(true);
   };
 
@@ -468,6 +527,7 @@ export default function UsersPermissionsManager({
     setFormDepartment(ext.department || 'إدارة القوة البشرية');
     setFormStatus(ext.status || 'active');
     setFormForcePass(ext.forcePasswordChange || false);
+    setFormCanManageSettings(Boolean(user.canManageSettings || user.canManageReadinessSettings));
     setIsUserModalOpen(true);
   };
 
@@ -487,7 +547,9 @@ export default function UsersPermissionsManager({
           role: formRole,
           unitId: ['commander_unit', 'data_writer'].includes(formRole) && formUnitId ? formUnitId : null,
           password: formPassword || undefined,
-          email: formUsername.includes('@') ? formUsername : `${formUsername}@military.local`
+          email: formUsername.includes('@') ? formUsername : `${formUsername}@military.local`,
+          canManageSettings: formRole === 'admin' ? true : formCanManageSettings,
+          canManageReadinessSettings: formRole === 'admin' ? true : formCanManageSettings,
         };
         await onEditUser(editingUserId, payload);
         
@@ -508,38 +570,42 @@ export default function UsersPermissionsManager({
 
         onAddLog('تعديل', 'إدارة الأمن العام', `تمت ترقية/تعديل الحساب العسكري التابع لـ: ${formName} بنجاح.`);
       } else {
+        const generatedId = `u_${Date.now()}`;
         const payload = {
+          id: generatedId,
           name: formName,
           username: formUsername,
           role: formRole,
           unitId: ['commander_unit', 'data_writer'].includes(formRole) && formUnitId ? formUnitId : null,
           password: formPassword || 'Military1234!',
-          email: formUsername.includes('@') ? formUsername : `${formUsername}@military.local`
+          email: formUsername.includes('@') ? formUsername : `${formUsername}@military.local`,
+          canManageSettings: formRole === 'admin' ? true : formCanManageSettings,
+          canManageReadinessSettings: formRole === 'admin' ? true : formCanManageSettings,
         };
-        await onAddUser(payload);
-        
-        // Save placeholder for new user in extended data
-        const tempId = `u_${Date.now()}`; // approximate, will map upon database update
+
+        // Save metadata for new user in extended data with matching generatedId
         setExtendedUsers(prev => ({
           ...prev,
-          [tempId]: {
+          [generatedId]: {
             militaryNo: formMilitaryNo,
             rank: formRank,
             position: formPosition,
             department: formDepartment,
             phone: formPhone,
-            status: 'active',
-            lastLogin: '-',
-            lastIp: '-',
-            lastDevice: '-',
+            status: formStatus,
+            lastLogin: 'حديثاً',
+            lastIp: '10.100.1.10',
+            lastDevice: 'محطة أمنية',
             forcePasswordChange: formForcePass
           }
         }));
 
+        await onAddUser(payload);
+
         onAddLog('إضافة', 'إدارة الأمن العام', `تم إنشاء مستخدم عسكري جديد باسم (${formName}) وصلاحية (${formRole}).`);
       }
       setIsUserModalOpen(false);
-      alert('تم حفظ بيانات المستخدم بنجاح ومزامنة الهياكل الأمنية!');
+      triggerToast('تم حفظ بيانات الحساب العسكري والمستويات الأمنية بنجاح', 'success');
     } catch (err: any) {
       alert('حدث خطأ أثناء حفظ المستخدم: ' + err.message);
     }
@@ -784,7 +850,7 @@ export default function UsersPermissionsManager({
             </button>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-4 relative z-10">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 relative z-10">
             {/* TILE 1: Dashboard */}
             <motion.button 
               whileHover={{ y: -4, scale: 1.015, boxShadow: '0 12px 24px -10px rgba(16,185,129,0.18)' }}
@@ -908,6 +974,24 @@ export default function UsersPermissionsManager({
               <span className="text-[10px] sm:text-[11px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight mt-1 truncate w-full px-1">سجل المراقبة</span>
               <span className="px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded-lg border bg-blue-50/60 text-blue-700 border-blue-100/30 group-hover:bg-blue-100/80 group-hover:text-blue-900 transition-all duration-300 truncate max-w-full">
                 نشط 🔒
+              </span>
+            </motion.button>
+
+            {/* TILE 8: Soldier Accounts */}
+            <motion.button 
+              whileHover={{ y: -4, scale: 1.015, boxShadow: '0 12px 24px -10px rgba(16,185,129,0.2)' }}
+              whileTap={{ scale: 0.97 }}
+              onClick={() => setActiveTab('soldier_accounts')}
+              className="flex flex-col items-center justify-between p-3 pb-2.5 rounded-2xl bg-white hover:bg-slate-50/40 border border-slate-200/80 shadow-[0_2px_8px_rgba(0,0,0,0.02)] transition-all duration-300 cursor-pointer group relative h-[126px] w-full overflow-hidden"
+              title="إنشاء وتفعيل حسابات الأفراد"
+            >
+              <div className="absolute top-0 inset-x-0 h-[3.5px] bg-emerald-600 rounded-t-2xl transition-all duration-300 group-hover:h-[5px]" />
+              <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center border bg-emerald-50/85 text-emerald-700 border-emerald-100/50 group-hover:bg-emerald-600 group-hover:text-white transition-all duration-300 shadow-xs group-hover:scale-105">
+                <UserCheck className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-3" />
+              </div>
+              <span className="text-[10px] sm:text-[11px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight mt-1 truncate w-full px-1">حسابات الأفراد</span>
+              <span className="px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded-lg border bg-emerald-50/60 text-emerald-700 border-emerald-100/30 group-hover:bg-emerald-100/80 group-hover:text-emerald-900 transition-all duration-300 truncate max-w-full">
+                تفعيل جماعي ⚡
               </span>
             </motion.button>
           </div>
@@ -1286,6 +1370,17 @@ export default function UsersPermissionsManager({
                           <span className="text-slate-400">الجهاز وعنوان الـ IP:</span>
                           <span className="font-mono text-slate-500 text-[10px]">{ext.lastIp || '-'} ({ext.lastDevice?.split(' ')[0]})</span>
                         </div>
+                        {(u.role === 'admin' || u.canManageSettings || u.canManageReadinessSettings) && (
+                          <div className="flex justify-between items-center bg-amber-50/70 border border-amber-200/80 rounded-lg px-2 py-1 mt-1">
+                            <span className="text-[10px] font-black text-amber-900 flex items-center gap-1">
+                              <Sliders className="w-3 h-3 text-amber-700 shrink-0" />
+                              <span>إعدادات الجاهزية:</span>
+                            </span>
+                            <span className="text-[9px] font-extrabold text-amber-800 bg-amber-100/90 px-1.5 py-0.5 rounded-md">
+                              {u.role === 'admin' ? 'مدير نظام' : 'مُصرح بقرار المدير'}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -2141,6 +2236,29 @@ export default function UsersPermissionsManager({
                 </label>
               </div>
 
+              {formRole !== 'admin' && (
+                <div className="p-3 bg-amber-50/80 border border-amber-200/90 rounded-2xl space-y-1.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Sliders className="w-4 h-4 text-amber-700 shrink-0" />
+                      <div>
+                        <span className="text-xs font-black text-amber-950 block">صلاحية الإعدادات العامة للجاهزية</span>
+                        <span className="text-[10px] text-amber-800 font-semibold block leading-tight">
+                          تخويل الحساب للوصول إلى لوحة "الضبط العام والجاهزية" وتعديل معايير استنفار وحضور اللواء
+                        </span>
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      id="can_manage_settings_toggle"
+                      checked={formCanManageSettings}
+                      onChange={(e) => setFormCanManageSettings(e.target.checked)}
+                      className="w-4 h-4 text-emerald-800 accent-emerald-800 cursor-pointer shrink-0"
+                    />
+                  </div>
+                </div>
+              )}
+
               <div className="flex gap-2.5 pt-4 border-t border-slate-100">
                 <button
                   type="submit"
@@ -2775,10 +2893,10 @@ export default function UsersPermissionsManager({
                       {securityAlerts.length > 0 ? (
                         securityAlerts.map(alert => (
                           <tr key={alert.id} className="hover:bg-slate-50/40">
-                            <td className="p-2.5 font-bold">{alert.userName}</td>
-                            <td className="p-2.5">{alert.actionType}</td>
-                            <td className="p-2.5 text-slate-600">{alert.details}</td>
-                            <td className="p-2.5 font-mono text-slate-500 text-[10px]">{alert.timestamp}</td>
+                            <td className="p-2.5 font-bold">{(alert as any).userName || alert.user}</td>
+                            <td className="p-2.5">{(alert as any).actionType || alert.type}</td>
+                            <td className="p-2.5 text-slate-600">{(alert as any).details || alert.title}</td>
+                            <td className="p-2.5 font-mono text-slate-500 text-[10px]">{(alert as any).timestamp || alert.time}</td>
                           </tr>
                         ))
                       ) : (
@@ -2831,6 +2949,19 @@ export default function UsersPermissionsManager({
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* --- Tab 8: SOLDIER ACCOUNTS SECTION --- */}
+      {activeTab === 'soldier_accounts' && (
+        <div className="space-y-6">
+          <SoldierAccountsSection 
+            soldiers={soldiersList}
+            units={units}
+            currentUser={currentUser}
+            onRefreshData={refreshSoldiers}
+            onAddLog={onAddLog}
+          />
         </div>
       )}
 

@@ -61,48 +61,41 @@ export const initialSoldiers: Soldier[] = [
   { id: 's35', militaryNumber: '13007', fullName: 'سامي بن خليل الهوساوي', rank: 'جندي', unitId: 'un4', isActive: true }
 ];
 
-// Generate attendance records for current month (July 2026), days 1 to 16.
-// Let's generate a realistic distribution: mostly 'ح' (presence), some 'غ' (absence), 'إ' (vacation), 'م' (mission), 'ع' (excused), 'ن' (half-day).
+// Generate attendance records for recent days up to today dynamically.
+// Generates a realistic distribution: mostly 'ح' (presence), some 'غ' (absence), 'إ' (vacation), 'م' (mission), 'ع' (excused), 'ن' (half-day).
 export const generateInitialAttendance = (): AttendanceRecord[] => {
   const records: AttendanceRecord[] = [];
   const activeSoldiers = initialSoldiers.filter(s => s.isActive);
   const statusPools: ('ح' | 'غ' | 'إ' | 'م' | 'ع' | 'ن')[] = [
-    'ح', 'ح', 'ح', 'ح', 'ح', 'ح', 'ح', 'ح', 'ح', 'ح', // 50%
+    'ح', 'ح', 'ح', 'ح', 'ح', 'ح', 'ح', 'ح', 'ح', 'ح', // ~75% present
     'ح', 'ح', 'ح', 'ح', 'ح', 'ح', 'ح', 'ح', 'ح', 'ح',
-    'غ', 'إ', 'م', 'ع', 'ن', 'ح' // some other statuses
+    'غ', 'إ', 'إ', 'م', 'م', 'ع'
   ];
 
-  // From 2026-07-01 to 2026-07-16
-  for (let day = 1; day <= 16; day++) {
-    const dateStr = `2026-07-${day.toString().padStart(2, '0')}`;
-    
+  const today = new Date();
+  const daysToGenerate = 20;
+
+  for (let offset = daysToGenerate - 1; offset >= 0; offset--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - offset);
+    const dateStr = d.toISOString().split('T')[0];
+    const dayNum = d.getDate();
+
     activeSoldiers.forEach(soldier => {
-      // Seed unique pseudo-random status based on soldier id and day
-      let idx = (soldier.id.charCodeAt(soldier.id.length - 1) + day) % statusPools.length;
+      let idx = (soldier.id.charCodeAt(soldier.id.length - 1) + dayNum) % statusPools.length;
       
-      // Let's make a few specific people have interesting patterns:
-      // s8 (Sultan) - always present
       if (soldier.id === 's8') idx = 0;
-      // s12 - has some absences
-      if (soldier.id === 's12' && (day === 5 || day === 6 || day === 12)) {
-        idx = statusPools.indexOf('غ');
-      }
-      // s14 - is on vacation for first 10 days
-      if (soldier.id === 's14' && day <= 10) {
-        idx = statusPools.indexOf('إ');
-      }
-      // s20 - on a military mission (م) from day 12 to 15
-      if (soldier.id === 's20' && day >= 12 && day <= 15) {
-        idx = statusPools.indexOf('م');
-      }
+      if (soldier.id === 's12' && (dayNum % 6 === 0)) idx = statusPools.indexOf('غ');
+      if (soldier.id === 's14' && offset >= 10) idx = statusPools.indexOf('إ');
+      if (soldier.id === 's20' && offset >= 2 && offset <= 5) idx = statusPools.indexOf('م');
 
       records.push({
-        id: `att_${soldier.id}_${day}`,
+        id: `att_${soldier.id}_${dateStr}`,
         soldierId: soldier.id,
         date: dateStr,
         statusCode: statusPools[idx],
         recordedBy: 'u5',
-        updatedAt: '2026-07-16T10:00:00Z'
+        updatedAt: `${dateStr}T10:00:00Z`
       });
     });
   }

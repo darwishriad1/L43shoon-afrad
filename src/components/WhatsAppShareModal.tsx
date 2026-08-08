@@ -42,8 +42,6 @@ export const WhatsAppShareModal: React.FC<WhatsAppShareModalProps> = ({
   units = [],
   attendanceRecords = []
 }) => {
-  if (!soldier) return null;
-
   // Custom options state
   const [reportType, setReportType] = useState<'full' | 'personal' | 'daily' | 'monthly' | 'custom'>('full');
   
@@ -57,7 +55,7 @@ export const WhatsAppShareModal: React.FC<WhatsAppShareModalProps> = ({
   const [incAbsentDatesList, setIncAbsentDatesList] = useState(true);
   const [incCustomNote, setIncCustomNote] = useState('');
 
-  const [phoneNumber, setPhoneNumber] = useState(soldier.phoneNumber || '');
+  const [phoneNumber, setPhoneNumber] = useState(soldier?.phoneNumber || '');
   const [isCopied, setIsCopied] = useState(false);
 
   // Quick message template options
@@ -77,11 +75,23 @@ export const WhatsAppShareModal: React.FC<WhatsAppShareModalProps> = ({
   // Today attendance status
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
   const todayAttendance = useMemo(() => {
+    if (!soldier) return undefined;
     return attendanceRecords.find(r => r.soldierId === soldier.id && r.date === todayStr);
   }, [attendanceRecords, soldier, todayStr]);
 
   // Comprehensive Attendance Breakdown & Date Lists
   const soldierAttendanceBreakdown = useMemo(() => {
+    if (!soldier) {
+      return {
+        allRecordsCount: 0,
+        presentDates: [],
+        absentDates: [],
+        leaveDates: [],
+        missionDates: [],
+        excusedDates: [],
+        commitmentRate: 100
+      };
+    }
     const records = attendanceRecords
       .filter(r => r.soldierId === soldier.id)
       .sort((a, b) => b.date.localeCompare(a.date));
@@ -116,6 +126,7 @@ export const WhatsAppShareModal: React.FC<WhatsAppShareModalProps> = ({
 
   // Generate WhatsApp Message according to selection
   const generatedMessage = useMemo(() => {
+    if (!soldier) return '';
     let msg = `*🎖️ تقرير الشؤون العسكرية والجاهزية الميدانية الشامل*\n`;
     msg += `===================================\n`;
 
@@ -246,7 +257,7 @@ export const WhatsAppShareModal: React.FC<WhatsAppShareModalProps> = ({
     onClose();
   };
 
-  if (!isOpen) return null;
+  if (!isOpen || !soldier) return null;
 
   return (
     <AnimatePresence>

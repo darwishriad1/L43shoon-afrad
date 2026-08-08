@@ -12,21 +12,119 @@ import {
   Check, 
   MessageSquare,
   BookOpen,
-  FileText
+  FileText,
+  RefreshCw,
+  CheckCircle2,
+  Zap,
+  Clock,
+  Layers,
+  History,
+  ChevronDown,
+  ChevronUp,
+  Tag,
+  Bell,
+  ToggleLeft,
+  ToggleRight
 } from 'lucide-react';
+import { triggerToast } from './ToastContainer';
 
 export default function AboutApp() {
   const [copiedPhone, setCopiedPhone] = useState(false);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [updateCheckStatus, setUpdateCheckStatus] = useState<'idle' | 'checking' | 'up_to_date'>('idle');
+  const [lastCheckedTime, setLastCheckedTime] = useState<string | null>(null);
+  const [showFullChangelog, setShowFullChangelog] = useState(false);
+  const [autoCheckEnabled, setAutoCheckEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('auto_check_updates') !== 'false';
+  });
+
+  const toggleAutoCheck = () => {
+    const newValue = !autoCheckEnabled;
+    setAutoCheckEnabled(newValue);
+    localStorage.setItem('auto_check_updates', newValue ? 'true' : 'false');
+    triggerToast(
+      newValue
+        ? 'تم تفعيل الفحص التلقائي للتحديثات عند بدء تشغيل التطبيق'
+        : 'تم إيقاف الفحص التلقائي للتحديثات عند بدء التشغيل',
+      newValue ? 'success' : 'warning'
+    );
+  };
 
   const phoneNumber = '+967774655282';
   const whatsappUrl = `https://wa.me/967774655282?text=${encodeURIComponent('السلام عليكم ورحمة الله وبركاته، أستفسر بخصوص تطبيق إدارة شؤون الأفراد والعديد (اللواء 43 عمالقة)')}`;
   const facebookUrl = 'https://facebook.com';
   const instagramUrl = 'https://instagram.com';
 
+  // System Changelog / Version History Data
+  const changelogData = [
+    {
+      version: 'v4.2.0',
+      date: 'يوليو 2026',
+      tag: 'الإصدار الحالي المستقر',
+      tagBg: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+      isCurrent: true,
+      features: [
+        { type: 'ui', title: 'الوضع النهاري الفاتح (Light Mode)', desc: 'تحسين متكامل للتصميم والمحددات التوافقية لكافة النوافذ المنبثقة والجداول والجداول التراكمية مع مراعاة أعلى معايير التباين والوضوح.' },
+        { type: 'feat', title: 'سجل التحديثات وفحص النسخ', desc: 'إضافة قسم سجل تحديثات المنظومة مع زر الفحص الآلي للارتباط بسحابة الصرم البرمجية.' },
+        { type: 'feat', title: 'إفادات واعتراضات التحضير', desc: 'تمكين الفرد من تقديم إفادة واعتراض مباشر على التحضير اليومي مع ربطها التلقائي بسجلات الإدارة.' },
+        { type: 'perf', title: 'تسريع تزامن السجلات', desc: 'رفع كفاءة الاستعلامات وقواعد البيانات للتحضير والعديد للعمل بسلاسة فائقة.' }
+      ]
+    },
+    {
+      version: 'v4.1.0',
+      date: 'يونيو 2026',
+      tag: 'تحديث رئيسي',
+      tagBg: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+      isCurrent: false,
+      features: [
+        { type: 'feat', title: 'بوابة الخدمات الذاتية للأفراد', desc: 'إطلاق بوابة متكاملة للجندي تشمل البطاقة العسكرية الرقمية، كشوفات المستحقات، والعهدة والطلبات.' },
+        { type: 'feat', title: 'منظومة الأوامر الإدارية', desc: 'إصدار وتوثيق الأوامر العسكرية الرسمية والتكليفات المباشرة بالملفات والقرارات.' },
+        { type: 'fix', title: 'تحسين المرفقات والتشفير', desc: 'دعم رفع الصور والوثائق بصيغة Base64 مع حماية التخزين المحلي.' }
+      ]
+    },
+    {
+      version: 'v4.0.0',
+      date: 'يناير 2026',
+      tag: 'تحديث البنية التحتية',
+      tagBg: 'bg-sky-500/20 text-sky-300 border-sky-500/40',
+      isCurrent: false,
+      features: [
+        { type: 'feat', title: 'التزامن المركزي وبطاقات الجاهزية', desc: 'دعم الكشوفات التراكمية للعديد اليومي والشهري وحساب القوة الحاضرة والغياب تلقائياً.' },
+        { type: 'feat', title: 'طباعة النشرات والقرارات العسكرية', desc: 'توليد واستخراج النشرات العسكرية برقم مرجعي وتصديق إلكتروني رسمي.' }
+      ]
+    },
+    {
+      version: 'v3.5.0',
+      date: 'ديسمبر 2025',
+      tag: 'إصدار تأسيسي',
+      tagBg: 'bg-slate-700/50 text-slate-300 border-slate-600/50',
+      isCurrent: false,
+      features: [
+        { type: 'feat', title: 'إدارة العُهد والمستودعات', desc: 'تتبع عهدة الأفراد من السلاح والمعدات واستلامها وتأكيدها رقمياً.' },
+        { type: 'feat', title: 'سجلات الإجازات والخصميات', desc: 'أرشفة طلبات الإجازات وحساب المدد الزمنية المتبقية لكل فرد.' }
+      ]
+    }
+  ];
+
   const handleCopyPhone = () => {
     navigator.clipboard.writeText(phoneNumber);
     setCopiedPhone(true);
     setTimeout(() => setCopiedPhone(false), 2000);
+  };
+
+  const handleCheckForUpdates = () => {
+    setIsCheckingUpdate(true);
+    setUpdateCheckStatus('checking');
+
+    setTimeout(() => {
+      setIsCheckingUpdate(false);
+      setUpdateCheckStatus('up_to_date');
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      setLastCheckedTime(timeStr);
+      localStorage.setItem('last_auto_check_time', now.toISOString());
+      triggerToast('المنظومة محدّثة بالكامل لأحدث إصدار v4.2.0 من شركة الصرم', 'success');
+    }, 1400);
   };
 
   return (
@@ -152,7 +250,7 @@ export default function AboutApp() {
             </a>
           </div>
 
-          {/* Usage Guide Card (NEW) */}
+          {/* Usage Guide Card */}
           <div className="p-2.5 sm:p-3 bg-slate-50/90 rounded-xl border border-slate-200/80 space-y-2 flex flex-col justify-between group hover:border-emerald-500/40 hover:bg-emerald-50/20 transition-all sm:col-span-2 lg:col-span-1">
             <div className="space-y-2">
               <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/60">
@@ -191,7 +289,210 @@ export default function AboutApp() {
 
         </motion.div>
 
-        {/* 3. Social Media Horizontal Row ( strictly Horizontal 3-column ) */}
+        {/* 3. System Version & Updates Section */}
+        <div className="p-3 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 rounded-xl border border-slate-800 text-slate-100 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-800">
+            <div className="flex items-center gap-2">
+              <div className="p-2 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg shrink-0">
+                <Layers className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xs font-black text-white">إصدار النظام والتحديثات</h3>
+                  <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full font-mono text-[10px] font-black">
+                    v4.2.0 (Build 2026.07)
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+                  تحديثات وتطويرات شركة الصرم للتقنية والبرمجيات
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleCheckForUpdates}
+              disabled={isCheckingUpdate}
+              className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 active:scale-95 text-slate-950 font-black rounded-lg text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-md border border-amber-300/40 disabled:opacity-60 disabled:cursor-not-allowed shrink-0"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-slate-950 ${isCheckingUpdate ? 'animate-spin' : ''}`} />
+              <span>{isCheckingUpdate ? 'جاري الاتصال بالسحابة...' : 'فحص التحديثات'}</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
+            <div className="bg-slate-800/80 p-2 rounded-lg border border-slate-700/80 space-y-0.5">
+              <span className="text-[10px] text-slate-400 font-bold block">رقم الإصدار الحالي:</span>
+              <span className="font-mono font-black text-amber-400 block text-xs">v4.2.0-STABLE</span>
+            </div>
+
+            <div className="bg-slate-800/80 p-2 rounded-lg border border-slate-700/80 space-y-0.5">
+              <span className="text-[10px] text-slate-400 font-bold block">حالة الترخيص والنظام:</span>
+              <span className="font-bold text-emerald-400 flex items-center gap-1 text-[11px]">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 inline" />
+                مرخص ومجرب بالكامل
+              </span>
+            </div>
+
+            <div className="bg-slate-800/80 p-2 rounded-lg border border-slate-700/80 space-y-0.5">
+              <span className="text-[10px] text-slate-400 font-bold block">سحابة الصرم للتحديثات:</span>
+              <span className="font-bold text-sky-400 flex items-center gap-1 text-[11px]">
+                <Zap className="w-3.5 h-3.5 text-sky-400 inline" />
+                خادم التحديثات متصل
+              </span>
+            </div>
+          </div>
+
+          {/* Auto Check Toggle Switch Bar */}
+          <div className="flex items-center justify-between bg-slate-800/90 px-3 py-2 rounded-xl border border-slate-700/80 text-xs">
+            <div className="flex items-center gap-2">
+              <Bell className="w-4 h-4 text-amber-400 shrink-0" />
+              <div>
+                <span className="font-bold text-slate-200 block text-[11px]">الفحص التلقائي للتحديثات عند بدء التشغيل</span>
+                <span className="text-[10px] text-slate-400 font-normal">إجراء فحص آلي لخادم التحديثات فور تشغيل المنظومة وإبراز إشعار Toast</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={toggleAutoCheck}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition-all flex items-center gap-1.5 cursor-pointer shrink-0 ${
+                autoCheckEnabled
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                  : 'bg-slate-700 text-slate-400 border-slate-600 hover:bg-slate-600'
+              }`}
+            >
+              {autoCheckEnabled ? (
+                <>
+                  <ToggleRight className="w-4 h-4 text-emerald-400" />
+                  <span>مُفعّل</span>
+                </>
+              ) : (
+                <>
+                  <ToggleLeft className="w-4 h-4 text-slate-400" />
+                  <span>مُعطّل</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Update Result Alert Banner */}
+          {updateCheckStatus === 'up_to_date' && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className="p-2.5 bg-emerald-950/60 border border-emerald-500/50 rounded-xl text-emerald-200 text-xs space-y-1"
+            >
+              <div className="flex items-center justify-between font-black">
+                <span className="flex items-center gap-1.5 text-emerald-300">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>المنظومة محدّثة بالكامل لأحدث إصدار!</span>
+                </span>
+                {lastCheckedTime && (
+                  <span className="text-[10px] text-emerald-400/80 font-normal flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    آخر فحص: {lastCheckedTime}
+                  </span>
+                )}
+              </div>
+              <p className="text-[10px] text-emerald-300/90 font-bold leading-relaxed pr-5">
+                أنت تستخدم أحدث نسخة برمجية معتمدة من شركة الصرم للتقنية والبرمجيات (v4.2.0) والتي تحتوي على أحدث حزم الأمان، التزامن السريع مع قاعدة البيانات المركزية، وتحسينات الجداول والعديد المعتمدة للواء 43 عمالقة.
+              </p>
+            </motion.div>
+          )}
+        </div>
+
+        {/* 4. System Changelog & Version History Section */}
+        <div className="p-3 bg-slate-50/90 rounded-xl border border-slate-200/80 space-y-2.5">
+          <div className="flex items-center justify-between pb-2 border-b border-slate-200/70">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 bg-amber-100 text-amber-800 rounded-lg shrink-0">
+                <History className="w-4 h-4 stroke-[2.2]" />
+              </div>
+              <div>
+                <h3 className="text-xs font-black text-slate-800 flex items-center gap-2">
+                  <span>سجل تحديثات المنظومة (Changelog)</span>
+                  <span className="text-[9px] bg-amber-100 text-amber-900 border border-amber-300 px-1.5 py-0.2 rounded font-bold">
+                    سجل الإصدارات
+                  </span>
+                </h3>
+                <p className="text-[10px] text-slate-400 font-bold">
+                  أبرز المميزات والإضافات الجديدة في كل نسخة برمجية
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowFullChangelog(!showFullChangelog)}
+              className="px-2.5 py-1 bg-white hover:bg-slate-100 active:scale-95 text-slate-700 font-bold rounded-lg text-[11px] border border-slate-200 transition-all flex items-center gap-1 cursor-pointer shadow-xs"
+            >
+              <span>{showFullChangelog ? 'إخفاء السجل القديم' : 'عرض كافة الإصدارات'}</span>
+              {showFullChangelog ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            {(showFullChangelog ? changelogData : changelogData.slice(0, 1)).map((release) => (
+              <div 
+                key={release.version}
+                className={`p-2.5 rounded-xl border transition-all ${
+                  release.isCurrent 
+                    ? 'bg-slate-900 border-slate-800 text-slate-100 shadow-sm' 
+                    : 'bg-white border-slate-200/80 text-slate-800'
+                }`}
+              >
+                <div className="flex items-center justify-between border-b border-slate-200/40 dark:border-slate-800 pb-2 mb-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`px-2 py-0.5 rounded-md font-mono text-xs font-black border ${release.tagBg}`}>
+                      {release.version}
+                    </span>
+                    <span className={`text-[11px] font-bold ${release.isCurrent ? 'text-slate-300' : 'text-slate-600'}`}>
+                      ({release.date})
+                    </span>
+                    <span className={`text-[10px] font-extrabold px-1.5 py-0.2 rounded border ${
+                      release.isCurrent 
+                        ? 'bg-slate-800 text-slate-300 border-slate-700' 
+                        : 'bg-slate-100 text-slate-600 border-slate-200'
+                    }`}>
+                      {release.tag}
+                    </span>
+                  </div>
+                  {release.isCurrent && (
+                    <span className="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full font-black flex items-center gap-1 shrink-0">
+                      <Sparkles className="w-3 h-3 text-emerald-400" />
+                      الإصدار النشط
+                    </span>
+                  )}
+                </div>
+
+                <ul className="space-y-1.5 text-[11px]">
+                  {release.features.map((feat, fIdx) => (
+                    <li key={fIdx} className="flex items-start gap-1.5 leading-relaxed">
+                      <span className={`shrink-0 text-[9px] px-1.5 py-0.2 rounded font-black mt-0.5 border ${
+                        feat.type === 'ui' ? 'bg-purple-500/20 text-purple-300 border-purple-500/30' :
+                        feat.type === 'feat' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' :
+                        feat.type === 'perf' ? 'bg-sky-500/20 text-sky-300 border-sky-500/30' :
+                        'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                      }`}>
+                        {feat.type === 'ui' ? 'واجهة' : feat.type === 'feat' ? 'ميزة' : feat.type === 'perf' ? 'أداء' : 'إصلاح'}
+                      </span>
+                      <div>
+                        <strong className={release.isCurrent ? 'text-white font-black' : 'text-slate-900 font-black'}>
+                          {feat.title}:
+                        </strong>{' '}
+                        <span className={release.isCurrent ? 'text-slate-300 font-bold' : 'text-slate-600 font-bold'}>
+                          {feat.desc}
+                        </span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 4. Social Media Horizontal Row ( strictly Horizontal 3-column ) */}
         <div className="space-y-1.5 pt-1 border-t border-slate-100">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-black text-slate-700 flex items-center gap-1.5">

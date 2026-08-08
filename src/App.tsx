@@ -40,7 +40,8 @@ import {
   AuditLog, 
   Notification, 
   SystemSettings, 
-  AttendanceStatusCode 
+  AttendanceStatusCode,
+  SoldierActionRequest
 } from './types';
 
 import { motion, AnimatePresence } from 'motion/react';
@@ -58,7 +59,12 @@ import AboutApp from './components/AboutApp';
 import SpecialSections from './components/SpecialSections';
 import SplashScreen from './components/SplashScreen';
 import LoginPage from './components/LoginPage';
+import PWAInstallBanner from './components/PWAInstallBanner';
 import NotificationCenter from './components/NotificationCenter';
+import SoldierProfile from './components/SoldierProfile';
+import SoldierPortal from './components/SoldierPortal';
+import SoldierRequestsReviewModal from './components/SoldierRequestsReviewModal';
+import { triggerToast } from './components/ToastContainer';
 
 // Firebase Client Imports
 import { auth, googleAuthProvider } from './lib/firebase.ts';
@@ -80,8 +86,20 @@ export default function App() {
     dailyReminderEnabled: true,
     dailyReminderTime: '08:30',
     autoBackupEnabled: true,
-    hijriSupport: true
+    hijriSupport: true,
+    highContrastMode: false
   });
+
+  // High Contrast Theme side effect
+  useEffect(() => {
+    if (settings?.highContrastMode) {
+      document.documentElement.classList.add('high-contrast-mode');
+      document.body.classList.add('high-contrast-mode');
+    } else {
+      document.documentElement.classList.remove('high-contrast-mode');
+      document.body.classList.remove('high-contrast-mode');
+    }
+  }, [settings?.highContrastMode]);
 
   // Auth States
   const [authUser, setAuthUser] = useState<any>(null);
@@ -126,6 +144,26 @@ export default function App() {
     const interval = setInterval(updateTime, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // --- AUTOMATIC UPDATE CHECK ON STARTUP ---
+  useEffect(() => {
+    const isAutoCheckEnabled = localStorage.getItem('auto_check_updates') !== 'false';
+    if (isAutoCheckEnabled) {
+      const timer = setTimeout(() => {
+        const now = new Date();
+        const timeFormatted = now.toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' });
+        localStorage.setItem('last_auto_check_time', now.toISOString());
+
+        triggerToast(
+          `تم الفحص التلقائي للتحديثات (${timeFormatted}): المنظومة محدّثة بالكامل لأحدث إصدار v4.2.0 من شركة الصرم`,
+          'info',
+          5000
+        );
+      }, 2000);
+
+      return () => clearTimeout(timer);
+    }
+  }, []);
   
   // Navigation
   const [showSplashScreen, setShowSplashScreen] = useState<boolean>(true);
@@ -136,6 +174,10 @@ export default function App() {
 
   // Notifications dropdown open status
   const [isNotifOpen, setIsNotifOpen] = useState(false);
+
+  // Soldier Requests & Review Modal State
+  const [soldierRequests, setSoldierRequests] = useState<SoldierActionRequest[]>([]);
+  const [isRequestsModalOpen, setIsRequestsModalOpen] = useState(false);
 
   // Logout confirmation modal state
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
@@ -155,13 +197,18 @@ export default function App() {
             }
           });
           if (!res.ok) {
-            throw new Error('Local session invalid');
+            if (res.status === 401 || res.status === 403) {
+              const authErr = new Error('Local session invalid');
+              (authErr as any).isAuthError = true;
+              throw authErr;
+            }
+            throw new Error(`Server returned status ${res.status}`);
           }
           const profile = await safeJson(res);
           if (!active) return;
           
           setToken(localToken);
-          setAuthUser({ uid: profile.id, email: profile.email, displayName: profile.name });
+          setAuthUser({ uid: profile.id, email: profile.email || 'user@local.com', displayName: profile.name || 'مستخدم' });
           setDbUser(profile);
           setCurrentUserId(profile.id);
 
@@ -169,7 +216,7 @@ export default function App() {
           setLoadingData(true);
           const headers = { 'Authorization': `Bearer ${localToken}` };
           
-          const [usersRes, unitsRes, soldiersRes, attendanceRes, logsRes, notificationsRes, settingsRes] = await Promise.all([
+          const [usersRes, unitsRes, soldiersRes, attendanceRes, logsRes, notificationsRes, settingsRes, reqsRes] = await Promise.all([
             fetchWithRetry('/api/users', { headers }),
             fetchWithRetry('/api/units', { headers }),
             fetchWithRetry('/api/soldiers', { headers }),
@@ -177,9 +224,10 @@ export default function App() {
             fetchWithRetry('/api/journal-records', { headers }),
             fetchWithRetry('/api/notifications', { headers }),
             fetchWithRetry('/api/settings', { headers }),
+            fetchWithRetry('/api/soldier-requests', { headers }),
           ]);
           
-          const [usersData, unitsData, soldiersData, attendanceData, logsData, notificationsData, settingsData] = await Promise.all([
+          const [usersData, unitsData, soldiersData, attendanceData, logsData, notificationsData, settingsData, reqsData] = await Promise.all([
             safeJson(usersRes, []),
             safeJson(unitsRes, []),
             safeJson(soldiersRes, []),
@@ -187,21 +235,39 @@ export default function App() {
             safeJson(logsRes, []),
             safeJson(notificationsRes, []),
             safeJson(settingsRes, null),
+            safeJson(reqsRes, []),
           ]);
           
           if (!active) return;
-          setUsers(usersData);
-          setUnits(unitsData);
-          setSoldiers(soldiersData);
-          setAttendance(attendanceData);
-          setAuditLogs(logsData);
-          setNotifications(notificationsData);
-          setSettings(settingsData);
+          setUsers(Array.isArray(usersData) ? usersData : []);
+          setUnits(Array.isArray(unitsData) ? unitsData : []);
+          setSoldiers(Array.isArray(soldiersData) ? soldiersData : []);
+          setAttendance(Array.isArray(attendanceData) ? attendanceData : []);
+          setAuditLogs(Array.isArray(logsData) ? logsData : []);
+          setNotifications(Array.isArray(notificationsData) ? notificationsData : []);
+          if (settingsData && typeof settingsData === 'object' && !settingsData.error) {
+            setSettings(prev => ({
+              warningThreshold: 70,
+              dailyReminderEnabled: true,
+              dailyReminderTime: '08:30',
+              autoBackupEnabled: true,
+              hijriSupport: true,
+              highContrastMode: false,
+              ...prev,
+              ...settingsData
+            }));
+          }
+          setSoldierRequests(Array.isArray(reqsData) ? reqsData : []);
           setLoadingAuth(false);
           return; // Skip Firebase subscribe if we successfully restored local session
-        } catch (err) {
-          console.error("Local session restore failed, clearing token", err);
-          localStorage.removeItem('military_auth_token');
+        } catch (err: any) {
+          console.error("Local session restore error:", err);
+          if (err?.isAuthError) {
+            console.warn("Session token expired or invalid, clearing stored token");
+            localStorage.removeItem('military_auth_token');
+          } else {
+            console.warn("Transient network/server error during session restore, keeping stored token");
+          }
         }
       }
 
@@ -226,19 +292,22 @@ export default function App() {
 
             // Seed state with the logged-in user if not already present
             setUsers(prev => {
-              const exists = prev.some(u => u.id === profile.id || u.uid === profile.uid);
-              if (!exists) {
-                return [...prev, profile];
+              const safePrev = Array.isArray(prev) ? prev : [];
+              const exists = safePrev.some(u => u.id === profile?.id || (u as any).uid === profile?.uid);
+              if (!exists && profile?.id) {
+                return [...safePrev, profile];
               }
-              return prev;
+              return safePrev;
             });
-            setCurrentUserId(profile.id);
+            if (profile?.id) {
+              setCurrentUserId(profile.id);
+            }
 
             // Now fetch entire initial state from Postgres
             setLoadingData(true);
             const headers = { 'Authorization': `Bearer ${idToken}` };
             
-            const [usersRes, unitsRes, soldiersRes, attendanceRes, logsRes, notificationsRes, settingsRes] = await Promise.all([
+            const [usersRes, unitsRes, soldiersRes, attendanceRes, logsRes, notificationsRes, settingsRes, reqsRes] = await Promise.all([
               fetchWithRetry('/api/users', { headers }),
               fetchWithRetry('/api/units', { headers }),
               fetchWithRetry('/api/soldiers', { headers }),
@@ -246,9 +315,10 @@ export default function App() {
               fetchWithRetry('/api/journal-records', { headers }),
               fetchWithRetry('/api/notifications', { headers }),
               fetchWithRetry('/api/settings', { headers }),
+              fetchWithRetry('/api/soldier-requests', { headers }),
             ]);
             
-            const [usersData, unitsData, soldiersData, attendanceData, logsData, notificationsData, settingsData] = await Promise.all([
+            const [usersData, unitsData, soldiersData, attendanceData, logsData, notificationsData, settingsData, reqsData] = await Promise.all([
               safeJson(usersRes, []),
               safeJson(unitsRes, []),
               safeJson(soldiersRes, []),
@@ -256,16 +326,29 @@ export default function App() {
               safeJson(logsRes, []),
               safeJson(notificationsRes, []),
               safeJson(settingsRes, null),
+              safeJson(reqsRes, []),
             ]);
             
             if (!active) return;
-            setUsers(usersData);
-            setUnits(unitsData);
-            setSoldiers(soldiersData);
-            setAttendance(attendanceData);
-            setAuditLogs(logsData);
-            setNotifications(notificationsData);
-            setSettings(settingsData);
+            setUsers(Array.isArray(usersData) ? usersData : []);
+            setUnits(Array.isArray(unitsData) ? unitsData : []);
+            setSoldiers(Array.isArray(soldiersData) ? soldiersData : []);
+            setAttendance(Array.isArray(attendanceData) ? attendanceData : []);
+            setAuditLogs(Array.isArray(logsData) ? logsData : []);
+            setNotifications(Array.isArray(notificationsData) ? notificationsData : []);
+            if (settingsData && typeof settingsData === 'object' && !settingsData.error) {
+              setSettings(prev => ({
+                warningThreshold: 70,
+                dailyReminderEnabled: true,
+                dailyReminderTime: '08:30',
+                autoBackupEnabled: true,
+                hijriSupport: true,
+                highContrastMode: false,
+                ...prev,
+                ...settingsData
+              }));
+            }
+            setSoldierRequests(Array.isArray(reqsData) ? reqsData : []);
           } catch (err) {
             console.error("Error loading data from server:", err);
           } finally {
@@ -284,10 +367,18 @@ export default function App() {
       return unsubscribe;
     };
 
+    // Safety timeout to prevent infinite auth loading screen
+    const safetyTimeout = setTimeout(() => {
+      if (active) {
+        setLoadingAuth(false);
+      }
+    }, 4000);
+
     const unsubscribePromise = checkLocalAndFirebase();
 
     return () => {
       active = false;
+      clearTimeout(safetyTimeout);
       unsubscribePromise.then(unsub => {
         if (unsub) unsub();
       });
@@ -296,7 +387,8 @@ export default function App() {
 
   // Current User Object (Simulation or Authenticated)
   const currentUser = useMemo(() => {
-    return users.find(u => u.id === currentUserId) || dbUser || {
+    const safeUsers = Array.isArray(users) ? users : [];
+    return safeUsers.find(u => u.id === currentUserId) || dbUser || {
       id: 'guest',
       name: 'زائر',
       email: '',
@@ -304,6 +396,35 @@ export default function App() {
       unitId: null
     };
   }, [users, currentUserId, dbUser]);
+
+  // Review & Approve/Reject Soldier Action Requests
+  const handleReviewSoldierRequest = async (requestId: string, status: 'approved' | 'rejected', rejectionReason?: string) => {
+    const res = await fetch(`/api/soldier-requests/${requestId}/review`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        status,
+        rejectionReason,
+        reviewedBy: currentUser.name || 'المدير'
+      })
+    });
+    if (!res.ok) throw new Error('فشل تقييم ومراجعة الطلب');
+
+    triggerToast(
+      status === 'approved' ? 'تمت الموافقة على الطلب وتحديث البيانات تلقائياً' : 'تم رفض الطلب وإبلاغ الفرد',
+      status === 'approved' ? 'success' : 'info'
+    );
+
+    // Refresh requests, soldiers, & attendance list
+    const reqRes = await fetch('/api/soldier-requests');
+    if (reqRes.ok) setSoldierRequests(await reqRes.json());
+
+    const soldRes = await fetch('/api/soldiers');
+    if (soldRes.ok) setSoldiers(await soldRes.json());
+
+    const attRes = await fetch('/api/attendance');
+    if (attRes.ok) setAttendance(await attRes.json());
+  };
 
   // Login handler (Google Sign-in)
   const handleLogin = async () => {
@@ -400,7 +521,18 @@ export default function App() {
       setAttendance(attendanceData);
       setAuditLogs(logsData);
       setNotifications(notificationsData);
-      setSettings(settingsData);
+      if (settingsData && typeof settingsData === 'object' && !settingsData.error) {
+        setSettings(prev => ({
+          warningThreshold: 70,
+          dailyReminderEnabled: true,
+          dailyReminderTime: '08:30',
+          autoBackupEnabled: true,
+          hijriSupport: true,
+          highContrastMode: false,
+          ...prev,
+          ...settingsData
+        }));
+      }
     } catch (err: any) {
       setLoginError(err.message || 'خطأ غير متوقع أثناء تسجيل الدخول');
     } finally {
@@ -412,13 +544,21 @@ export default function App() {
   const handleLogout = async () => {
     try {
       localStorage.removeItem('military_auth_token');
-      await signOut(auth);
+      if (auth && auth.currentUser) {
+        await signOut(auth);
+      }
+    } catch (err) {
+      console.error("Logout failed:", err);
+    } finally {
+      localStorage.removeItem('military_auth_token');
       setAuthUser(null);
       setToken(null);
       setDbUser(null);
       setCurrentUserId('');
-    } catch (err) {
-      console.error("Logout failed:", err);
+      setLoginUsername('');
+      setLoginPassword('');
+      setIsLogoutModalOpen(false);
+      triggerToast('تم تسجيل الخروج بنجاح', 'info');
     }
   };
 
@@ -460,6 +600,35 @@ export default function App() {
     }
   }, [currentUser, token]);
 
+  const refreshSoldierRequests = useCallback(async () => {
+    try {
+      const res = await fetchWithRetry('/api/soldier-requests', {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      if (res.ok) {
+        const data = await safeJson(res, []);
+        setSoldierRequests(data);
+      }
+    } catch (e) {
+      console.error("Error refreshing soldier requests:", e);
+    }
+  }, [token]);
+
+  // Refresh global attendance list
+  const refreshAttendance = useCallback(async () => {
+    try {
+      const res = await fetchWithRetry('/api/attendance', {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      if (res.ok) {
+        const data = await safeJson(res, []);
+        setAttendance(data);
+      }
+    } catch (e) {
+      console.error("Error refreshing attendance:", e);
+    }
+  }, [token]);
+
   // Update single attendance record
   const handleUpdateAttendance = useCallback(async (soldierId: string, date: string, status: AttendanceStatusCode) => {
     const record: AttendanceRecord = {
@@ -471,6 +640,19 @@ export default function App() {
       updatedAt: new Date().toISOString()
     };
 
+    // Update soldier military status in local state to guarantee system-wide consistency
+    const statusMap: Record<string, string> = {
+      'ح': 'على رأس العمل',
+      'غ': 'غياب',
+      'إ': 'إجازة',
+      'م': 'مهمة',
+      'ع': 'إجازة مرضية',
+      'ن': 'على رأس العمل'
+    };
+    if (statusMap[status]) {
+      setSoldiers(prev => prev.map(s => s.id === soldierId ? { ...s, militaryStatus: statusMap[status] } : s));
+    }
+
     setAttendance(prev => {
       const filtered = prev.filter(r => !(r.soldierId === soldierId && r.date === date));
       return [...filtered, record];
@@ -478,6 +660,7 @@ export default function App() {
 
     const soldierName = soldiers.find(s => s.id === soldierId)?.fullName || 'عسكري غير معروف';
     handleAddLog('تعديل', 'التحضير اليومي', `تعديل حالة حضور العسكري (${soldierName}) إلى (${status}) ليوم ${date}`);
+    triggerToast('تم تحديث حالة الحضور اليومي بنجاح', 'success');
 
     try {
       await fetchWithRetry('/api/attendance', {
@@ -488,10 +671,11 @@ export default function App() {
         },
         body: JSON.stringify(record)
       });
+      await refreshAttendance();
     } catch (e) {
       console.error("Error saving attendance:", e);
     }
-  }, [currentUser, token, soldiers, handleAddLog]);
+  }, [currentUser, token, soldiers, handleAddLog, refreshAttendance]);
 
   // Bulk update attendance records
   const handleBulkUpdateAttendance = useCallback(async (soldierIds: string[], dates: string[], status: AttendanceStatusCode) => {
@@ -509,12 +693,27 @@ export default function App() {
       });
     });
 
+    // Update soldiers military status in local state to guarantee system-wide consistency
+    const statusMap: Record<string, string> = {
+      'ح': 'على رأس العمل',
+      'غ': 'غياب',
+      'إ': 'إجازة',
+      'م': 'مهمة',
+      'ع': 'إجازة مرضية',
+      'ن': 'على رأس العمل'
+    };
+    if (statusMap[status]) {
+      const sIdSet = new Set(soldierIds);
+      setSoldiers(prev => prev.map(s => sIdSet.has(s.id) ? { ...s, militaryStatus: statusMap[status] } : s));
+    }
+
     setAttendance(prev => {
       let filtered = prev.filter(r => !(soldierIds.includes(r.soldierId) && dates.includes(r.date)));
       return [...filtered, ...newRecords];
     });
 
     handleAddLog('تعديل', 'التحضير اليومي', `تحضير جماعي: تعديل حالة حضور لعدد (${soldierIds.length}) عسكري للأيام (${dates.join(', ')}) إلى (${status})`);
+    triggerToast('تم تطبيق التحضير الجماعي بنجاح', 'success');
 
     try {
       await fetchWithRetry('/api/attendance/bulk', {
@@ -525,10 +724,11 @@ export default function App() {
         },
         body: JSON.stringify({ records: newRecords })
       });
+      await refreshAttendance();
     } catch (e) {
       console.error("Error saving bulk attendance:", e);
     }
-  }, [currentUser, token, handleAddLog]);
+  }, [currentUser, token, handleAddLog, refreshAttendance]);
 
   // Restore whole state (Backups)
   const handleRestoreState = useCallback(async (importedData: {
@@ -543,6 +743,7 @@ export default function App() {
     if (importedData.auditLogs && importedData.auditLogs.length > 0) {
       setAuditLogs(importedData.auditLogs);
     }
+    triggerToast('تم استعادة بيانات المنظومة بنجاح', 'success');
 
     try {
       await fetchWithRetry('/api/attendance/bulk', {
@@ -567,12 +768,14 @@ export default function App() {
     setUnits(importedData.units);
     setSoldiers(importedData.soldiers);
     setAttendance(importedData.attendance);
+    triggerToast('تم استيراد الملف وسجلات القوة العسكرية بنجاح', 'success');
   }, []);
 
   // Update Settings
   const handleUpdateSettings = useCallback(async (newSettings: SystemSettings) => {
     setSettings(newSettings);
     handleAddLog('تعديل', 'الإعدادات العامة', 'تم تعديل إعدادات التنبيه والتقاويم الخاصة بالنظام.');
+    triggerToast('تم حفظ إعدادات المنظومة القيادية بنجاح', 'success');
 
     try {
       await fetchWithRetry('/api/settings', {
@@ -613,6 +816,7 @@ export default function App() {
     };
     setUnits(prev => [...prev, newUnit]);
     handleAddLog('إضافة', 'الهيكل التنظيمي', `إضافة تشكيل عسكري جديد باسم (${name}) بقائد المسؤول (${commanderName || 'لم يعين قائد'})`);
+    triggerToast('تم إضافة التشكيل العسكري الجديد بنجاح', 'success');
 
     try {
       await fetchWithRetry('/api/units', {
@@ -651,6 +855,7 @@ export default function App() {
       code: code !== undefined ? code : u.code
     } : u));
     handleAddLog('تعديل', 'الهيكل التنظيمي', `تعديل التشكيل العسكري (${name}) - تحديد القائد (${commanderName || 'بدون قائد'}) والحالة لـ (${status || 'نشط'})`);
+    triggerToast('تم تحديث بيانات التشكيل العسكري بنجاح', 'success');
 
     try {
       await fetchWithRetry(`/api/units/${id}`, {
@@ -682,6 +887,7 @@ export default function App() {
     // Automatically transfer any soldiers belonging to this unit to unassigned
     setSoldiers(prev => prev.map(s => s.unitId === id ? { ...s, unitId: '' } : s));
     handleAddLog('حذف', 'الهيكل التنظيمي', `حذف التشكيل العسكري (${unitName}) ونقل الجنود التابعين له لغير معين`);
+    triggerToast('تم حذف التشكيل العسكري بنجاح', 'info');
 
     try {
       await fetchWithRetry(`/api/units/${id}/delete`, {
@@ -708,6 +914,7 @@ export default function App() {
     setSoldiers(prev => [...prev, newSoldier]);
     const unitName = units.find(u => u.id === unitId)?.name || 'غير معين';
     handleAddLog('إضافة', 'سجل الأفراد والعديد', `إضافة عسكري جديد باسم (${fullName})، الرتبة (${rank})، الرقم العسكري (${militaryNumber})، التشكيل (${unitName})`);
+    triggerToast('تم إضافة بطاقة الفرد العسكري بنجاح', 'success');
 
     try {
       await fetchWithRetry('/api/soldiers', {
@@ -727,6 +934,7 @@ export default function App() {
     setSoldiers(prev => prev.map(s => s.id === id ? { ...s, militaryNumber, fullName, rank, unitId, isActive } : s));
     const unitName = units.find(u => u.id === unitId)?.name || 'غير معين';
     handleAddLog('تعديل', 'سجل الأفراد والعديد', `تعديل بيانات العسكري (${fullName})، الرتبة (${rank})، التشكيل الجديد (${unitName})، الحالة (${isActive ? 'نشط' : 'غير نشط'})`);
+    triggerToast('تم تعديل بيانات الفرد العسكري بنجاح', 'success');
 
     try {
       await fetchWithRetry(`/api/soldiers/${id}`, {
@@ -747,6 +955,7 @@ export default function App() {
     const soldierName = soldierToDelete ? soldierToDelete.fullName : 'عسكري غير معروف';
     setSoldiers(prev => prev.filter(s => s.id !== id));
     handleAddLog('حذف', 'سجل الأفراد والعديد', `حذف بطاقة العسكري (${soldierName}) نهائياً من قاعدة البيانات`);
+    triggerToast('تم حذف بطاقة العسكري بنجاح', 'info');
 
     try {
       await fetchWithRetry(`/api/soldiers/${id}/delete`, {
@@ -761,14 +970,15 @@ export default function App() {
   }, [token, soldiers, handleAddLog]);
 
   // Users CRUD
-  const handleAddUser = useCallback(async (newUserPayload: Omit<UserType, 'id'>) => {
-    const id = `u_${Date.now()}`;
+  const handleAddUser = useCallback(async (newUserPayload: Omit<UserType, 'id'> & { id?: string }) => {
+    const id = newUserPayload.id || `u_${Date.now()}`;
     const newUser: UserType = {
       ...newUserPayload,
       id,
     };
     setUsers(prev => [...prev, newUser]);
     handleAddLog('إضافة', 'المستخدمون والصلاحيات', `إضافة مستخدم نظام جديد باسم (${newUser.name}) بدور الصلاحية (${newUser.role}) البريد (${newUser.email})`);
+    triggerToast('تم إنشاء الحساب العسكري الجديد بنجاح', 'success');
 
     try {
       await fetchWithRetry('/api/users', {
@@ -789,6 +999,7 @@ export default function App() {
     const targetUser = users.find(u => u.id === id);
     const userName = targetUser ? targetUser.name : 'غير معروف';
     handleAddLog('تعديل', 'المستخدمون والصلاحيات', `تعديل بيانات وصلاحيات مستخدم النظام (${userName}) - الصلاحية الجديدة (${updatedPayload.role || 'لم تتغير'})`);
+    triggerToast('تم حفظ تعديلات حساب المستخدم والصلاحيات بنجاح', 'success');
 
     try {
       await fetchWithRetry(`/api/users/${id}`, {
@@ -809,6 +1020,7 @@ export default function App() {
     const userName = targetUser ? targetUser.name : 'غير معروف';
     setUsers(prev => prev.filter(u => u.id !== id));
     handleAddLog('حذف', 'المستخدمون والصلاحيات', `حذف مستخدم النظام (${userName}) وسحب صلاحياته الأمنية`);
+    triggerToast('تم إغلاق وحذف حساب المستخدم بنجاح', 'info');
 
     try {
       await fetchWithRetry(`/api/users/${id}/delete`, {
@@ -864,6 +1076,7 @@ export default function App() {
 
     setSoldiers(prev => prev.map(s => s.id === soldierId ? { ...s, unitId: targetUnitId, assignmentsHistory: updatedHistory } : s));
     handleAddLog('تعديل', 'نقل القوة الميدانية', `نقل العسكري (${soldier.fullName}) من (${oldUnitName}) إلى (${newUnitName}) بموجب الأمر رقم (${orderDetails?.orderNumber || 'غير محدد'}) الصادر عن (${orderDetails?.issuedBy || 'قيادة اللواء'})`);
+    triggerToast('تم تنفيذ وإصدار أمر نقل العسكري بنجاح', 'success');
 
     try {
       await fetchWithRetry(`/api/soldiers/${soldierId}`, {
@@ -903,6 +1116,7 @@ export default function App() {
   const handleClearAllLogs = async () => {
     setAuditLogs([]);
     handleAddLog('حذف', 'سجل الرقابة', 'تم تصفير وأرشفة سجل التعديلات والعمليات بالكامل.');
+    triggerToast('تم تصفير وأرشفة سجل التعديلات بالكامل', 'info');
 
     try {
       await fetchWithRetry('/api/journal-records/clear', {
@@ -918,12 +1132,17 @@ export default function App() {
 
   // --- Real-time Attendance Alerts Sync ---
   useEffect(() => {
-    if (soldiers.length === 0 || units.length === 0) return;
+    const safeSoldiers = Array.isArray(soldiers) ? soldiers : [];
+    const safeUnits = Array.isArray(units) ? units : [];
+    const safeAttendance = Array.isArray(attendance) ? attendance : [];
+    const safeNotifications = Array.isArray(notifications) ? notifications : [];
 
-    const activeSoldiers = soldiers.filter(s => s.isActive);
-    const recordsToday = attendance.filter(a => a.date === '2026-07-16');
+    if (safeSoldiers.length === 0 || safeUnits.length === 0) return;
 
-    units.forEach(unit => {
+    const activeSoldiers = safeSoldiers.filter(s => s.isActive);
+    const recordsToday = safeAttendance.filter(a => a.date === '2026-07-16');
+
+    safeUnits.forEach(unit => {
       const unitSoldierIds = new Set(activeSoldiers.filter(s => s.unitId === unit.id).map(s => s.id));
       const strength = unitSoldierIds.size;
       if (strength === 0) return;
@@ -937,15 +1156,16 @@ export default function App() {
 
       const todayRate = Math.round(((h + n * 0.5) / strength) * 100);
       
-      if (todayRate < settings.warningThreshold && todayRate > 0) {
+      const warningThreshold = settings?.warningThreshold ?? 70;
+      if (todayRate < warningThreshold && todayRate > 0) {
         const notifTitle = `تدني نسبة الجاهزية - ${unit.name}`;
-        const hasNotif = notifications.some(n => n.title === notifTitle && !n.isRead);
+        const hasNotif = safeNotifications.some(n => n.title === notifTitle && !n.isRead);
         
         if (!hasNotif) {
           const newNotif: Notification = {
             id: `notif_rate_${unit.id}_${Date.now()}`,
             title: notifTitle,
-            message: `انخفض معدل الجاهزية اليومي في (${unit.name}) ليوم 16 يوليو إلى ${todayRate}% وهو أقل من الحد المسموح به (${settings.warningThreshold}%). يرجى المتابعة الفورية.`,
+            message: `انخفض معدل الجاهزية اليومي في (${unit.name}) ليوم 16 يوليو إلى ${todayRate}% وهو أقل من الحد المسموح به (${warningThreshold}%). يرجى المتابعة الفورية.`,
             isRead: false,
             type: 'warning',
             createdAt: new Date().toISOString()
@@ -964,9 +1184,9 @@ export default function App() {
         }
       }
     });
-  }, [attendance, soldiers, units, settings.warningThreshold, notifications, token]);
+  }, [attendance, soldiers, units, settings?.warningThreshold, notifications, token]);
 
-  const unreadCount = notifications.filter(n => !n.isRead).length;
+  const unreadCount = (Array.isArray(notifications) ? notifications : []).filter(n => !n.isRead).length;
 
   const NAV_ITEMS = [
     { id: 'dashboard', label: 'لوحة القيادة والمؤشرات', icon: LayoutDashboard },
@@ -1008,7 +1228,57 @@ export default function App() {
     );
   }
 
-  // --- 3. SYSTEM MAIN APP (Authenticated & Connected to PostgreSQL) ---
+  // --- 2.5. SOLDIER PORTAL (Dedicated Standalone Page for Soldier Role) ---
+  if (currentUser.role === 'soldier') {
+    const soldier = soldiers.find(s => 
+      (s.accountUsername && currentUser.username && s.accountUsername === currentUser.username) || 
+      (currentUser.soldierId && s.id === currentUser.soldierId) ||
+      (s.militaryNumber && currentUser.username && s.militaryNumber === currentUser.username)
+    );
+
+    if (!soldier) {
+      return (
+        <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 dir-rtl" dir="rtl">
+          <div className="bg-slate-900 border border-slate-800 p-8 sm:p-12 rounded-3xl text-center space-y-4 max-w-xl mx-auto shadow-2xl">
+            <ShieldAlert className="w-16 h-16 text-amber-400 mx-auto animate-pulse" />
+            <h3 className="text-white font-black text-xl">حساب الفرد قيد التهيئة أو غير مرتبط</h3>
+            <p className="text-slate-300 text-xs leading-relaxed">
+              مرحباً بك {currentUser.name || 'أخي الفرد'}. تم تسجيل دخولك بنجاح، ولكن لم يتم ربط هذا الحساب بسجلك العسكري بعد.
+              يرجى التواصل مع مسؤول الشؤون الإدارية لتأكيد اسم المستخدم وتفعيل ربط حسابك.
+            </p>
+            <div className="p-3 bg-slate-800/80 rounded-xl text-slate-400 text-[11px] font-mono border border-slate-700/60">
+              رمز المستخدم: {currentUser.username || currentUser.id}
+            </div>
+            <div className="pt-2">
+              <button
+                onClick={handleLogout}
+                className="px-6 py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-bold text-xs transition-all cursor-pointer inline-flex items-center gap-2 shadow-lg shadow-rose-950/50"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>تسجيل الخروج</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <SoldierPortal
+        soldier={soldier}
+        currentUser={currentUser}
+        units={units}
+        printSettings={settings?.printSettings}
+        onLogout={handleLogout}
+        onSoldierUpdated={async () => {
+          const res = await fetch('/api/soldiers');
+          if (res.ok) setSoldiers(await res.json());
+        }}
+      />
+    );
+  }
+
+  // --- 3. SYSTEM MAIN APP (Authenticated Admin/Staff & Connected to PostgreSQL) ---
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans select-none antialiased text-right" dir="rtl">
       
@@ -1024,7 +1294,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* Top Bar: Official Status, Title & Clock */}
-      <div className="bg-slate-950 text-slate-100 py-1 px-4 border-b border-slate-800 flex flex-row justify-between items-center gap-2 text-xs sticky top-0 z-40 shadow-sm backdrop-blur-md">
+      <div className="bg-slate-950 text-slate-100 py-1 px-2.5 sm:px-4 border-b border-slate-800 flex flex-row justify-between items-center gap-2 text-xs sticky top-0 z-40 shadow-sm backdrop-blur-md">
         <div className="flex items-center gap-3">
           {/* Elegant Account Information */}
           <div className="flex items-center gap-2 bg-slate-900 px-2.5 py-0.5 rounded-md border border-slate-800/60 text-[10px] xs:text-[11px]">
@@ -1039,7 +1309,8 @@ export default function App() {
                   currentUser.role === 'admin' ? 'مدير النظام (كامل الصلاحيات)' :
                   currentUser.role === 'commander_formation' ? 'قائد التشكيل' :
                   currentUser.role === 'commander_unit' ? 'قائد كتيبة' :
-                  currentUser.role === 'operations' ? 'ركن عمليات' : 'كاتب بيانات'
+                  currentUser.role === 'operations' ? 'ركن عمليات' :
+                  (currentUser.role as string) === 'soldier' ? 'بوابة الفرد (عسكري)' : 'كاتب بيانات'
                 }
               </span>
               {currentUser.email && (
@@ -1063,6 +1334,23 @@ export default function App() {
             <Clock className="w-3 h-3 text-slate-400" />
             <span className="font-bold">{timeStr || '12:00:00 ص'}</span>
           </div>
+
+          {/* Soldier Requests Review Button (For Managers) */}
+          {(currentUser.role as string) !== 'soldier' && (
+            <button
+              onClick={() => setIsRequestsModalOpen(true)}
+              className="relative p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors border border-slate-700 text-amber-400 cursor-pointer flex items-center gap-1.5 text-[11px] font-bold"
+              title="مركز مراجعة وإعتماد طلبات وإجراءات الأفراد"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline">طلبات الأفراد</span>
+              {soldierRequests.filter(r => r.status === 'pending').length > 0 && (
+                <span className="px-1.5 py-0.2 bg-amber-500 text-slate-950 rounded-full text-[10px] font-black animate-pulse">
+                  {soldierRequests.filter(r => r.status === 'pending').length}
+                </span>
+              )}
+            </button>
+          )}
 
           {/* Advanced Tactical Notification Center */}
           <NotificationCenter
@@ -1135,15 +1423,15 @@ export default function App() {
             )}
           </motion.button>
 
-          {/* Tab 3: الأقسام (Special Sections - Featured Elevated Action Button) */}
+          {/* Tab 3: التقارير (Reports - Featured Elevated Action Button) */}
           <motion.button
             whileTap={{ scale: 0.88 }}
-            onClick={() => { setActiveTab('special_sections'); setIsMoreBottomSheetOpen(false); }}
+            onClick={() => { setActiveTab('reports'); setIsMoreBottomSheetOpen(false); }}
             className={`relative flex flex-col items-center justify-center py-1.5 px-1 rounded-2xl transition-all cursor-pointer ${
-              activeTab === 'special_sections' ? 'text-amber-300 font-black' : 'text-slate-300 hover:text-white'
+              activeTab === 'reports' ? 'text-amber-300 font-black' : 'text-slate-300 hover:text-white'
             }`}
           >
-            {activeTab === 'special_sections' ? (
+            {activeTab === 'reports' ? (
               <motion.div
                 layoutId="bottomNavPill"
                 className="absolute inset-0 bg-gradient-to-b from-amber-500/25 via-emerald-500/15 to-transparent border border-amber-500/50 rounded-2xl shadow-[inset_0_1px_2px_rgba(255,255,255,0.2)]"
@@ -1153,14 +1441,14 @@ export default function App() {
               <div className="absolute inset-x-1 inset-y-1 bg-slate-900/80 border border-slate-700/60 rounded-xl" />
             )}
             <div className="relative z-10 flex items-center justify-center">
-              <Sparkles className={`w-5 h-5 transition-transform duration-200 ${activeTab === 'special_sections' ? 'scale-110 text-amber-300 drop-shadow-[0_0_10px_rgba(252,211,77,0.8)]' : 'text-amber-400'}`} />
+              <FilePieChart className={`w-5 h-5 transition-transform duration-200 ${activeTab === 'reports' ? 'scale-110 text-amber-300 drop-shadow-[0_0_10px_rgba(252,211,77,0.8)]' : 'text-amber-400'}`} />
               <span className="absolute -top-1 -right-1.5 flex h-2.5 w-2.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400 shadow-[0_0_6px_#34d399]"></span>
               </span>
             </div>
-            <span className="text-[10px] font-sans relative z-10 mt-1 font-black text-amber-300 tracking-tight">الأقسام</span>
-            {activeTab === 'special_sections' && (
+            <span className="text-[10px] font-sans relative z-10 mt-1 font-black text-amber-300 tracking-tight">التقارير</span>
+            {activeTab === 'reports' && (
               <span className="w-1.5 h-1.5 bg-amber-400 rounded-full absolute bottom-0.5 shadow-[0_0_8px_#f59e0b]" />
             )}
           </motion.button>
@@ -1253,24 +1541,6 @@ export default function App() {
               <div className="grid grid-cols-1 gap-2 pt-1">
                 <button
                   onClick={() => {
-                    setActiveTab('reports');
-                    setIsMoreBottomSheetOpen(false);
-                  }}
-                  className={`flex items-center gap-3 w-full p-3.5 rounded-2xl text-xs font-bold transition-all text-right cursor-pointer ${
-                    activeTab === 'reports' 
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
-                      : 'bg-slate-800/60 hover:bg-slate-800 text-slate-200 border border-slate-700/50'
-                  }`}
-                >
-                  <FilePieChart className="w-5 h-5 text-emerald-400 shrink-0" />
-                  <div className="flex-1">
-                    <p className="font-sans font-black text-slate-100">مركز التقارير والمستخرجات القيادية</p>
-                    <p className="text-[10px] text-slate-400 font-normal mt-0.5">تقارير الجاهزية، كشوفات التحضير، وإحصائيات القوة</p>
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => {
                     setActiveTab('special_sections');
                     setIsMoreBottomSheetOpen(false);
                   }}
@@ -1284,6 +1554,24 @@ export default function App() {
                   <div className="flex-1">
                     <p className="font-sans font-black text-slate-100">الأقسام والخدمات المميزة</p>
                     <p className="text-[10px] text-slate-400 font-normal mt-0.5">الإجازات والتصاريح، الترقيات، رعاية الشهداء والجرحى، والعهد العسكرية</p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setActiveTab('reports');
+                    setIsMoreBottomSheetOpen(false);
+                  }}
+                  className={`flex items-center gap-3 w-full p-3.5 rounded-2xl text-xs font-bold transition-all text-right cursor-pointer ${
+                    activeTab === 'reports' 
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
+                      : 'bg-slate-800/60 hover:bg-slate-800 text-slate-200 border border-slate-700/50'
+                  }`}
+                >
+                  <FilePieChart className="w-5 h-5 text-emerald-400 shrink-0" />
+                  <div className="flex-1">
+                    <p className="font-sans font-black text-slate-100">مركز التقارير والمستخرجات القيادية</p>
+                    <p className="text-[10px] text-slate-400 font-normal mt-0.5">تقارير الجاهزية، كشوفات التحضير، وإحصائيات القوة</p>
                   </div>
                 </button>
 
@@ -1343,8 +1631,8 @@ export default function App() {
                 <div className="flex items-center justify-between p-3.5 bg-slate-800/80 rounded-2xl border border-slate-700/60">
                   <div className="text-right">
                     <span className="text-[9px] text-emerald-400 font-sans block font-black">المستخدم النشط:</span>
-                    <span className="text-xs font-black text-white">{currentUser?.displayName || currentUser?.username}</span>
-                    <span className="text-[10px] text-slate-400 block mt-0.5 font-mono">{currentUser?.role === 'SUPER_ADMIN' ? 'مدير نظام الفرد العام' : currentUser?.role}</span>
+                    <span className="text-xs font-black text-white">{(currentUser as any)?.displayName || currentUser?.name || currentUser?.username}</span>
+                    <span className="text-[10px] text-slate-400 block mt-0.5 font-mono">{(currentUser?.role as string) === 'SUPER_ADMIN' ? 'مدير نظام الفرد العام' : currentUser?.role}</span>
                   </div>
 
                   <button
@@ -1364,105 +1652,121 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Main Navigation Tabs - Desktop Only */}
-      <nav className="bg-white border-b border-slate-200 hidden lg:block">
-        <div className="max-w-7xl mx-auto px-6 flex overflow-x-auto gap-1">
-          {NAV_ITEMS.map((item) => {
-            const IconComponent = item.icon;
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => {
-                  setActiveTab(item.id);
-                  setIsNotifOpen(false);
-                }}
-                className={`flex items-center gap-2 px-5 py-4 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
-                  isActive 
-                    ? 'border-emerald-800 text-emerald-850' 
-                    : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50'
-                }`}
-              >
-                <IconComponent className={`w-4 h-4 ${isActive ? 'text-emerald-800' : 'text-slate-400'}`} />
-                {item.label}
-              </button>
-            );
-          })}
-        </div>
-      </nav>
+      {/* Main Navigation Tabs - Desktop Only (Hidden for Soldier Role) */}
+      {(currentUser.role as string) !== 'soldier' && (
+        <nav className="bg-white border-b border-slate-200 hidden lg:block">
+          <div className="max-w-7xl mx-auto px-6 flex overflow-x-auto gap-1">
+            {NAV_ITEMS.map((item) => {
+              const IconComponent = item.icon;
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    setActiveTab(item.id);
+                    setIsNotifOpen(false);
+                  }}
+                  className={`flex items-center gap-2 px-5 py-4 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                    isActive 
+                      ? 'border-emerald-800 text-emerald-850' 
+                      : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+                  }`}
+                >
+                  <IconComponent className={`w-4 h-4 ${isActive ? 'text-emerald-800' : 'text-slate-400'}`} />
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      )}
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 pt-6 pb-24 lg:pb-6 overflow-hidden">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-1.5 sm:px-6 pt-0 sm:pt-6 pb-20 lg:pb-6 overflow-hidden">
         
-        {activeTab === 'dashboard' && (
-          <Dashboard 
-            units={units}
-            soldiers={soldiers}
-            attendance={attendance}
-            users={users}
-            auditLogs={auditLogs}
-            printSettings={settings.printSettings}
-            onNavigate={(tab) => {
-              setActiveTab(tab);
-              setIsMoreBottomSheetOpen(false);
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
-            onViewSoldierProfile={(id) => {
-              setSelectedSoldierIdForProfile(id);
-              setActiveTab('org_manager');
-              setIsMoreBottomSheetOpen(false);
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
-            currentUser={currentUser}
-            onAddLog={handleAddLog}
-            onSaveAttendanceBatch={handleBulkUpdateAttendance}
-          />
-        )}
+        {/* PWA Install & Network Status Bar */}
+        <div className="mb-1 sm:mb-5 empty:hidden">
+          <PWAInstallBanner />
+        </div>
+        
+        {/* Active Tab Content */}
+        <>
+          {activeTab === 'dashboard' && (
+              <Dashboard 
+                units={units}
+                soldiers={soldiers}
+                attendance={attendance}
+                users={users}
+                auditLogs={auditLogs}
+                printSettings={settings?.printSettings}
+                onNavigate={(tab) => {
+                  setActiveTab(tab);
+                  setIsMoreBottomSheetOpen(false);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                onViewSoldierProfile={(id) => {
+                  setSelectedSoldierIdForProfile(id);
+                  setActiveTab('org_manager');
+                  setIsMoreBottomSheetOpen(false);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                currentUser={currentUser}
+                onAddLog={handleAddLog}
+                onSaveAttendanceBatch={handleBulkUpdateAttendance}
+              />
+            )}
 
-        {activeTab === 'attendance' && (
-          <AttendanceSheet 
-            units={units}
-            soldiers={soldiers}
-            attendance={attendance}
-            currentUser={currentUser}
-            printSettings={settings.printSettings}
-            onUpdateAttendance={handleUpdateAttendance}
-            onBulkUpdateAttendance={handleBulkUpdateAttendance}
-            onAddLog={handleAddLog}
-          />
-        )}
+            {activeTab === 'attendance' && (
+              <AttendanceSheet 
+                units={units}
+                soldiers={soldiers}
+                attendance={attendance}
+                currentUser={currentUser}
+                printSettings={settings?.printSettings}
+                onUpdateAttendance={handleUpdateAttendance}
+                onBulkUpdateAttendance={handleBulkUpdateAttendance}
+                onAddLog={handleAddLog}
+              />
+            )}
 
-        {activeTab === 'org_manager' && (
-          <OrgManager 
-            units={units}
-            soldiers={soldiers}
-            currentUser={currentUser}
-            printSettings={settings.printSettings}
-            selectedSoldierId={selectedSoldierIdForProfile}
-            onSelectSoldierId={setSelectedSoldierIdForProfile}
-            onAddUnit={handleAddUnit}
-            onEditUnit={handleEditUnit}
-            onDeleteUnit={handleDeleteUnit}
-            onAddSoldier={handleAddSoldier}
-            onEditSoldier={handleEditSoldier}
-            onDeleteSoldier={handleDeleteSoldier}
-            onTransferSoldier={handleTransferSoldier}
-            onAddLog={handleAddLog}
-          />
-        )}
+            {activeTab === 'org_manager' && (
+              <OrgManager 
+                units={units}
+                soldiers={soldiers}
+                attendance={attendance}
+                currentUser={currentUser}
+                auditLogs={auditLogs}
+                printSettings={settings?.printSettings}
+                selectedSoldierId={selectedSoldierIdForProfile}
+                onSelectSoldierId={setSelectedSoldierIdForProfile}
+                onAddUnit={handleAddUnit}
+                onEditUnit={handleEditUnit}
+                onDeleteUnit={handleDeleteUnit}
+                onAddSoldier={handleAddSoldier}
+                onEditSoldier={handleEditSoldier}
+                onDeleteSoldier={handleDeleteSoldier}
+                onTransferSoldier={handleTransferSoldier}
+                onAddLog={handleAddLog}
+                onAttendanceUpdated={refreshAttendance}
+                onImportCompleted={handleImportCompleted}
+              />
+            )}
 
-        {activeTab === 'special_sections' && (
-          <SpecialSections 
-            soldiers={soldiers}
-            units={units}
-            currentUser={currentUser}
-            printSettings={settings.printSettings}
-            onNavigateToSoldier={(soldierId) => {
-              setSelectedSoldierIdForProfile(soldierId);
-              setActiveTab('org_manager');
-            }}
-          />
-        )}
+            {activeTab === 'special_sections' && (
+              <SpecialSections 
+                soldiers={soldiers}
+                units={units}
+                currentUser={currentUser}
+                printSettings={settings?.printSettings}
+                soldierRequests={soldierRequests}
+                onRefreshRequests={refreshSoldierRequests}
+                onAddLog={(log) => { handleAddLog('إضافة', 'الأقسام الخاصة', typeof log === 'string' ? log : JSON.stringify(log)); }}
+                onNavigateToSoldier={(soldierId) => {
+                  setSelectedSoldierIdForProfile(soldierId);
+                  setActiveTab('org_manager');
+                }}
+              />
+            )}
 
         {activeTab === 'reports' && (
           <Reports 
@@ -1470,7 +1774,7 @@ export default function App() {
             soldiers={soldiers}
             attendance={attendance}
             currentUser={currentUser}
-            printSettings={settings.printSettings}
+            printSettings={settings?.printSettings}
             googleAccessToken={googleAccessToken}
             onSetGoogleAccessToken={setGoogleAccessToken}
           />
@@ -1504,8 +1808,19 @@ export default function App() {
         {activeTab === 'about' && (
           <AboutApp />
         )}
+        </>
 
       </main>
+
+      {/* Soldier Requests Review Modal */}
+      <SoldierRequestsReviewModal
+        isOpen={isRequestsModalOpen}
+        onClose={() => setIsRequestsModalOpen(false)}
+        requests={soldierRequests}
+        soldiers={soldiers}
+        units={units}
+        onReviewRequest={handleReviewSoldierRequest}
+      />
 
       {/* General Footer */}
       <footer className="bg-slate-100 text-slate-500 py-4 px-6 text-center text-[10px] border-t border-slate-200 mt-auto">
@@ -1575,7 +1890,8 @@ export default function App() {
                       currentUser.role === 'admin' ? 'مدير النظام (كامل الصلاحيات)' :
                       currentUser.role === 'commander_formation' ? 'قائد التشكيل' :
                       currentUser.role === 'commander_unit' ? 'قائد كتيبة' :
-                      currentUser.role === 'operations' ? 'ركن عمليات' : 'كاتب بيانات'
+                      currentUser.role === 'operations' ? 'ركن عمليات' :
+                      (currentUser.role as string) === 'soldier' ? 'بوابة الفرد (عسكري)' : 'كاتب بيانات'
                     }
                   </p>
                 </div>

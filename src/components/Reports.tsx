@@ -130,6 +130,7 @@ const REPORT_CATEGORIES = [
     hoverBorder: 'hover:border-sky-500/60 hover:shadow-sky-500/10',
     description: 'تحضيرات الانضباط اليومي، كشوفات الحضور، الغياب، التأخير، والإجازات والمأموريات.',
     subReports: [
+      { id: 'att_weekly_7days', label: '📊 تقرير إحصائي أسبوعي تلقائي (آخر 7 أيام)' },
       { id: 'att_daily', label: 'كشف التحضير اليومي' },
       { id: 'att_monthly', label: 'كشف التحضير الشهري' },
       { id: 'att_present', label: 'تقرير الحضور والتمام' },
@@ -630,8 +631,8 @@ export default function Reports({
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       list = list.filter(s => 
-        s.fullName.toLowerCase().includes(q) ||
-        s.militaryNumber.toLowerCase().includes(q) ||
+        (s.fullName && s.fullName.toLowerCase().includes(q)) ||
+        (s.militaryNumber && s.militaryNumber.toLowerCase().includes(q)) ||
         (s.phoneNumber && s.phoneNumber.includes(q)) ||
         (s.address && s.address.toLowerCase().includes(q))
       );
@@ -803,7 +804,7 @@ export default function Reports({
       const rank = r.rank || 'جندي';
       rankMap[rank] = (rankMap[rank] || 0) + 1;
 
-      if (['لواء', 'عميد', 'عقيد', 'مقدم', 'رائد', 'نقيب', 'ملازم أول', 'ملازم'].some(o => rank.includes(o))) {
+      if (rank && ['لواء', 'عميد', 'عقيد', 'مقدم', 'رائد', 'نقيب', 'ملازم أول', 'ملازم'].some(o => rank.includes(o))) {
         officersCount++;
       } else if (['مساعد', 'رقيب أول', 'رقيب', 'عريف'].some(n => rank.includes(n))) {
         ncoCount++;
@@ -943,6 +944,158 @@ export default function Reports({
       weapons: Object.entries(weaponMap).map(([label, count]) => ({ label, count, pct: Math.round((count / total) * 100) })),
     };
   }, [reportTableData, reportStats]);
+
+  // 7-day Weekly Statistical Attendance Summary Calculation
+  const weekly7DaysData = useMemo(() => {
+    // Generate dates array for last 7 days ending at endDate or todayStr
+    const end = endDate ? new Date(endDate) : new Date();
+    const dates: string[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(end);
+      d.setDate(d.getDate() - i);
+      dates.push(d.toISOString().split('T')[0]);
+    }
+
+    const arabicDayNames = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+
+    let targetSoldiers = soldiers.filter(s => s.isActive);
+    if (isRestrictedUser && currentUser?.unitId) {
+      targetSoldiers = targetSoldiers.filter(s => s.unitId === currentUser.unitId);
+    } else if (selectedUnitId !== 'all') {
+      targetSoldiers = targetSoldiers.filter(s => s.unitId === selectedUnitId);
+    }
+    if (selectedRank !== 'all') {
+      targetSoldiers = targetSoldiers.filter(s => s.rank === selectedRank);
+    }
+    if (selectedWeapon !== 'all') {
+      targetSoldiers = targetSoldiers.filter(s => ((s as any).weapon || 'مشاة') === selectedWeapon);
+    }
+
+    const totalForce = targetSoldiers.length;
+
+    // Daily breakdown for each of the 7 days
+    const dailySummaries = dates.map(dateStr => {
+      const dateObj = new Date(dateStr);
+      const dayName = arabicDayNames[dateObj.getDay()] || 'اليوم';
+
+      let presentCount = 0;
+      let absentCount = 0;
+      let leaveCount = 0;
+      let missionCount = 0;
+      let sickCount = 0;
+      let halfCount = 0;
+
+      targetSoldiers.forEach(s => {
+        const att = attendance.find(a => a.soldierId === s.id && a.date === dateStr);
+        let code = att?.statusCode;
+        if (!code) {
+          if (s.militaryStatus === 'إجازة') code = 'إ';
+          else if (s.militaryStatus === 'إجازة مرضية') code = 'ع';
+          else if (s.militaryStatus === 'غياب' || s.militaryStatus === 'موقوف') code = 'غ';
+          else if (s.militaryStatus === 'مهمة') code = 'م';
+          else code = 'ح';
+        }
+
+        if (code === 'ح') presentCount++;
+        else if (code === 'غ') absentCount++;
+        else if (code === 'إ') leaveCount++;
+        else if (code === 'م') missionCount++;
+        else if (code === 'ع') sickCount++;
+        else if (code === 'ن') halfCount++;
+        else presentCount++;
+      });
+
+      const effectivePresent = presentCount + missionCount + (halfCount * 0.5);
+      const readinessPct = totalForce > 0 ? Math.round((effectivePresent / totalForce) * 100) : 100;
+
+      return {
+        dateStr,
+        dayName,
+        displayDate: `${dayName} (${dateStr.split('-').slice(1).join('/')})`,
+        totalForce,
+        presentCount,
+        absentCount,
+        leaveCount,
+        missionCount,
+        sickCount,
+        halfCount,
+        readinessPct,
+      };
+    });
+
+    const totalReadinessSum = dailySummaries.reduce((acc, d) => acc + d.readinessPct, 0);
+    const avgReadinessPct = dailySummaries.length > 0 ? Math.round(totalReadinessSum / dailySummaries.length) : 0;
+
+    const totalPresentSum = dailySummaries.reduce((acc, d) => acc + d.presentCount, 0);
+    const totalAbsentSum = dailySummaries.reduce((acc, d) => acc + d.absentCount, 0);
+    const totalLeaveSum = dailySummaries.reduce((acc, d) => acc + d.leaveCount, 0);
+    const totalMissionSum = dailySummaries.reduce((acc, d) => acc + d.missionCount, 0);
+
+    let peakDay = dailySummaries[0];
+    let lowestDay = dailySummaries[0];
+    dailySummaries.forEach(d => {
+      if (d.readinessPct > (peakDay?.readinessPct || 0)) peakDay = d;
+      if (d.readinessPct < (lowestDay?.readinessPct || 100)) lowestDay = d;
+    });
+
+    const targetUnits = allowedUnits.filter(u => selectedUnitId === 'all' || u.id === selectedUnitId);
+    const unitSummaries = targetUnits.map(unit => {
+      const uSoldiers = targetSoldiers.filter(s => s.unitId === unit.id);
+      const uTotal = uSoldiers.length;
+
+      let uPresentSum = 0;
+      let uAbsentSum = 0;
+      let uLeaveSum = 0;
+
+      const uDailyPct = dates.map(dateStr => {
+        let uPres = 0;
+        uSoldiers.forEach(s => {
+          const att = attendance.find(a => a.soldierId === s.id && a.date === dateStr);
+          let code = att?.statusCode;
+          if (!code) {
+            if (s.militaryStatus === 'إجازة' || s.militaryStatus === 'إجازة مرضية') code = 'إ';
+            else if (s.militaryStatus === 'غياب' || s.militaryStatus === 'موقوف') code = 'غ';
+            else if (s.militaryStatus === 'مهمة') code = 'م';
+            else code = 'ح';
+          }
+          if (code === 'ح' || code === 'م') uPres++;
+          if (code === 'غ') uAbsentSum++;
+          if (code === 'إ' || code === 'ع') uLeaveSum++;
+        });
+        uPresentSum += uPres;
+        return uTotal > 0 ? Math.round((uPres / uTotal) * 100) : 100;
+      });
+
+      const uAvgPct = uDailyPct.length > 0 ? Math.round(uDailyPct.reduce((a, b) => a + b, 0) / uDailyPct.length) : 100;
+
+      return {
+        unitId: unit.id,
+        unitName: unit.name,
+        uTotal,
+        uAvgPct,
+        uPresentAvg: Math.round(uPresentSum / dates.length),
+        uAbsentAvg: Math.round(uAbsentSum / dates.length),
+        uLeaveAvg: Math.round(uLeaveSum / dates.length),
+        uDailyPct,
+      };
+    });
+
+    return {
+      startDate: dates[0],
+      endDate: dates[6],
+      dates,
+      totalForce,
+      dailySummaries,
+      avgReadinessPct,
+      totalPresentSum,
+      totalAbsentSum,
+      totalLeaveSum,
+      totalMissionSum,
+      peakDay,
+      lowestDay,
+      unitSummaries,
+    };
+  }, [soldiers, attendance, allowedUnits, selectedUnitId, selectedRank, selectedWeapon, endDate, isRestrictedUser, currentUser]);
 
   // Export handlers
   const handleExportCSV = () => {
@@ -1771,70 +1924,293 @@ export default function Reports({
               </div>
             )}
 
-            {/* Main Full-Screen Data Table */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-              <div className="p-3 bg-slate-950 text-white flex items-center justify-between border-b border-slate-800">
-                <div className="flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-amber-400" />
-                  <span className="font-extrabold text-xs">
-                    جدول معاينة التقرير الرسمي ({REPORT_CATEGORIES.find(c => c.id === activeCategory)?.name})
-                  </span>
-                </div>
-                <span className="text-[10px] text-slate-400 font-mono">{todayStr}</span>
-              </div>
+            {/* SPECIALIZED 7-DAY WEEKLY STATISTICAL REPORT VIEW */}
+            {activeSubReport === 'att_weekly_7days' ? (
+              <div className="space-y-5">
+                {/* Header Banner */}
+                <div className="bg-gradient-to-r from-slate-900 via-sky-950 to-slate-900 border border-sky-500/40 p-5 rounded-2xl text-white shadow-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-sky-500/20 text-sky-300 border border-sky-400/30">
+                        تلقائي مباشر ⚡
+                      </span>
+                      <span className="text-xs text-slate-400 font-mono font-bold">
+                        الفترة: من {weekly7DaysData.startDate} إلى {weekly7DaysData.endDate} (آخر 7 أيام)
+                      </span>
+                    </div>
+                    <h3 className="text-lg font-black text-amber-400 flex items-center gap-2">
+                      <BarChart3 className="w-5 h-5 text-sky-400" />
+                      <span>التقرير الإحصائي الأسبوعي التلقائي - ملخص تحضير وجاهزية القوة</span>
+                    </h3>
+                    <p className="text-xs text-slate-300 font-medium leading-relaxed">
+                      رصد إحصائي شامل ومستمر لنتائج الحضور والغياب والانضباط الميداني لكافة الكتائب والوحدات على مدار الـ 7 أيام الماضية.
+                    </p>
+                  </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-right border-collapse text-xs font-sans">
-                  <thead>
-                    <tr className="bg-slate-950 text-slate-300 border-b border-slate-800 font-black">
-                      <th className="p-2.5 border-l border-slate-800 w-10 text-center">#</th>
-                      {ALL_AVAILABLE_COLUMNS.filter(c => selectedColumns.includes(c.key)).map(col => (
-                        <th key={col.key} className="p-2.5 border-l border-slate-800 whitespace-nowrap text-amber-400 font-bold">
-                          {col.label}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {reportTableData.length === 0 ? (
-                      <tr>
-                        <td colSpan={selectedColumns.length + 1} className="p-8 text-center text-slate-500 font-bold">
-                          لا توجد بيانات مطابقة لشروط الفلترة المحددة.
-                        </td>
-                      </tr>
-                    ) : (
-                      reportTableData.map((row, idx) => (
-                        <tr key={row.id} className={idx % 2 === 0 ? 'bg-slate-900' : 'bg-slate-950/60 hover:bg-slate-800/80 transition-colors'}>
-                          <td className="p-2.5 border-l border-slate-800 text-center font-mono font-bold text-slate-400">
-                            {idx + 1}
-                          </td>
-                          {ALL_AVAILABLE_COLUMNS.filter(c => selectedColumns.includes(c.key)).map(col => {
-                            const val = row[col.key as keyof typeof row];
-                            return (
-                              <td key={col.key} className="p-2.5 border-l border-slate-800 whitespace-nowrap font-bold text-slate-200">
-                                {col.key === 'militaryNumber' ? (
-                                  <span className="font-mono text-emerald-400 font-black">{val}</span>
-                                ) : col.key === 'status' ? (
-                                  <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${
-                                    val === 'حاضر' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
-                                    val === 'غياب' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' :
-                                    val === 'إجازة' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 'bg-slate-800 text-slate-300'
-                                  }`}>
-                                    {val}
-                                  </span>
-                                ) : (
-                                  val || '-'
-                                )}
-                              </td>
-                            );
-                          })}
+                  <div className="flex items-center gap-2.5 shrink-0 w-full md:w-auto">
+                    <button
+                      onClick={() => setIsPrintModalOpen(true)}
+                      className="px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs rounded-xl shadow-lg shadow-emerald-600/20 cursor-pointer flex items-center justify-center gap-2 w-full md:w-auto"
+                    >
+                      <Printer className="w-4 h-4" />
+                      <span>معاينة وطباعة PDF للتقرير الأسبوعي 🖨️</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 4 KPI Summary Cards */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-1 relative overflow-hidden">
+                    <span className="text-xs text-slate-400 font-bold block">متوسط الجاهزية الأسبوعية</span>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-2xl font-black text-amber-400 font-mono">{weekly7DaysData.avgReadinessPct}%</span>
+                      <span className="text-[10px] text-emerald-400 font-bold">آخر 7 أيام</span>
+                    </div>
+                    <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden mt-2">
+                      <div className="bg-amber-500 h-full rounded-full" style={{ width: `${weekly7DaysData.avgReadinessPct}%` }} />
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-1">
+                    <span className="text-xs text-slate-400 font-bold block">أعلى يوم في الجاهزية</span>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-base font-black text-emerald-400">{weekly7DaysData.peakDay?.dayName || 'اليوم'}</span>
+                      <span className="text-xs text-emerald-300 font-mono font-black">({weekly7DaysData.peakDay?.readinessPct}%)</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-bold block">تاريخ {weekly7DaysData.peakDay?.dateStr}</span>
+                  </div>
+
+                  <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-1">
+                    <span className="text-xs text-slate-400 font-bold block">إجمالي حالات الحضور</span>
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-xl font-black text-sky-400 font-mono">{weekly7DaysData.totalPresentSum}</span>
+                      <span className="text-[10px] text-slate-400 font-bold">حالة حضور</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-bold block">+ {weekly7DaysData.totalMissionSum} مأموريات عسكرية</span>
+                  </div>
+
+                  <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-1">
+                    <span className="text-xs text-slate-400 font-bold block">مؤشر الانضباط العام</span>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-sm font-black text-emerald-400">
+                        {weekly7DaysData.avgReadinessPct >= 85 ? 'عالي ومستقر 🛡️' : weekly7DaysData.avgReadinessPct >= 70 ? 'متوسط ومستقر ⚡' : 'تحت المتابعة ⚠️'}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-bold block">إجمالي الغياب: {weekly7DaysData.totalAbsentSum} فرد</span>
+                  </div>
+                </div>
+
+                {/* Recharts Readiness Trend Chart */}
+                <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-3">
+                  <h4 className="text-xs font-black text-sky-400 border-b border-slate-800 pb-2 flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-amber-400" />
+                    <span>مخطط بياني لمؤشر الجاهزية اليومي (آخر 7 أيام)</span>
+                  </h4>
+                  <div className="h-[220px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={weekly7DaysData.dailySummaries} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="readinessGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#0EA5E9" stopOpacity={0.8}/>
+                            <stop offset="95%" stopColor="#0EA5E9" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" />
+                        <XAxis dataKey="dayName" stroke="#94A3B8" fontSize={11} />
+                        <YAxis stroke="#64748B" fontSize={11} domain={[0, 100]} />
+                        <Tooltip contentStyle={{ backgroundColor: '#0F172A', borderColor: '#334155', borderRadius: '12px', fontSize: '12px', color: '#FFF' }} />
+                        <Area type="monotone" dataKey="readinessPct" name="نسبة الجاهزية %" stroke="#0EA5E9" fillOpacity={1} fill="url(#readinessGrad)" strokeWidth={2.5} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* 7-Day Daily Attendance Breakdown Table */}
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl space-y-0">
+                  <div className="p-3 bg-slate-950 text-white flex items-center justify-between border-b border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <CalendarDays className="w-4 h-4 text-amber-400" />
+                      <span className="font-extrabold text-xs">جدول التفاصيل والإحصاء اليومي للتحضير (آخر 7 أيام)</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 font-mono">القوة الكلية المستهدفة: {weekly7DaysData.totalForce} فرد</span>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-right border-collapse text-xs font-sans">
+                      <thead>
+                        <tr className="bg-slate-950 text-slate-300 border-b border-slate-800 font-black">
+                          <th className="p-2.5 border-l border-slate-800 text-center w-10">#</th>
+                          <th className="p-2.5 border-l border-slate-800 whitespace-nowrap text-amber-400">اليوم والتاريخ</th>
+                          <th className="p-2.5 border-l border-slate-800 text-center">القوة الكلية</th>
+                          <th className="p-2.5 border-l border-slate-800 text-center text-emerald-400">الحاضرون (ح)</th>
+                          <th className="p-2.5 border-l border-slate-800 text-center text-rose-400">الغياب (غ)</th>
+                          <th className="p-2.5 border-l border-slate-800 text-center text-purple-400">الإجازات (إ)</th>
+                          <th className="p-2.5 border-l border-slate-800 text-center text-sky-400">المأموريات (م)</th>
+                          <th className="p-2.5 border-l border-slate-800 text-center text-amber-300">عذر/مرضية (ع)</th>
+                          <th className="p-2.5 border-l border-slate-800 text-center text-amber-400">نسبة الجاهزية</th>
+                          <th className="p-2.5 border-l border-slate-800 text-center">التقييم اليومي</th>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                      </thead>
+                      <tbody>
+                        {weekly7DaysData.dailySummaries.map((day, idx) => (
+                          <tr key={day.dateStr} className={idx % 2 === 0 ? 'bg-slate-900' : 'bg-slate-950/60'}>
+                            <td className="p-2.5 border-l border-slate-800 text-center font-mono font-bold text-slate-400">{idx + 1}</td>
+                            <td className="p-2.5 border-l border-slate-800 font-black text-white whitespace-nowrap">
+                              {day.displayDate}
+                            </td>
+                            <td className="p-2.5 border-l border-slate-800 text-center font-mono font-bold text-slate-200">{day.totalForce}</td>
+                            <td className="p-2.5 border-l border-slate-800 text-center font-mono font-black text-emerald-400">{day.presentCount}</td>
+                            <td className="p-2.5 border-l border-slate-800 text-center font-mono font-black text-rose-400">{day.absentCount}</td>
+                            <td className="p-2.5 border-l border-slate-800 text-center font-mono font-bold text-purple-300">{day.leaveCount}</td>
+                            <td className="p-2.5 border-l border-slate-800 text-center font-mono font-bold text-sky-300">{day.missionCount}</td>
+                            <td className="p-2.5 border-l border-slate-800 text-center font-mono font-bold text-amber-300">{day.sickCount}</td>
+                            <td className="p-2.5 border-l border-slate-800 text-center font-mono font-black text-amber-400">
+                              {day.readinessPct}%
+                            </td>
+                            <td className="p-2.5 border-l border-slate-800 text-center">
+                              <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${
+                                day.readinessPct >= 85 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
+                                day.readinessPct >= 70 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                                'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                              }`}>
+                                {day.readinessPct >= 85 ? 'ممتاز' : day.readinessPct >= 70 ? 'جيد' : 'منخفض'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Unit Comparison Matrix for 7 Days */}
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl space-y-0">
+                  <div className="p-3 bg-slate-950 text-white flex items-center justify-between border-b border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <Building2 className="w-4 h-4 text-sky-400" />
+                      <span className="font-extrabold text-xs">مقارنة متوسط التحضير والجاهزية للكتائب والوحدات خلال الـ 7 أيام</span>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-right border-collapse text-xs font-sans">
+                      <thead>
+                        <tr className="bg-slate-950 text-slate-300 border-b border-slate-800 font-black">
+                          <th className="p-2.5 border-l border-slate-800 text-center w-10">#</th>
+                          <th className="p-2.5 border-l border-slate-800 whitespace-nowrap text-sky-300">الوحدة / الكتيبة</th>
+                          <th className="p-2.5 border-l border-slate-800 text-center">إجمالي القوة</th>
+                          <th className="p-2.5 border-l border-slate-800 text-center text-emerald-400">متوسط الحضور</th>
+                          <th className="p-2.5 border-l border-slate-800 text-center text-rose-400">متوسط الغياب</th>
+                          <th className="p-2.5 border-l border-slate-800 text-center text-purple-400">متوسط الإجازات</th>
+                          <th className="p-2.5 border-l border-slate-800 text-center text-amber-400">متوسط الجاهزية</th>
+                          <th className="p-2.5 border-l border-slate-800 text-center">التقييم الأسبوعي</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {weekly7DaysData.unitSummaries.map((unit, idx) => (
+                          <tr key={unit.unitId} className={idx % 2 === 0 ? 'bg-slate-900' : 'bg-slate-950/60'}>
+                            <td className="p-2.5 border-l border-slate-800 text-center font-mono font-bold text-slate-400">{idx + 1}</td>
+                            <td className="p-2.5 border-l border-slate-800 font-black text-white whitespace-nowrap">{unit.unitName}</td>
+                            <td className="p-2.5 border-l border-slate-800 text-center font-mono font-bold text-slate-200">{unit.uTotal}</td>
+                            <td className="p-2.5 border-l border-slate-800 text-center font-mono font-black text-emerald-400">{unit.uPresentAvg}</td>
+                            <td className="p-2.5 border-l border-slate-800 text-center font-mono font-black text-rose-400">{unit.uAbsentAvg}</td>
+                            <td className="p-2.5 border-l border-slate-800 text-center font-mono font-bold text-purple-300">{unit.uLeaveAvg}</td>
+                            <td className="p-2.5 border-l border-slate-800 text-center font-mono font-black text-amber-400">{unit.uAvgPct}%</td>
+                            <td className="p-2.5 border-l border-slate-800 text-center">
+                              <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${
+                                unit.uAvgPct >= 85 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
+                                unit.uAvgPct >= 70 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                                'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                              }`}>
+                                {unit.uAvgPct >= 85 ? 'جاهزية عالية' : unit.uAvgPct >= 70 ? 'جاهزية مقبولة' : 'تتطلب المتابعة'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Executive Recommendations Box */}
+                <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl text-white space-y-2">
+                  <h4 className="text-xs font-black text-amber-400 flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-400" />
+                    <span>الملاحظات التحليلية والتوصيات القيادية الأسبوعية</span>
+                  </h4>
+                  <ul className="text-xs text-slate-300 font-medium space-y-1.5 list-disc list-inside leading-relaxed">
+                    <li>بلغ متوسط مؤشر الجاهزية الميدانية الإجمالي للـ 7 أيام الماضية <strong className="text-amber-400 font-mono">{weekly7DaysData.avgReadinessPct}%</strong>.</li>
+                    <li>أظهرت النتائج أن يوم <strong className="text-emerald-400">{weekly7DaysData.peakDay?.dayName}</strong> سجل أعلى نسبة انضباط وجاهزية بنسبة <strong className="text-emerald-400 font-mono">{weekly7DaysData.peakDay?.readinessPct}%</strong>.</li>
+                    <li>تم تسجيل متوسط حالات غياب بلغت <strong className="text-rose-400 font-mono">{Math.round(weekly7DaysData.totalAbsentSum / 7)}</strong> فرد يومياً على مستوى الوحدات، ويُنصح بمتابعة الشؤون الإدارية المستوفين للإجازات.</li>
+                  </ul>
+                </div>
               </div>
-            </div>
+            ) : (
+              /* Main Full-Screen Data Table */
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+                <div className="p-3 bg-slate-950 text-white flex items-center justify-between border-b border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-amber-400" />
+                    <span className="font-extrabold text-xs">
+                      جدول معاينة التقرير الرسمي ({REPORT_CATEGORIES.find(c => c.id === activeCategory)?.name})
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono">{todayStr}</span>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-right border-collapse text-xs font-sans">
+                    <thead>
+                      <tr className="bg-slate-950 text-slate-300 border-b border-slate-800 font-black">
+                        <th className="p-2.5 border-l border-slate-800 w-10 text-center">#</th>
+                        {ALL_AVAILABLE_COLUMNS.filter(c => selectedColumns.includes(c.key)).map(col => (
+                          <th key={col.key} className="p-2.5 border-l border-slate-800 whitespace-nowrap text-amber-400 font-bold">
+                            {col.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reportTableData.length === 0 ? (
+                        <tr>
+                          <td colSpan={selectedColumns.length + 1} className="p-8 text-center text-slate-500 font-bold">
+                            لا توجد بيانات مطابقة لشروط الفلترة المحددة.
+                          </td>
+                        </tr>
+                      ) : (
+                        reportTableData.map((row, idx) => (
+                          <tr key={row.id} className={idx % 2 === 0 ? 'bg-slate-900' : 'bg-slate-950/60 hover:bg-slate-800/80 transition-colors'}>
+                            <td className="p-2.5 border-l border-slate-800 text-center font-mono font-bold text-slate-400">
+                              {idx + 1}
+                            </td>
+                            {ALL_AVAILABLE_COLUMNS.filter(c => selectedColumns.includes(c.key)).map(col => {
+                              const val = row[col.key as keyof typeof row];
+                              return (
+                                <td key={col.key} className="p-2.5 border-l border-slate-800 whitespace-nowrap font-bold text-slate-200">
+                                  {col.key === 'militaryNumber' ? (
+                                    <span className="font-mono text-emerald-400 font-black">{val}</span>
+                                  ) : col.key === 'status' ? (
+                                    <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${
+                                      val === 'حاضر' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
+                                      val === 'غياب' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' :
+                                      val === 'إجازة' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 'bg-slate-800 text-slate-300'
+                                    }`}>
+                                      {val}
+                                    </span>
+                                  ) : (
+                                    val || '-'
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1842,6 +2218,35 @@ export default function Reports({
       {/* ------------------------------------------------------------- */}
       {/* MAIN REPORTS DASHBOARD (LANDING PAGE OVERVIEW) */}
       {/* ------------------------------------------------------------- */}
+
+      {/* Quick Launch Weekly PDF Banner */}
+      <div className="bg-gradient-to-r from-slate-900 via-sky-950 to-slate-900 border border-amber-500/30 p-4 rounded-2xl text-white shadow-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-xl shrink-0">
+            <BarChart3 className="w-6 h-6" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-500 text-slate-950">جديد ✨</span>
+              <h3 className="text-sm font-black text-amber-300">التقرير الإحصائي الأسبوعي التلقائي (آخر 7 أيام)</h3>
+            </div>
+            <p className="text-xs text-slate-300 font-medium mt-0.5">
+              عرض ملخص التحضير والجاهزية للـ 7 أيام الماضية تلقائياً وتصديره بصيغة PDF معتمدة للطباعة.
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => {
+            setActiveCategory('attendance');
+            setActiveSubReport('att_weekly_7days');
+            setIsFullScreenMode(true);
+          }}
+          className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow-md cursor-pointer flex items-center justify-center gap-2 shrink-0 w-full md:w-auto"
+        >
+          <FileText className="w-4 h-4" />
+          <span>توليد التقرير الأسبوعي (PDF) ↗</span>
+        </button>
+      </div>
 
       {/* Search & Layout View Control Bar for Categories */}
       <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -2038,12 +2443,21 @@ export default function Reports({
             <div className="bg-slate-900 text-white p-4 flex items-center justify-between border-b border-slate-800 print:hidden">
               <div className="flex items-center gap-2">
                 <Printer className="w-5 h-5 text-amber-400" />
-                <span className="font-extrabold text-sm">معاينة طباعة التقرير الرسمي</span>
+                <span className="font-extrabold text-sm">
+                  {activeSubReport === 'att_weekly_7days' 
+                    ? 'معاينة طباعة التقرير الإحصائي الأسبوعي التلقائي (PDF)' 
+                    : 'معاينة طباعة التقرير الرسمي'}
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => downloadElementAsPdf('official-report-printable-area', `تقرير_القوة_${todayStr}.pdf`)}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-xl cursor-pointer flex items-center gap-1.5"
+                  onClick={() => downloadElementAsPdf(
+                    'official-report-printable-area', 
+                    activeSubReport === 'att_weekly_7days' 
+                      ? `التقرير_الإحصائي_الأسبوعي_${weekly7DaysData.startDate}_إلى_${weekly7DaysData.endDate}.pdf` 
+                      : `تقرير_القوة_${todayStr}.pdf`
+                  )}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs rounded-xl cursor-pointer flex items-center gap-1.5 shadow-md"
                 >
                   <Download className="w-4 h-4" />
                   <span>تحميل PDF</span>
@@ -2069,56 +2483,176 @@ export default function Reports({
               {/* Official Header */}
               <PrintHeader 
                 printSettings={printSettings}
-                documentTitle={REPORT_CATEGORIES.find(c => c.id === activeCategory)?.name || 'تقرير القوة العسكرية الرسمي'}
-                documentRef={`REP-${Date.now().toString().slice(-6)}`}
+                documentTitle={activeSubReport === 'att_weekly_7days' ? 'التقرير الإحصائي الأسبوعي التلقائي للتحضير والجاهزية العسكرية' : (REPORT_CATEGORIES.find(c => c.id === activeCategory)?.name || 'تقرير القوة العسكرية الرسمي')}
+                documentRef={activeSubReport === 'att_weekly_7days' ? `REP-WEEKLY-${weekly7DaysData.endDate.replace(/-/g, '')}` : `REP-${Date.now().toString().slice(-6)}`}
                 documentDate={todayStr}
               />
 
-              {/* Document Summary Bar */}
-              <div className="bg-slate-50 border border-slate-300 p-3 rounded-xl grid grid-cols-4 gap-2 text-center text-xs">
-                <div>
-                  <span className="text-slate-500 font-bold block">إجمالي القوة:</span>
-                  <span className="font-black text-slate-900 text-sm block">{reportStats.total}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 font-bold block">الحضور:</span>
-                  <span className="font-black text-emerald-800 text-sm block">{reportStats.presentCount}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 font-bold block">الغياب:</span>
-                  <span className="font-black text-rose-800 text-sm block">{reportStats.absentCount}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 font-bold block">نسبة الجاهزية:</span>
-                  <span className="font-black text-amber-800 text-sm block">{reportStats.readinessPercentage}%</span>
-                </div>
-              </div>
+              {activeSubReport === 'att_weekly_7days' ? (
+                /* Dedicated 7-Day Weekly Printable PDF Layout */
+                <div className="space-y-6">
+                  {/* Summary Period Box */}
+                  <div className="bg-slate-50 border-2 border-slate-900 p-4 rounded-xl space-y-2">
+                    <div className="flex items-center justify-between text-xs font-black text-slate-900 border-b border-slate-300 pb-2">
+                      <span>فترة التقرير: من {weekly7DaysData.startDate} إلى {weekly7DaysData.endDate} (آخر 7 أيام)</span>
+                      <span>القوة الكلية: {weekly7DaysData.totalForce} فرد</span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                      <div className="p-2 bg-white border border-slate-200 rounded-lg">
+                        <span className="text-slate-500 font-bold block text-[11px]">متوسط الجاهزية</span>
+                        <span className="text-base font-black text-slate-900 block font-mono">{weekly7DaysData.avgReadinessPct}%</span>
+                      </div>
+                      <div className="p-2 bg-white border border-slate-200 rounded-lg">
+                        <span className="text-slate-500 font-bold block text-[11px]">إجمالي الحضور</span>
+                        <span className="text-base font-black text-emerald-800 block font-mono">{weekly7DaysData.totalPresentSum}</span>
+                      </div>
+                      <div className="p-2 bg-white border border-slate-200 rounded-lg">
+                        <span className="text-slate-500 font-bold block text-[11px]">إجمالي الغياب</span>
+                        <span className="text-base font-black text-rose-800 block font-mono">{weekly7DaysData.totalAbsentSum}</span>
+                      </div>
+                      <div className="p-2 bg-white border border-slate-200 rounded-lg">
+                        <span className="text-slate-500 font-bold block text-[11px]">إجمالي الإجازات</span>
+                        <span className="text-base font-black text-purple-800 block font-mono">{weekly7DaysData.totalLeaveSum}</span>
+                      </div>
+                    </div>
+                  </div>
 
-              {/* Printable Table */}
-              <table className="w-full text-right border-collapse border border-slate-300 text-xs">
-                <thead>
-                  <tr className="bg-slate-200 text-slate-900 border-b border-slate-300 font-black">
-                    <th className="p-2 border border-slate-300 w-10 text-center">#</th>
-                    {ALL_AVAILABLE_COLUMNS.filter(c => selectedColumns.includes(c.key)).map(col => (
-                      <th key={col.key} className="p-2 border border-slate-300">
-                        {col.label}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {reportTableData.map((r, index) => (
-                    <tr key={r.id || index} className={index % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
-                      <td className="p-2 border border-slate-300 text-center font-mono font-bold text-slate-800">{index + 1}</td>
-                      {ALL_AVAILABLE_COLUMNS.filter(c => selectedColumns.includes(c.key)).map(col => (
-                        <td key={col.key} className="p-2 border border-slate-300 font-bold text-slate-900">
-                          {r[col.key as keyof typeof r] || '-'}
-                        </td>
+                  {/* 1. Daily Summary Table */}
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-black text-slate-900 border-r-4 border-slate-900 pr-2">
+                      أولاً: جدول تفاصيل وإحصائيات التحضير اليومي لآخر 7 أيام
+                    </h4>
+                    <table className="w-full text-right border-collapse border border-slate-400 text-xs">
+                      <thead>
+                        <tr className="bg-slate-200 text-slate-900 border-b border-slate-400 font-black text-[11px]">
+                          <th className="p-2 border border-slate-400 w-8 text-center">#</th>
+                          <th className="p-2 border border-slate-400">اليوم والتاريخ</th>
+                          <th className="p-2 border border-slate-400 text-center">القوة الكلية</th>
+                          <th className="p-2 border border-slate-400 text-center">حاضر (ح)</th>
+                          <th className="p-2 border border-slate-400 text-center">غياب (غ)</th>
+                          <th className="p-2 border border-slate-400 text-center">إجازة (إ)</th>
+                          <th className="p-2 border border-slate-400 text-center">مأمورية (م)</th>
+                          <th className="p-2 border border-slate-400 text-center">مرضية (ع)</th>
+                          <th className="p-2 border border-slate-400 text-center">نسبة الجاهزية</th>
+                          <th className="p-2 border border-slate-400 text-center">التقييم</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {weekly7DaysData.dailySummaries.map((d, i) => (
+                          <tr key={d.dateStr} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                            <td className="p-1.5 border border-slate-300 text-center font-mono font-bold">{i + 1}</td>
+                            <td className="p-1.5 border border-slate-300 font-bold">{d.displayDate}</td>
+                            <td className="p-1.5 border border-slate-300 text-center font-mono font-bold">{d.totalForce}</td>
+                            <td className="p-1.5 border border-slate-300 text-center font-mono font-black text-emerald-900">{d.presentCount}</td>
+                            <td className="p-1.5 border border-slate-300 text-center font-mono font-black text-rose-900">{d.absentCount}</td>
+                            <td className="p-1.5 border border-slate-300 text-center font-mono font-bold">{d.leaveCount}</td>
+                            <td className="p-1.5 border border-slate-300 text-center font-mono font-bold">{d.missionCount}</td>
+                            <td className="p-1.5 border border-slate-300 text-center font-mono font-bold">{d.sickCount}</td>
+                            <td className="p-1.5 border border-slate-300 text-center font-mono font-black">{d.readinessPct}%</td>
+                            <td className="p-1.5 border border-slate-300 text-center font-bold">
+                              {d.readinessPct >= 85 ? 'ممتاز' : d.readinessPct >= 70 ? 'جيد' : 'منخفض'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* 2. Units Readiness Comparison Matrix Table */}
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-black text-slate-900 border-r-4 border-slate-900 pr-2">
+                      ثانياً: مقارنة مؤشرات الجاهزية والتمام بين الكتائب والوحدات (أسبوعي)
+                    </h4>
+                    <table className="w-full text-right border-collapse border border-slate-400 text-xs">
+                      <thead>
+                        <tr className="bg-slate-200 text-slate-900 border-b border-slate-400 font-black text-[11px]">
+                          <th className="p-2 border border-slate-400 w-8 text-center">#</th>
+                          <th className="p-2 border border-slate-400">اسم الكتيبة / السرية</th>
+                          <th className="p-2 border border-slate-400 text-center">إجمالي القوة</th>
+                          <th className="p-2 border border-slate-400 text-center">متوسط الحضور</th>
+                          <th className="p-2 border border-slate-400 text-center">متوسط الغياب</th>
+                          <th className="p-2 border border-slate-400 text-center">متوسط الإجازات</th>
+                          <th className="p-2 border border-slate-400 text-center">متوسط الجاهزية %</th>
+                          <th className="p-2 border border-slate-400 text-center">التقييم العام</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {weekly7DaysData.unitSummaries.map((u, i) => (
+                          <tr key={u.unitId} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                            <td className="p-1.5 border border-slate-300 text-center font-mono font-bold">{i + 1}</td>
+                            <td className="p-1.5 border border-slate-300 font-black">{u.unitName}</td>
+                            <td className="p-1.5 border border-slate-300 text-center font-mono font-bold">{u.uTotal}</td>
+                            <td className="p-1.5 border border-slate-300 text-center font-mono font-black text-emerald-900">{u.uPresentAvg}</td>
+                            <td className="p-1.5 border border-slate-300 text-center font-mono font-black text-rose-900">{u.uAbsentAvg}</td>
+                            <td className="p-1.5 border border-slate-300 text-center font-mono font-bold">{u.uLeaveAvg}</td>
+                            <td className="p-1.5 border border-slate-300 text-center font-mono font-black">{u.uAvgPct}%</td>
+                            <td className="p-1.5 border border-slate-300 text-center font-bold">
+                              {u.uAvgPct >= 85 ? 'جاهزية عالية' : u.uAvgPct >= 70 ? 'جاهزية مقبولة' : 'تتطلب المتابعة'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* 3. Executive Commentary */}
+                  <div className="border border-slate-300 p-3.5 rounded-xl bg-slate-50 space-y-1.5 text-xs text-slate-800">
+                    <span className="font-black text-slate-900 block">ثالثاً: الملاحظات والتوصيات الإحصائية التلقائية:</span>
+                    <ul className="list-disc list-inside space-y-1 leading-relaxed font-medium">
+                      <li>بلغ متوسط الجاهزية القتالية والميدانية الإجمالي لآخر 7 أيام <strong>{weekly7DaysData.avgReadinessPct}%</strong>.</li>
+                      <li>سجل يوم <strong>{weekly7DaysData.peakDay?.dayName} ({weekly7DaysData.peakDay?.dateStr})</strong> أعلى نسبة تمام وانضباط بـ <strong>{weekly7DaysData.peakDay?.readinessPct}%</strong>.</li>
+                      <li>يوصى برفع تقرير الانضباط للقيادة والتوجيه بحصر المتغيبين بدون عذر مقبول واتخاذ الإجراءات العسكرية النظامية.</li>
+                    </ul>
+                  </div>
+                </div>
+              ) : (
+                /* Standard Printable Table */
+                <div className="space-y-6">
+                  <div className="bg-slate-50 border border-slate-300 p-3 rounded-xl grid grid-cols-4 gap-2 text-center text-xs">
+                    <div>
+                      <span className="text-slate-500 font-bold block">إجمالي القوة:</span>
+                      <span className="font-black text-slate-900 text-sm block">{reportStats.total}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 font-bold block">الحضور:</span>
+                      <span className="font-black text-emerald-800 text-sm block">{reportStats.presentCount}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 font-bold block">الغياب:</span>
+                      <span className="font-black text-rose-800 text-sm block">{reportStats.absentCount}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 font-bold block">نسبة الجاهزية:</span>
+                      <span className="font-black text-amber-800 text-sm block">{reportStats.readinessPercentage}%</span>
+                    </div>
+                  </div>
+
+                  <table className="w-full text-right border-collapse border border-slate-300 text-xs">
+                    <thead>
+                      <tr className="bg-slate-200 text-slate-900 border-b border-slate-300 font-black">
+                        <th className="p-2 border border-slate-300 w-10 text-center">#</th>
+                        {ALL_AVAILABLE_COLUMNS.filter(c => selectedColumns.includes(c.key)).map(col => (
+                          <th key={col.key} className="p-2 border border-slate-300">
+                            {col.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reportTableData.map((r, index) => (
+                        <tr key={r.id || index} className={index % 2 === 0 ? 'bg-white' : 'bg-slate-50'}>
+                          <td className="p-2 border border-slate-300 text-center font-mono font-bold text-slate-800">{index + 1}</td>
+                          {ALL_AVAILABLE_COLUMNS.filter(c => selectedColumns.includes(c.key)).map(col => (
+                            <td key={col.key} className="p-2 border border-slate-300 font-bold text-slate-900">
+                              {r[col.key as keyof typeof r] || '-'}
+                            </td>
+                          ))}
+                        </tr>
                       ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
               {/* Signatures */}
               <PrintFooter printSettings={printSettings} />

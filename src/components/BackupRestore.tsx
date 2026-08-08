@@ -15,6 +15,7 @@ import { Unit, Soldier, AttendanceRecord, AuditLog } from '../types';
 import { auth, googleAuthProvider } from '../lib/firebase';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { createBackupSpreadsheet, updateBackupData, readBackupSpreadsheet } from '../lib/sheets';
+import { triggerToast } from './ToastContainer';
 
 interface BackupRestoreProps {
   units: Unit[];
@@ -169,6 +170,7 @@ export default function BackupRestore({
     document.body.removeChild(link);
 
     onAddLog('إضافة', 'النسخ الاحتياطي', 'تم إنشاء وتنزيل نسخة احتياطية محلية لقاعدة البيانات بصيغة JSON.');
+    triggerToast('تم تصدير وتنزيل ملف النسخة الاحتياطية بنجاح', 'success');
   };
 
   // ---- 2. IMPORT/RESTORE LOCALLY ----

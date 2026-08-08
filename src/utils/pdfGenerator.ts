@@ -103,12 +103,20 @@ export function replaceOklchInText(cssText: string): string {
   let result = cssText;
   
   result = result.replace(/oklch\([^)]+\)/gi, (match) => {
-    return parseOklchToRgb(match);
+    const res = parseOklchToRgb(match);
+    return res.includes('oklch') ? 'rgb(15, 23, 42)' : res;
   });
   
   result = result.replace(/oklab\([^)]+\)/gi, (match) => {
-    return parseOklabToRgb(match);
+    const res = parseOklabToRgb(match);
+    return res.includes('oklab') ? 'rgb(15, 23, 42)' : res;
   });
+
+  // Ensure no residual unsupported CSS color functions remain
+  result = result.replace(/oklab\([^)]*\)/gi, 'rgb(15, 23, 42)');
+  result = result.replace(/oklch\([^)]*\)/gi, 'rgb(15, 23, 42)');
+  result = result.replace(/color-mix\([^)]*\)/gi, 'rgb(15, 23, 42)');
+  result = result.replace(/light-dark\([^)]*\)/gi, 'rgb(15, 23, 42)');
 
   return result;
 }
@@ -142,7 +150,38 @@ export async function captureElementAsCanvas(
       return null;
     }
 
-    // Pre-sanitize all active document <style> tags so html2canvas doesn't throw on oklab/oklch when parsing document.styleSheets
+    // 1. Try primary high-definition screenshot capture via html-to-image (SVG/PNG native engine)
+    try {
+      const blob = await captureElementAsScreenshotBlob(element);
+      if (blob) {
+        const img = new Image();
+        const url = URL.createObjectURL(blob);
+        const loaded = await new Promise<boolean>((resolve) => {
+          img.onload = () => resolve(true);
+          img.onerror = () => resolve(false);
+          img.src = url;
+        });
+
+        if (loaded && img.width > 0 && img.height > 0) {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0);
+            URL.revokeObjectURL(url);
+            return canvas;
+          }
+        }
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      console.warn('Primary html-to-image canvas capture failed, attempting html2canvas fallback:', err);
+    }
+
+    // 2. Pre-sanitize all active document <style> tags so html2canvas doesn't throw on oklab/oklch when parsing document.styleSheets
     const styleElements = Array.from(document.querySelectorAll('style'));
     const originalStyleContents: { el: HTMLStyleElement; content: string }[] = [];
 
@@ -196,7 +235,7 @@ export async function captureElementAsCanvas(
           // Force grid structures to keep desktop layout
           const allGrids = Array.from(clonedElement.querySelectorAll('.grid, [class*="grid-cols-"]')) as HTMLElement[];
           allGrids.forEach((g) => {
-            const className = g.className || '';
+            const className = typeof g.className === 'string' ? g.className : ((g.className as any)?.baseVal || '');
             if (className.includes('grid-cols-4') || className.includes('sm:grid-cols-4')) {
               g.style.display = 'grid';
               g.style.gridTemplateColumns = 'repeat(4, minmax(0, 1fr))';
@@ -278,20 +317,18 @@ export async function captureElementAsCanvas(
             if (origNode && clonedNode && origNode.nodeType === Node.ELEMENT_NODE) {
               try {
                 const cs = window.getComputedStyle(origNode);
-                if (cs.color && cs.color.includes('rgb')) {
-                  clonedNode.style.color = cs.color;
-                }
-                if (
-                  cs.backgroundColor &&
-                  cs.backgroundColor.includes('rgb') &&
-                  cs.backgroundColor !== 'rgba(0, 0, 0, 0)' &&
-                  cs.backgroundColor !== 'transparent'
-                ) {
-                  clonedNode.style.backgroundColor = cs.backgroundColor;
-                }
-                if (cs.borderColor && cs.borderColor.includes('rgb')) {
-                  clonedNode.style.borderColor = cs.borderColor;
-                }
+                let col = cs.color;
+                if (col && (col.includes('oklab') || col.includes('oklch'))) col = replaceOklchInText(col);
+                if (col && col !== 'initial') clonedNode.style.color = col;
+
+                let bg = cs.backgroundColor;
+                if (bg && (bg.includes('oklab') || bg.includes('oklch'))) bg = replaceOklchInText(bg);
+                if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') clonedNode.style.backgroundColor = bg;
+
+                let border = cs.borderColor;
+                if (border && (border.includes('oklab') || border.includes('oklch'))) border = replaceOklchInText(border);
+                if (border) clonedNode.style.borderColor = border;
+
                 if (cs.fill && cs.fill.includes('rgb')) {
                   clonedNode.style.fill = cs.fill;
                 }
@@ -323,51 +360,72 @@ export async function captureElementAsCanvas(
 }
 
 /**
- * Captures a DOM element and downloads it as a high-quality PDF document.
+ * Captures a DOM element and downloads it as a high-quality PDF document using jsPDF directly.
+ * Decoupled from browser print dialogs (window.print).
  */
 export async function downloadElementAsPdf(
   elementOrId: HTMLElement | string,
   filename: string = 'document'
 ): Promise<void> {
-  try {
-    const canvas = await captureElementAsCanvas(elementOrId);
-    if (!canvas) {
-      console.warn('PDF Generator: Target element not found, launching print dialog fallback.');
-      window.print();
-      return;
-    }
+  const element = typeof elementOrId === 'string' ? document.getElementById(elementOrId) : elementOrId;
+  if (!element) {
+    throw new Error(`PDF Generator: Target element not found (${elementOrId})`);
+  }
 
-    const imgData = canvas.toDataURL('image/jpeg', 0.95);
-    const pdf = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: 'a4',
-      compress: true
-    });
+  const canvas = await captureElementAsCanvas(element);
+  if (!canvas) {
+    throw new Error('PDF Generator: Failed to capture report canvas');
+  }
 
-    const pdfWidth = 210; // A4 width in mm
-    const pdfPageHeight = 297; // A4 height in mm
-    const imgHeight = (canvas.height * pdfWidth) / canvas.width;
-    
-    let heightLeft = imgHeight;
-    let position = 0;
+  const imgData = canvas.toDataURL('image/jpeg', 0.95);
+  const pdf = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+    compress: true
+  });
 
+  const pdfWidth = 210; // A4 width in mm
+  const pdfPageHeight = 297; // A4 height in mm
+  const imgHeight = (canvas.height * pdfWidth) / canvas.width;
+  
+  let heightLeft = imgHeight;
+  let position = 0;
+
+  pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, imgHeight, undefined, 'FAST');
+  heightLeft -= pdfPageHeight;
+
+  while (heightLeft > 0) {
+    position = heightLeft - imgHeight;
+    pdf.addPage();
     pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, imgHeight, undefined, 'FAST');
     heightLeft -= pdfPageHeight;
-
-    while (heightLeft > 0) {
-      position = heightLeft - imgHeight;
-      pdf.addPage();
-      pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, imgHeight, undefined, 'FAST');
-      heightLeft -= pdfPageHeight;
-    }
-
-    const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
-    pdf.save(`${safeFilename}.pdf`);
-  } catch (error) {
-    console.error('Failed to generate PDF file:', error);
-    window.print();
   }
+
+  const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '_');
+  pdf.save(`${safeFilename}.pdf`);
+}
+
+/**
+ * Dedicated PDF exporter for Quick Readiness Reports.
+ * Uses jsPDF directly and handles element rendering delays smoothly.
+ */
+export async function exportQuickReadinessPdfReport(
+  elementId: string = 'quick-readiness-pdf-report',
+  filename: string = 'تقرير_الجاهزية_اليومي'
+): Promise<void> {
+  // Wait up to 3 frames / 300ms if element is mounting
+  let element = document.getElementById(elementId);
+  if (!element) {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    element = document.getElementById(elementId);
+  }
+
+  if (!element) {
+    throw new Error(`العنصر المخصص لتقرير الجاهزية (${elementId}) غير موجود بالصفحة.`);
+  }
+
+  await downloadElementAsPdf(element, filename);
 }
 
 /**
@@ -430,7 +488,7 @@ export async function captureElementAsScreenshotBlob(
   // Force grid layout columns in clone
   const allGrids = Array.from(clone.querySelectorAll('.grid, [class*="grid-cols-"]')) as HTMLElement[];
   allGrids.forEach((g) => {
-    const className = g.className || '';
+    const className = typeof g.className === 'string' ? g.className : ((g.className as any)?.baseVal || '');
     if (className.includes('grid-cols-4') || className.includes('sm:grid-cols-4')) {
       g.style.display = 'grid';
       g.style.gridTemplateColumns = 'repeat(4, minmax(0, 1fr))';

@@ -10,7 +10,9 @@ import {
   attendance, 
   auditLogs, 
   notifications, 
-  systemSettings 
+  systemSettings,
+  soldierRequests,
+  surveys
 } from "./src/db/schema.ts";
 import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
 import { eq, and, inArray, or, ilike, sql, gte, lte } from "drizzle-orm";
@@ -73,18 +75,130 @@ async function startServer() {
         return res.status(400).json({ error: "الرجاء إدخال اسم المستخدم وكلمة المرور" });
       }
 
-      const userList = await db.select().from(users).where(eq(users.username, username)).limit(1);
-      if (userList.length === 0) {
-        return res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
+      const cleanUsername = String(username).trim();
+      const cleanPassword = String(password).trim();
+
+      // 1. Search in users table first by exact username, name, email, id, or soldierId
+      let matchedUsers = await db.select().from(users).where(
+        or(
+          eq(users.username, cleanUsername),
+          eq(users.name, cleanUsername),
+          eq(users.email, cleanUsername),
+          eq(users.id, cleanUsername),
+          eq(users.soldierId, cleanUsername)
+        )
+      );
+
+      // If no exact match in users, try flexible ILIKE search on name or username
+      if (matchedUsers.length === 0) {
+        matchedUsers = await db.select().from(users).where(
+          or(
+            ilike(users.name, `%${cleanUsername}%`),
+            ilike(users.username, `%${cleanUsername}%`)
+          )
+        );
       }
 
-      const user = userList[0];
-      if (user.password !== password) {
-        return res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
+      for (const u of matchedUsers) {
+        // Collect all possible valid passwords for this user
+        const userPasswords = [u.password];
+
+        if (u.soldierId) {
+          const [s] = await db.select().from(soldiers).where(eq(soldiers.id, u.soldierId)).limit(1);
+          if (s) {
+            userPasswords.push(s.accountPassword);
+            if (s.militaryNumber) {
+              userPasswords.push(s.militaryNumber);
+              userPasswords.push(s.militaryNumber.split('').reverse().join(''));
+            }
+            userPasswords.push('123456');
+          }
+        }
+
+        const validPassSet = new Set(userPasswords.filter(Boolean).map(p => String(p).trim()));
+        if (validPassSet.has(cleanPassword)) {
+          const token = `local_${u.id}`;
+          return res.json({ token, user: u });
+        }
       }
 
-      const token = `local_${user.id}`;
-      return res.json({ token, user });
+      // 2. Search in soldiers table directly by militaryNumber, accountUsername, fullName, or id
+      let soldierMatches = await db.select().from(soldiers).where(
+        or(
+          eq(soldiers.militaryNumber, cleanUsername),
+          eq(soldiers.accountUsername, cleanUsername),
+          eq(soldiers.fullName, cleanUsername),
+          eq(soldiers.id, cleanUsername)
+        )
+      );
+
+      // If no exact match in soldiers, try flexible ILIKE match on fullName or militaryNumber
+      if (soldierMatches.length === 0) {
+        soldierMatches = await db.select().from(soldiers).where(
+          or(
+            ilike(soldiers.fullName, `%${cleanUsername}%`),
+            ilike(soldiers.militaryNumber, `%${cleanUsername}%`),
+            ilike(soldiers.accountUsername, `%${cleanUsername}%`)
+          )
+        );
+      }
+
+      for (const s of soldierMatches) {
+        const reversedMilitaryNo = s.militaryNumber ? s.militaryNumber.split('').reverse().join('') : '';
+        const validPassSet = new Set([
+          s.accountPassword,
+          s.militaryNumber,
+          reversedMilitaryNo,
+          '123456'
+        ].filter(Boolean).map(p => String(p).trim()));
+
+        if (validPassSet.has(cleanPassword)) {
+          // Password is valid! Find or create matching user record in users table
+          let userObj;
+          const existingUser = await db.select().from(users).where(
+            or(
+              eq(users.soldierId, s.id),
+              eq(users.username, s.accountUsername || s.militaryNumber || s.id),
+              eq(users.name, s.fullName)
+            )
+          ).limit(1);
+
+          if (existingUser.length > 0) {
+            userObj = existingUser[0];
+            await db.update(users).set({
+              password: cleanPassword,
+              name: s.fullName,
+              username: s.accountUsername || s.militaryNumber || s.id
+            }).where(eq(users.id, userObj.id));
+          } else {
+            const newUserId = `u_soldier_${s.id}`;
+            userObj = {
+              id: newUserId,
+              uid: newUserId,
+              name: s.fullName,
+              email: `${s.militaryNumber || s.id}@military.local`,
+              username: s.accountUsername || s.militaryNumber || s.id,
+              password: cleanPassword,
+              role: 'soldier' as const,
+              unitId: s.unitId,
+              soldierId: s.id
+            };
+            await db.insert(users).values(userObj);
+          }
+
+          // Sync soldier account status
+          await db.update(soldiers).set({
+            hasAccount: true,
+            accountUsername: s.accountUsername || s.militaryNumber || s.id,
+            accountPassword: cleanPassword
+          }).where(eq(soldiers.id, s.id));
+
+          const token = `local_${userObj.id}`;
+          return res.json({ token, user: userObj });
+        }
+      }
+
+      return res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
     } catch (error: any) {
       console.error("Error in /api/auth/login:", error);
       return res.status(500).json({ error: error.message });
@@ -425,7 +539,760 @@ async function startServer() {
     }
   });
 
-  // Get sick leaves / general leaves for a soldier
+  // --- Soldier Account & Requests API ---
+  app.get(["/api/soldier-requests", "/api/action-requests"], async (req, res) => {
+    try {
+      const { soldierId } = req.query;
+      let allRequests;
+      if (soldierId) {
+        const solStr = String(soldierId);
+        
+        // Retrieve soldier profile by ID or military number
+        const solList = await db.select().from(soldiers).where(
+          or(eq(soldiers.id, solStr), eq(soldiers.militaryNumber, solStr))
+        ).limit(1);
+        const soldierObj = solList[0];
+
+        if (soldierObj) {
+          // Check for active surveys that apply to this soldier but haven't been dispatched yet
+          const activeSurveys = await db.select().from(surveys).where(eq(surveys.status, 'نشط'));
+          for (const srv of activeSurveys) {
+            let matches = false;
+            const scope = srv.targetScope || 'all';
+            const tId = srv.targetId;
+
+            if (scope === 'all') {
+              matches = true;
+            } else if (scope === 'battalion' || scope === 'company') {
+              matches = String(soldierObj.unitId || '') === String(tId || '') ||
+                        String(soldierObj.battalion || '') === String(tId || '') ||
+                        String(soldierObj.company || '') === String(tId || '') ||
+                        String((soldierObj as any).unitName || '') === String(tId || '');
+            } else if (scope === 'single') {
+              matches = String(soldierObj.id) === String(tId) || String(soldierObj.militaryNumber) === String(tId);
+            } else if (scope === 'selected') {
+              try {
+                const ids = typeof tId === 'string' ? JSON.parse(tId) : tId;
+                if (Array.isArray(ids)) {
+                  const strIds = ids.map(String);
+                  matches = strIds.includes(String(soldierObj.id)) || strIds.includes(String(soldierObj.militaryNumber));
+                }
+              } catch (e) {}
+            }
+
+            if (matches) {
+              const reqId = `req_srv_${srv.id}_${soldierObj.id}`;
+              const existing = await db.select().from(soldierRequests).where(eq(soldierRequests.id, reqId)).limit(1);
+              if (existing.length === 0) {
+                const initialLog = [{
+                  timestamp: new Date().toISOString(),
+                  action: 'إرسال الطلب',
+                  actor: 'شؤون الأفراد',
+                  notes: `تم توجيه ${srv.category || 'طلب'} بعنوان (${srv.title}) للفرد`
+                }];
+                await db.insert(soldierRequests).values({
+                  id: reqId,
+                  surveyId: srv.id,
+                  soldierId: String(soldierObj.id),
+                  soldierName: soldierObj.fullName,
+                  soldierRank: soldierObj.rank || 'جندي',
+                  militaryNumber: String(soldierObj.militaryNumber || ''),
+                  unitId: soldierObj.unitId ? String(soldierObj.unitId) : null,
+                  requestType: srv.category === 'استبيان' ? 'survey' : srv.category === 'إقرار' ? 'declaration' : srv.category === 'رفع مستند' ? 'upload_doc' : srv.category === 'طلب معلومات' ? 'info_request' : 'update_profile',
+                  title: srv.title,
+                  description: srv.description,
+                  status: 'new',
+                  historyLogs: JSON.stringify(initialLog),
+                  submittedAt: new Date().toISOString()
+                });
+
+                // Also trigger notification for soldier
+                await db.insert(notifications).values({
+                  id: `notif_srv_${srv.id}_${soldierObj.id}_${Date.now()}`,
+                  soldierId: String(soldierObj.id),
+                  targetSoldierId: String(soldierObj.id),
+                  militaryNumber: String(soldierObj.militaryNumber || ''),
+                  title: `طلب/استبيان جديد مطلوب من القيادة: (${srv.title})`,
+                  message: `تم توجيه ${srv.category || 'طلب'} بعنوان (${srv.title}) لك. يرجى المبادرة بتعبئة البيانات والتوقيع المطلوب.`,
+                  isRead: false,
+                  type: 'warning',
+                  createdAt: new Date().toISOString()
+                });
+              }
+            }
+          }
+        }
+
+        allRequests = await db.select().from(soldierRequests).where(
+          or(
+            eq(soldierRequests.soldierId, solStr),
+            eq(soldierRequests.militaryNumber, solStr)
+          )
+        );
+      } else {
+        allRequests = await db.select().from(soldierRequests);
+      }
+      return res.json(allRequests);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post(["/api/soldier-requests", "/api/action-requests"], async (req, res) => {
+    try {
+      const {
+        id,
+        soldierId,
+        soldierName,
+        soldierRank,
+        militaryNumber,
+        unitId,
+        requestType,
+        title,
+        description,
+        proposedData,
+        status = 'pending',
+        submittedAt = new Date().toISOString()
+      } = req.body;
+
+      const newRequest = {
+        id: id || `req_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        soldierId,
+        soldierName,
+        soldierRank: soldierRank || '',
+        militaryNumber: militaryNumber || '',
+        unitId: unitId || '',
+        requestType: requestType || 'update_profile',
+        title: title || 'طلب إجراء جديد من الفرد',
+        description: description || '',
+        proposedData: typeof proposedData === 'object' ? JSON.stringify(proposedData) : (proposedData || null),
+        status: status || 'pending',
+        submittedAt
+      };
+
+      await db.insert(soldierRequests).values(newRequest);
+
+      // Create notification for manager
+      await db.insert(notifications).values({
+        id: `notif_req_${Date.now()}`,
+        title: `طلب إجراء جديد من الفرد (${soldierName})`,
+        message: `قام العسكري ${soldierRank || ''} ${soldierName} بتقديم طلب: (${title}). يرجى معاينة الطلب للقبول أو الرفض.`,
+        isRead: false,
+        type: 'info',
+        createdAt: new Date().toISOString()
+      });
+
+      return res.status(201).json(newRequest);
+    } catch (error: any) {
+      console.error("Error creating soldier request:", error);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Surveys and Requests Department API ---
+  app.get("/api/surveys", async (req, res) => {
+    try {
+      const allSurveys = await db.select().from(surveys);
+      return res.json(allSurveys);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/surveys", async (req, res) => {
+    try {
+      const {
+        id,
+        title,
+        category = 'تحديث بيانات',
+        description,
+        instructions,
+        targetScope = 'all',
+        targetId,
+        deadline,
+        isRecurring = false,
+        frequency = 'مرة واحدة',
+        autoReminder = true,
+        fieldsNeeded,
+        status = 'نشط',
+        createdBy
+      } = req.body;
+
+      const surveyId = id || `srv_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const newSurvey = {
+        id: surveyId,
+        title,
+        category,
+        description,
+        instructions: instructions || '',
+        targetScope,
+        targetId: targetId ? (typeof targetId === 'object' ? JSON.stringify(targetId) : String(targetId)) : null,
+        deadline: deadline || null,
+        isRecurring: !!isRecurring,
+        frequency: frequency || 'مرة واحدة',
+        autoReminder: autoReminder !== undefined ? !!autoReminder : true,
+        fieldsNeeded: fieldsNeeded ? (typeof fieldsNeeded === 'object' ? JSON.stringify(fieldsNeeded) : String(fieldsNeeded)) : null,
+        status,
+        createdBy: createdBy || 'شؤون الأفراد',
+        createdAt: new Date().toISOString()
+      };
+
+      await db.insert(surveys).values(newSurvey);
+
+      // Automatically dispatch requests & notifications to target soldiers
+      let targetSoldiersList: any[] = [];
+      const allSoldiersList = await db.select().from(soldiers);
+
+      if (targetScope === 'all') {
+        targetSoldiersList = allSoldiersList;
+      } else if (targetScope === 'battalion' || targetScope === 'company') {
+        targetSoldiersList = allSoldiersList.filter(s => 
+          String(s.unitId || '') === String(targetId || '') || 
+          String(s.battalion || '') === String(targetId || '') || 
+          String(s.company || '') === String(targetId || '') ||
+          String((s as any).unitName || '') === String(targetId || '')
+        );
+      } else if (targetScope === 'single') {
+        targetSoldiersList = allSoldiersList.filter(s => 
+          String(s.id) === String(targetId) || 
+          String(s.militaryNumber) === String(targetId)
+        );
+      } else if (targetScope === 'selected') {
+        try {
+          const ids = Array.isArray(targetId) ? targetId : (typeof targetId === 'string' ? JSON.parse(targetId) : []);
+          if (Array.isArray(ids)) {
+            const strIds = ids.map(String);
+            targetSoldiersList = allSoldiersList.filter(s => strIds.includes(String(s.id)) || strIds.includes(String(s.militaryNumber)));
+          }
+        } catch (e) {
+          targetSoldiersList = allSoldiersList;
+        }
+      }
+
+      // Create initial soldierRequest records and notifications for target soldiers
+      for (const sol of targetSoldiersList) {
+        const reqId = `req_srv_${surveyId}_${sol.id}`;
+        // Check if request already exists
+        const existingReq = await db.select().from(soldierRequests).where(eq(soldierRequests.id, reqId)).limit(1);
+        if (existingReq.length === 0) {
+          const initialLog = [{
+            timestamp: new Date().toISOString(),
+            action: 'إرسال الطلب',
+            actor: 'شؤون الأفراد',
+            notes: `تم توجيه ${category} بعنوان (${title}) للفرد`
+          }];
+
+          await db.insert(soldierRequests).values({
+            id: reqId,
+            surveyId: surveyId,
+            soldierId: String(sol.id),
+            soldierName: sol.fullName,
+            soldierRank: sol.rank || 'جندي',
+            militaryNumber: String(sol.militaryNumber || ''),
+            unitId: sol.unitId ? String(sol.unitId) : null,
+            requestType: category === 'استبيان' ? 'survey' : category === 'إقرار' ? 'declaration' : category === 'رفع مستند' ? 'upload_doc' : category === 'طلب معلومات' ? 'info_request' : 'update_profile',
+            title: title,
+            description: description,
+            status: 'new',
+            historyLogs: JSON.stringify(initialLog),
+            submittedAt: new Date().toISOString()
+          });
+
+          // Insert individual notification for target soldier so it alerts them in portal
+          await db.insert(notifications).values({
+            id: `notif_srv_${surveyId}_${sol.id}_${Date.now()}`,
+            soldierId: String(sol.id),
+            targetSoldierId: String(sol.id),
+            militaryNumber: String(sol.militaryNumber || ''),
+            title: `طلب/استبيان جديد مطلوب من القيادة: (${title})`,
+            message: `تم توجيه ${category} بعنوان (${title}) لك. يرجى الدخول إلى قسم الطلبات والمذكرة لتعبئتها وتوقيعها.`,
+            isRead: false,
+            type: 'warning',
+            createdAt: new Date().toISOString()
+          });
+        }
+      }
+
+      // System notification for admin
+      await db.insert(notifications).values({
+        id: `notif_srv_created_${Date.now()}`,
+        title: `تم إنشاء طلب/استبيان جديد: (${title})`,
+        message: `تم توجيه طلب (${title}) بنجاح إلى ${targetSoldiersList.length} من أفراد الوحدة مع تحديد الموعد النهائي (${deadline || 'غير محدد'}).`,
+        isRead: false,
+        type: 'info',
+        createdAt: new Date().toISOString()
+      });
+
+      return res.status(201).json(newSurvey);
+    } catch (error: any) {
+      console.error("Error creating survey:", error);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Send Automatic Reminder to Pending/Overdue Soldiers
+  app.post("/api/surveys/send-reminder", async (req, res) => {
+    try {
+      const { surveyId, customMessage } = req.body;
+      let targetReqs = await db.select().from(soldierRequests);
+      
+      if (surveyId) {
+        targetReqs = targetReqs.filter(r => r.surveyId === surveyId);
+      }
+
+      // Filter pending/overdue soldiers (status is 'new', 'viewed', 'in_progress', 'needs_amendment')
+      const pendingReqs = targetReqs.filter(r => ['new', 'viewed', 'in_progress', 'needs_amendment'].includes(r.status));
+
+      const notifMsg = customMessage || `تذكير هام عاجل: يرجى المبادرة بتعبئة وإرسال الطلب/الاستبيان المطلوبة بأسرع وقت قبل انتهاء المهلة المحددة.`;
+
+      for (const pr of pendingReqs) {
+        await db.insert(notifications).values({
+          id: `notif_remind_${Date.now()}_${pr.id}`,
+          soldierId: String(pr.soldierId),
+          targetSoldierId: String(pr.soldierId),
+          militaryNumber: String(pr.militaryNumber || ''),
+          title: `تذكير عاجل من شؤون الأفراد: (${pr.title})`,
+          message: notifMsg,
+          isRead: false,
+          type: 'warning',
+          createdAt: new Date().toISOString()
+        });
+      }
+
+      return res.json({ success: true, count: pendingReqs.length });
+    } catch (error: any) {
+      console.error("Error sending survey reminder:", error);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put(["/api/soldier-requests/:id", "/api/action-requests/:id"], async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { proposedData, attachments, status = 'submitted', description } = req.body;
+
+      const existing = await db.select().from(soldierRequests).where(eq(soldierRequests.id, id)).limit(1);
+      if (existing.length === 0) {
+        return res.status(404).json({ error: "الطلب غير موجود" });
+      }
+
+      const reqObj = existing[0];
+      let history = [];
+      try {
+        if (reqObj.historyLogs) history = JSON.parse(reqObj.historyLogs);
+      } catch (e) {}
+
+      history.push({
+        timestamp: new Date().toISOString(),
+        action: status === 'submitted' ? 'إرسال الرد من الفرد' : 'تحديث الرد',
+        actor: reqObj.soldierName,
+        notes: 'قام الفرد بتعبئة النموذج ورفع المرفقات المطلوبة وإرسالها للمراجعة'
+      });
+
+      await db.update(soldierRequests)
+        .set({
+          proposedData: typeof proposedData === 'object' ? JSON.stringify(proposedData) : (proposedData || null),
+          attachments: typeof attachments === 'object' ? JSON.stringify(attachments) : (attachments || null),
+          status: status || 'submitted',
+          description: description || reqObj.description,
+          historyLogs: JSON.stringify(history),
+          submittedAt: new Date().toISOString()
+        })
+        .where(eq(soldierRequests.id, id));
+
+      // Notify personnel manager
+      await db.insert(notifications).values({
+        id: `notif_sub_${Date.now()}`,
+        title: `تم استلام رد جديد من الفرد (${reqObj.soldierName})`,
+        message: `قام العسكري (${reqObj.soldierName}) بتعبئة وإرسال طلب: (${reqObj.title}) وهو الآن قيد المراجعة.`,
+        isRead: false,
+        type: 'info',
+        createdAt: new Date().toISOString()
+      });
+
+      return res.json({ success: true, id });
+    } catch (error: any) {
+      console.error("Error updating soldier request:", error);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put(["/api/soldier-requests/:id/review", "/api/action-requests/:id/review"], async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status, rejectionReason, reviewNotes, reviewedBy } = req.body; // 'approved' | 'rejected' | 'needs_amendment'
+
+      const existing = await db.select().from(soldierRequests).where(eq(soldierRequests.id, id)).limit(1);
+      if (existing.length === 0) {
+        return res.status(404).json({ error: "الطلب غير موجود" });
+      }
+
+      const reqObj = existing[0];
+      const reviewedAt = new Date().toISOString();
+
+      let history = [];
+      try {
+        if (reqObj.historyLogs) history = JSON.parse(reqObj.historyLogs);
+      } catch (e) {}
+
+      let actionText = 'مراجعة الطلب';
+      if (status === 'approved') actionText = 'اعتماد الطلب';
+      else if (status === 'rejected') actionText = 'رفض الطلب';
+      else if (status === 'needs_amendment') actionText = 'طلب تعديل من الفرد';
+
+      history.push({
+        timestamp: reviewedAt,
+        action: actionText,
+        actor: reviewedBy || 'مسؤول شؤون الأفراد',
+        notes: reviewNotes || rejectionReason || 'تم اتخاذ إجراء بشأن الطلب'
+      });
+
+      await db.update(soldierRequests)
+        .set({
+          status,
+          rejectionReason: rejectionReason || null,
+          reviewNotes: reviewNotes || null,
+          historyLogs: JSON.stringify(history),
+          reviewedAt,
+          reviewedBy: reviewedBy || 'مسؤول شؤون الأفراد'
+        })
+        .where(eq(soldierRequests.id, id));
+
+      // If approved and has proposedData, auto update soldier!
+      if (status === 'approved' && reqObj.proposedData) {
+        try {
+          const updates = typeof reqObj.proposedData === 'string' ? JSON.parse(reqObj.proposedData) : reqObj.proposedData;
+          if (updates && typeof updates === 'object') {
+            await db.update(soldiers)
+              .set(updates)
+              .where(eq(soldiers.id, reqObj.soldierId));
+          }
+        } catch (e) {
+          console.error("Failed to parse proposedData for auto-update:", e);
+        }
+      }
+
+      // Notify soldier
+      let notifTitle = 'تحديث بشأن طلبك';
+      let notifType: 'info' | 'warning' | 'error' = 'info';
+      let notifMsg = '';
+
+      if (status === 'approved') {
+        notifTitle = 'تم اعتماد طلبك بنجاح ✅';
+        notifType = 'info';
+        notifMsg = `تمت الموافقة على طلبك (${reqObj.title}) واعتُمدت البيانات في السجل العسكري رسمياً.`;
+      } else if (status === 'needs_amendment') {
+        notifTitle = 'مطلوب تعديل على طلبك ⚠️';
+        notifType = 'warning';
+        notifMsg = `يتطلب طلبك (${reqObj.title}) إجراء تعديلات. الملاحظات: ${reviewNotes || 'يرجى مراجعة وتصحيح البيانات وإعادة الإرسال'}.`;
+      } else if (status === 'rejected') {
+        notifTitle = 'تم رفض الطلب ❌';
+        notifType = 'error';
+        notifMsg = `تم رفض طلبك (${reqObj.title}). السبب: ${rejectionReason || 'عدم استيفاء الشروط'}.`;
+      }
+
+      await db.insert(notifications).values({
+        id: `notif_review_${Date.now()}`,
+        title: notifTitle,
+        message: notifMsg,
+        isRead: false,
+        type: notifType,
+        createdAt: new Date().toISOString()
+      });
+
+      return res.json({ success: true, id, status });
+    } catch (error: any) {
+      console.error("Error reviewing soldier request:", error);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Toggle/Update Soldier Account and sync User entry
+  app.put("/api/soldiers/:id/account", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { hasAccount, username, password, assignedTasks, allowProfileEdit } = req.body;
+
+      const soldierList = await db.select().from(soldiers).where(eq(soldiers.id, id)).limit(1);
+      if (soldierList.length === 0) {
+        return res.status(404).json({ error: "العسكري غير موجود" });
+      }
+
+      const soldier = soldierList[0];
+
+      const defaultPass = soldier.militaryNumber ? soldier.militaryNumber.split('').reverse().join('') : '123456';
+      const accountUsername = (username && username.trim()) || soldier.accountUsername || soldier.militaryNumber || id;
+      const accountPassword = (password && password.trim()) || soldier.accountPassword || defaultPass;
+
+      // Update soldier record with account state
+      await db.update(soldiers)
+        .set({
+          hasAccount: !!hasAccount,
+          accountUsername: accountUsername,
+          accountPassword: accountPassword,
+          assignedTasks: typeof assignedTasks === 'object' ? JSON.stringify(assignedTasks) : (assignedTasks || null),
+          allowProfileEdit: allowProfileEdit !== undefined ? !!allowProfileEdit : true
+        })
+        .where(eq(soldiers.id, id));
+
+      if (hasAccount) {
+        // Find existing user linked to this soldierId or username
+        const existingUsers = await db.select().from(users).where(
+          or(
+            eq(users.soldierId, id),
+            eq(users.username, accountUsername)
+          )
+        ).limit(1);
+
+        if (existingUsers.length > 0) {
+          await db.update(users)
+            .set({
+              username: accountUsername,
+              password: accountPassword,
+              role: 'soldier',
+              name: soldier.fullName,
+              unitId: soldier.unitId,
+              soldierId: id
+            })
+            .where(eq(users.id, existingUsers[0].id));
+        } else {
+          // Create new user for soldier
+          const newUserId = `u_soldier_${id}`;
+          await db.insert(users).values({
+            id: newUserId,
+            uid: newUserId,
+            name: soldier.fullName,
+            email: `${accountUsername}@military.local`,
+            username: accountUsername,
+            password: accountPassword,
+            role: 'soldier',
+            unitId: soldier.unitId,
+            soldierId: id
+          });
+        }
+      } else {
+        // Disable user login if toggled off
+        await db.delete(users).where(
+          or(
+            eq(users.soldierId, id),
+            eq(users.username, accountUsername)
+          )
+        );
+      }
+
+      return res.json({ success: true, soldierId: id, hasAccount });
+    } catch (error: any) {
+      console.error("Error updating soldier account:", error);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Batch create accounts for soldiers
+  app.post("/api/soldiers/accounts/batch-create", async (req, res) => {
+    try {
+      const { soldierIds, unitId, battalion, company, platoon } = req.body;
+
+      let allSoldiersToProcess = [];
+      if (Array.isArray(soldierIds) && soldierIds.length > 0) {
+        allSoldiersToProcess = await db.select().from(soldiers).where(inArray(soldiers.id, soldierIds));
+      } else {
+        const conditions = [];
+        if (unitId && unitId !== 'all') conditions.push(eq(soldiers.unitId, unitId));
+        if (battalion && battalion !== 'all') conditions.push(eq(soldiers.battalion, battalion));
+        if (company && company !== 'all') conditions.push(eq(soldiers.company, company));
+        if (platoon && platoon !== 'all') conditions.push(eq(soldiers.platoon, platoon));
+        
+        if (conditions.length > 0) {
+          allSoldiersToProcess = await db.select().from(soldiers).where(and(...conditions));
+        } else {
+          allSoldiersToProcess = await db.select().from(soldiers);
+        }
+      }
+
+      let createdCount = 0;
+      let skippedCount = 0;
+      const createdList = [];
+
+      for (const soldier of allSoldiersToProcess) {
+        if (soldier.hasAccount) {
+          skippedCount++;
+          continue;
+        }
+
+        const accountUsername = soldier.accountUsername || soldier.militaryNumber || soldier.id;
+        const initialPassword = soldier.accountPassword || (soldier.militaryNumber ? soldier.militaryNumber.split('').reverse().join('') : '123456');
+
+        const existingUsers = await db.select().from(users).where(
+          or(
+            eq(users.soldierId, soldier.id),
+            eq(users.username, accountUsername)
+          )
+        ).limit(1);
+
+        if (existingUsers.length > 0) {
+          await db.update(soldiers).set({
+            hasAccount: true,
+            accountUsername: accountUsername,
+            accountPassword: initialPassword,
+            allowProfileEdit: true
+          }).where(eq(soldiers.id, soldier.id));
+
+          await db.update(users).set({
+            name: soldier.fullName,
+            username: accountUsername,
+            password: initialPassword,
+            role: 'soldier',
+            unitId: soldier.unitId,
+            soldierId: soldier.id
+          }).where(eq(users.id, existingUsers[0].id));
+
+          createdCount++;
+          createdList.push({ id: soldier.id, militaryNumber: soldier.militaryNumber, fullName: soldier.fullName, username: accountUsername, initialPassword });
+        } else {
+          const newUserId = `u_soldier_${soldier.id}`;
+          await db.update(soldiers).set({
+            hasAccount: true,
+            accountUsername: accountUsername,
+            accountPassword: initialPassword,
+            allowProfileEdit: true
+          }).where(eq(soldiers.id, soldier.id));
+
+          await db.insert(users).values({
+            id: newUserId,
+            uid: newUserId,
+            name: soldier.fullName,
+            email: `${accountUsername}@military.local`,
+            username: accountUsername,
+            password: initialPassword,
+            role: 'soldier',
+            unitId: soldier.unitId,
+            soldierId: soldier.id
+          });
+
+          createdCount++;
+          createdList.push({ id: soldier.id, militaryNumber: soldier.militaryNumber, fullName: soldier.fullName, username: accountUsername, initialPassword });
+        }
+      }
+
+      return res.json({
+        success: true,
+        createdCount,
+        skippedCount,
+        totalProcessed: allSoldiersToProcess.length,
+        createdList
+      });
+    } catch (error: any) {
+      console.error("Error in batch create accounts:", error);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Batch status & password management for soldier accounts
+  app.post("/api/soldiers/accounts/batch-status", async (req, res) => {
+    try {
+      const { soldierIds, action } = req.body; // action: 'activate' | 'deactivate' | 'suspend' | 'reset_password'
+      if (!Array.isArray(soldierIds) || soldierIds.length === 0) {
+        return res.status(400).json({ error: "لم يتم اختيار أي أفراد" });
+      }
+
+      const selectedSoldiers = await db.select().from(soldiers).where(inArray(soldiers.id, soldierIds));
+      let updatedCount = 0;
+
+      for (const soldier of selectedSoldiers) {
+        const username = soldier.accountUsername || soldier.militaryNumber || soldier.id;
+        const reversedMilitaryNo = soldier.militaryNumber ? soldier.militaryNumber.split('').reverse().join('') : '123456';
+        const password = soldier.accountPassword || reversedMilitaryNo;
+
+        if (action === 'activate') {
+          await db.update(soldiers).set({
+            hasAccount: true,
+            accountUsername: username,
+            accountPassword: password,
+            allowProfileEdit: true
+          }).where(eq(soldiers.id, soldier.id));
+
+          const existingUsers = await db.select().from(users).where(
+            or(
+              eq(users.soldierId, soldier.id),
+              eq(users.username, username)
+            )
+          ).limit(1);
+
+          if (existingUsers.length === 0) {
+            await db.insert(users).values({
+              id: `u_soldier_${soldier.id}`,
+              uid: `u_soldier_${soldier.id}`,
+              name: soldier.fullName,
+              email: `${username}@military.local`,
+              username: username,
+              password: password,
+              role: 'soldier',
+              unitId: soldier.unitId,
+              soldierId: soldier.id
+            });
+          } else {
+            await db.update(users).set({
+              name: soldier.fullName,
+              username: username,
+              password: password,
+              role: 'soldier',
+              unitId: soldier.unitId,
+              soldierId: soldier.id
+            }).where(eq(users.id, existingUsers[0].id));
+          }
+          updatedCount++;
+        } else if (action === 'deactivate' || action === 'suspend') {
+          await db.update(soldiers).set({ hasAccount: false }).where(eq(soldiers.id, soldier.id));
+          await db.delete(users).where(
+            or(
+              eq(users.soldierId, soldier.id),
+              eq(users.username, username)
+            )
+          );
+          updatedCount++;
+        } else if (action === 'reset_password') {
+          await db.update(soldiers).set({
+            hasAccount: true,
+            accountUsername: username,
+            accountPassword: reversedMilitaryNo
+          }).where(eq(soldiers.id, soldier.id));
+
+          const existingUsers = await db.select().from(users).where(
+            or(
+              eq(users.soldierId, soldier.id),
+              eq(users.username, username)
+            )
+          ).limit(1);
+
+          if (existingUsers.length > 0) {
+            await db.update(users).set({
+              password: reversedMilitaryNo,
+              username: username,
+              name: soldier.fullName
+            }).where(eq(users.id, existingUsers[0].id));
+          } else {
+            await db.insert(users).values({
+              id: `u_soldier_${soldier.id}`,
+              uid: `u_soldier_${soldier.id}`,
+              name: soldier.fullName,
+              email: `${username}@military.local`,
+              username: username,
+              password: reversedMilitaryNo,
+              role: 'soldier',
+              unitId: soldier.unitId,
+              soldierId: soldier.id
+            });
+          }
+          updatedCount++;
+        }
+      }
+
+      return res.json({ success: true, action, updatedCount });
+    } catch (error: any) {
+      console.error("Error in batch status update:", error);
+      return res.status(500).json({ error: error.message });
+    }
+  });
   app.get("/api/soldiers/:id/sick-leaves", async (req, res) => {
     try {
       const { id } = req.params;
@@ -658,11 +1525,37 @@ async function startServer() {
   app.get("/api/soldiers/:id/attendance-history", async (req, res) => {
     try {
       const { id } = req.params;
+      const solStr = String(id);
+      
+      const solList = await db.select().from(soldiers).where(
+        or(eq(soldiers.id, solStr), eq(soldiers.militaryNumber, solStr))
+      ).limit(1);
+
+      let candidateIds = [solStr];
+      if (solList.length > 0) {
+        if (solList[0].id) candidateIds.push(String(solList[0].id));
+        if (solList[0].militaryNumber) candidateIds.push(String(solList[0].militaryNumber));
+      }
+      candidateIds = Array.from(new Set(candidateIds));
+
       const history = await db
         .select()
         .from(attendance)
-        .where(eq(attendance.soldierId, id));
-      return res.json(history);
+        .where(inArray(attendance.soldierId, candidateIds));
+
+      // Deduplicate by date, keeping the latest updated record
+      const dateMap = new Map<string, any>();
+      for (const rec of history) {
+        const existing = dateMap.get(rec.date);
+        if (!existing || new Date(rec.updatedAt || 0).getTime() >= new Date(existing.updatedAt || 0).getTime()) {
+          dateMap.set(rec.date, rec);
+        }
+      }
+
+      const deduplicated = Array.from(dateMap.values());
+      deduplicated.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+      return res.json(deduplicated);
     } catch (error: any) {
       console.error("Error in GET /api/soldiers/:id/attendance-history:", error);
       return res.status(500).json({ error: error.message });
@@ -722,7 +1615,16 @@ async function startServer() {
   app.get("/api/attendance", async (req, res) => {
     try {
       const allAttendance = await db.select().from(attendance);
-      return res.json(allAttendance);
+      // Deduplicate by soldierId and date, keeping the latest updated record
+      const map = new Map<string, any>();
+      for (const rec of allAttendance) {
+        const key = `${rec.soldierId}_${rec.date}`;
+        const existing = map.get(key);
+        if (!existing || new Date(rec.updatedAt || 0).getTime() >= new Date(existing.updatedAt || 0).getTime()) {
+          map.set(key, rec);
+        }
+      }
+      return res.json(Array.from(map.values()));
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
     }
@@ -731,18 +1633,64 @@ async function startServer() {
   app.post("/api/attendance", async (req, res) => {
     try {
       const { id, soldierId, date, statusCode, recordedBy, updatedAt } = req.body;
-      const record = { id, soldierId, date, statusCode, recordedBy, updatedAt };
+      const solStr = String(soldierId);
+      const dateStr = String(date);
+      const recId = id || `att_${solStr}_${dateStr}`;
+      const record = { 
+        id: recId, 
+        soldierId: solStr, 
+        date: dateStr, 
+        statusCode: String(statusCode), 
+        recordedBy: recordedBy || 'admin', 
+        updatedAt: updatedAt || new Date().toISOString() 
+      };
       
-      // Upsert
-      await db.insert(attendance)
-        .values(record)
-        .onConflictDoUpdate({
-          target: attendance.id,
-          set: { statusCode, recordedBy, updatedAt }
+      // Look up soldier details for notification
+      const solList = await db.select().from(soldiers).where(
+        or(eq(soldiers.id, solStr), eq(soldiers.militaryNumber, solStr))
+      ).limit(1);
+      const targetSol = solList[0];
+      const solIds = targetSol ? Array.from(new Set([solStr, String(targetSol.id), String(targetSol.militaryNumber)])) : [solStr];
+
+      // Delete previous records for this soldier and date to prevent duplicates
+      await db.delete(attendance).where(
+        and(
+          inArray(attendance.soldierId, solIds),
+          eq(attendance.date, dateStr)
+        )
+      );
+
+      // Insert new single record
+      await db.insert(attendance).values(record);
+
+      // Push notification to soldier if soldier found
+      if (targetSol) {
+        const statusMap: Record<string, string> = {
+          'ح': 'حاضر بالدوام',
+          'غ': 'غائب',
+          'إ': 'إجازة رسمية',
+          'م': 'عذر طبي / راحة',
+          'ع': 'مأمورية خارجية',
+          'ن': 'نوبة / خفر'
+        };
+        const statusLabel = statusMap[statusCode] || statusCode;
+
+        await db.insert(notifications).values({
+          id: `notif_att_${targetSol.id}_${dateStr}_${Date.now()}`,
+          soldierId: String(targetSol.id),
+          targetSoldierId: String(targetSol.id),
+          militaryNumber: String(targetSol.militaryNumber || ''),
+          title: `تحديث حالة التحضير اليومي (${dateStr})`,
+          message: `تم تسجيل حالة تحضيرك ليوم ${dateStr} كـ (${statusLabel}) في السجلات المركزية للقيادة.`,
+          isRead: false,
+          type: statusCode === 'غ' ? 'warning' : 'info',
+          createdAt: new Date().toISOString()
         });
+      }
       
       return res.json(record);
     } catch (error: any) {
+      console.error("Error saving attendance:", error);
       return res.status(500).json({ error: error.message });
     }
   });
@@ -754,21 +1702,65 @@ async function startServer() {
         return res.status(400).json({ error: "Invalid records parameter" });
       }
 
-      const chunkSize = 100;
-      for (let i = 0; i < records.length; i += chunkSize) {
-        const chunk = records.slice(i, i + chunkSize);
-        for (const record of chunk) {
-          await db.insert(attendance)
-            .values(record)
-            .onConflictDoUpdate({
-              target: attendance.id,
-              set: { statusCode: record.statusCode, recordedBy: record.recordedBy, updatedAt: record.updatedAt }
-            });
+      const allSoldiersList = await db.select().from(soldiers);
+      const solMap = new Map<string, any>();
+      allSoldiersList.forEach(s => {
+        solMap.set(String(s.id), s);
+        if (s.militaryNumber) solMap.set(String(s.militaryNumber), s);
+      });
+
+      for (const record of records) {
+        const solStr = String(record.soldierId);
+        const dateStr = String(record.date);
+        const recId = record.id || `att_${solStr}_${dateStr}`;
+        const targetSol = solMap.get(solStr);
+        const solIds = targetSol ? Array.from(new Set([solStr, String(targetSol.id), String(targetSol.militaryNumber)])) : [solStr];
+
+        await db.delete(attendance).where(
+          and(
+            inArray(attendance.soldierId, solIds),
+            eq(attendance.date, dateStr)
+          )
+        );
+
+        await db.insert(attendance).values({
+          id: recId,
+          soldierId: solStr,
+          date: dateStr,
+          statusCode: String(record.statusCode),
+          recordedBy: record.recordedBy || 'admin',
+          updatedAt: record.updatedAt || new Date().toISOString()
+        });
+
+        // Insert individual notification for target soldier
+        if (targetSol) {
+          const statusMap: Record<string, string> = {
+            'ح': 'حاضر بالدوام',
+            'غ': 'غائب',
+            'إ': 'إجازة رسمية',
+            'م': 'عذر طبي / راحة',
+            'ع': 'مأمورية خارجية',
+            'ن': 'نوبة / خفر'
+          };
+          const statusLabel = statusMap[record.statusCode] || record.statusCode;
+
+          await db.insert(notifications).values({
+            id: `notif_att_b_${targetSol.id}_${dateStr}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+            soldierId: String(targetSol.id),
+            targetSoldierId: String(targetSol.id),
+            militaryNumber: String(targetSol.militaryNumber || ''),
+            title: `تحديث حالة التحضير اليومي (${dateStr})`,
+            message: `تم تحديث حالة تحضيرك ليوم ${dateStr} كـ (${statusLabel}) ضمن كشف التحضير اليومي.`,
+            isRead: false,
+            type: record.statusCode === 'غ' ? 'warning' : 'info',
+            createdAt: new Date().toISOString()
+          });
         }
       }
 
       return res.json({ success: true });
     } catch (error: any) {
+      console.error("Error saving bulk attendance:", error);
       return res.status(500).json({ error: error.message });
     }
   });
@@ -944,6 +1936,7 @@ async function startServer() {
         }
         return res.json({
           ...row,
+          highContrastMode: row.highContrastMode ?? false,
           printSettings: parsedPrintSettings
         });
       }
@@ -955,6 +1948,7 @@ async function startServer() {
         dailyReminderTime: "08:30",
         autoBackupEnabled: true,
         hijriSupport: true,
+        highContrastMode: false,
         printSettings: null
       });
     } catch (error: any) {
@@ -964,7 +1958,7 @@ async function startServer() {
 
   app.put("/api/settings", async (req, res) => {
     try {
-      const { warningThreshold, dailyReminderEnabled, dailyReminderTime, autoBackupEnabled, hijriSupport, printSettings } = req.body;
+      const { warningThreshold, dailyReminderEnabled, dailyReminderTime, autoBackupEnabled, hijriSupport, highContrastMode, printSettings } = req.body;
       const printSettingsStr = printSettings ? JSON.stringify(printSettings) : null;
       
       // Check if row exists, or insert
@@ -977,6 +1971,7 @@ async function startServer() {
             dailyReminderTime, 
             autoBackupEnabled, 
             hijriSupport,
+            highContrastMode: highContrastMode ?? false,
             printSettings: printSettingsStr 
           })
           .where(eq(systemSettings.id, 1));
@@ -988,11 +1983,12 @@ async function startServer() {
           dailyReminderTime: dailyReminderTime || '08:30',
           autoBackupEnabled: autoBackupEnabled !== undefined ? autoBackupEnabled : true,
           hijriSupport: hijriSupport !== undefined ? hijriSupport : true,
+          highContrastMode: highContrastMode ?? false,
           printSettings: printSettingsStr
         });
       }
 
-      return res.json({ warningThreshold, dailyReminderEnabled, dailyReminderTime, autoBackupEnabled, hijriSupport, printSettings });
+      return res.json({ warningThreshold, dailyReminderEnabled, dailyReminderTime, autoBackupEnabled, hijriSupport, highContrastMode: highContrastMode ?? false, printSettings });
     } catch (error: any) {
       console.error("Error updating settings:", error);
       return res.status(500).json({ error: error.message });

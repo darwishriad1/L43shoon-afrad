@@ -93,7 +93,7 @@ export const SoldierMonthlyAttendanceModal: React.FC<SoldierMonthlyAttendanceMod
     const rawCode = record ? record.statusCode : null;
     const normCode = record ? normalizeStatusCode(record.statusCode) : 'unrecorded';
 
-    const isSick = normCode === 'ع' || rawCode === 'مريض' || rawCode === 'طبي' || rawCode === 'ط';
+    const isSick = normCode === 'ع' || (rawCode as string) === 'مريض' || (rawCode as string) === 'طبي' || (rawCode as string) === 'ط';
 
     return {
       dayNum,

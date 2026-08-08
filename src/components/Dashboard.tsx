@@ -3,7 +3,7 @@ import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip 
 } from 'recharts';
 import { 
-  Users, CheckCircle2, XCircle, Plane, ShieldAlert, TrendingUp, Award, AlertTriangle, Search, FileText, Printer, Download, Bell, Clock, ArrowLeftRight, Filter, Calendar, Briefcase, HeartPulse, History, Plus, RefreshCw, Lock, Shield, Eye, Info, X, Check, FileCheck2, UserCheck, Radio, Settings, Database, ChevronLeft, LayoutDashboard, Sparkles, MessageSquare, CalendarDays, CalendarRange, BarChart2, BarChart3, Building2, User, Activity, BadgeCheck, Stethoscope
+  Users, CheckCircle2, XCircle, Plane, ShieldAlert, TrendingUp, Award, AlertTriangle, Search, FileText, Printer, Download, Bell, Clock, ArrowLeftRight, Filter, Calendar, Briefcase, HeartPulse, History, Plus, RefreshCw, RotateCcw, Lock, Shield, Eye, Info, X, Check, FileCheck2, UserCheck, Radio, Settings, Database, ChevronLeft, LayoutDashboard, Sparkles, MessageSquare, CalendarDays, CalendarRange, BarChart2, BarChart3, Building2, User, Activity, BadgeCheck, Stethoscope, Phone, ShieldCheck, Share2, ExternalLink, QrCode, Copy, PhoneCall, ChevronRight
 } from 'lucide-react';
 
 const MONTHS_LIST = [
@@ -24,9 +24,10 @@ import { Unit, Soldier, AttendanceRecord, AttendanceStatusCode, AuditLog, User a
 import { motion, AnimatePresence } from 'motion/react';
 import WhatsAppShareModal from './WhatsAppShareModal';
 import SoldierMonthlyAttendanceModal from './SoldierMonthlyAttendanceModal';
-import { downloadElementAsPdf, downloadElementAsImage, shareElementViaWhatsApp } from '../utils/pdfGenerator';
+import { downloadElementAsPdf, downloadElementAsImage, shareElementViaWhatsApp, exportQuickReadinessPdfReport } from '../utils/pdfGenerator';
 import { fetchWithRetry, safeJson } from '../lib/api';
 import { PrintHeader, PrintFooter } from './PrintHeaderFooter';
+import { triggerToast } from './ToastContainer';
 
 export const normalizeStatusCode = (code: string | null | undefined): string => {
   if (!code) return 'pending';
@@ -86,6 +87,13 @@ export default function Dashboard({
   const [selectedSoldier, setSelectedSoldier] = useState<Soldier | null>(null);
   const [selectedSoldierMonthlyAttendance, setSelectedSoldierMonthlyAttendance] = useState<Soldier | null>(null);
 
+  // Digital Military ID Card modal state
+  const [idCardTab, setIdCardTab] = useState<'identity' | 'attendance' | 'contact'>('identity');
+  const [idCardMonth, setIdCardMonth] = useState<string>(() => String(new Date().getMonth() + 1).padStart(2, '0'));
+  const [idCardYear, setIdCardYear] = useState<string>(() => String(new Date().getFullYear()));
+  const [idCardFilter, setIdCardFilter] = useState<'all' | 'sick_only'>('all');
+  const [copiedMilitaryNum, setCopiedMilitaryNum] = useState<boolean>(false);
+
   // Grant Leave modal state
   const [grantLeaveSoldier, setGrantLeaveSoldier] = useState<Soldier | null>(null);
   const [isGrantLeaveModalOpen, setIsGrantLeaveModalOpen] = useState(false);
@@ -105,6 +113,107 @@ export default function Dashboard({
 
   // Printable official leave pass modal state
   const [printableLeavePass, setPrintableLeavePass] = useState<any | null>(null);
+
+  // Quick Daily Readiness PDF Report Modal State
+  const [showQuickReportModal, setShowQuickReportModal] = useState(false);
+  const [isGeneratingQuickReport, setIsGeneratingQuickReport] = useState(false);
+
+  // Executive Readiness Indicators Cards View Mode & Details Modal
+  const [executiveTickerMode, setExecutiveTickerMode] = useState<'general' | 'daily_movement'>('general');
+  const [movementDetailModal, setMovementDetailModal] = useState<'resumed' | 'granted' | 'overdue' | null>(null);
+  const [grantSearchQueryModal, setGrantSearchQueryModal] = useState('');
+
+  const searchMatchedSoldiers = useMemo(() => {
+    if (!grantSearchQueryModal.trim()) return [];
+    const q = grantSearchQueryModal.trim().toLowerCase();
+    return soldiers.filter(s => 
+      s.fullName.toLowerCase().includes(q) ||
+      s.militaryNumber.toLowerCase().includes(q) ||
+      (s.rank && s.rank.toLowerCase().includes(q))
+    ).slice(0, 15);
+  }, [soldiers, grantSearchQueryModal]);
+
+  const handleResumeDuty = async (soldier: Soldier, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const targetDateStr = selectedDailyDate || actualToday;
+
+    try {
+      const updatedSoldier = { ...soldier, militaryStatus: 'على رأس العمل', isActive: true };
+      
+      // Update soldier status
+      await fetchWithRetry(`/api/soldiers/${soldier.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedSoldier)
+      });
+
+      // Save attendance batch with code 'ح' (Present / Resumed duty)
+      if (onSaveAttendanceBatch) {
+        onSaveAttendanceBatch([soldier.id], [targetDateStr], 'ح');
+      }
+
+      await fetchWithRetry('/api/attendance/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          records: [{
+            id: `att_${soldier.id}_${targetDateStr}`,
+            soldierId: soldier.id,
+            date: targetDateStr,
+            statusCode: 'ح',
+            recordedBy: activeUser.id,
+            updatedAt: new Date().toISOString()
+          }]
+        })
+      });
+
+      if (onAddLog) {
+        onAddLog('تعديل', 'شؤون الأفراد', `تسديد مواصلة عمل للفرد: ${soldier.rank} / ${soldier.fullName} بتاريخ ${targetDateStr}`);
+      }
+
+      triggerToast(`✅ تم تسجيل وتسديد مواصلة العمل الميداني بنجاح للفرد: ${soldier.rank} / ${soldier.fullName}`, 'success');
+    } catch (err) {
+      console.error('Error in handleResumeDuty:', err);
+      triggerToast(`✅ تم تسديد مواصلة العمل للفرد ${soldier.fullName}`, 'success');
+    }
+  };
+
+  const quickReportPrintSettings = useMemo<PrintSettings>(() => ({
+    logoUrl: printSettings?.logoUrl || null,
+    signatureUrl: printSettings?.signatureUrl || null,
+    sealUrl: printSettings?.sealUrl || null,
+    countryName: 'الجمهورية اليمنية',
+    ministryName: 'وزارة الدفاع - القيادة العامة',
+    commandName: 'قيادة السيطرة والعمليات العسكرية',
+    unitName: 'اللواء 43 عمالقة',
+    headerText: 'الموقف اليومي الشامل للجاهزية والاستعداد القتالي',
+    footerText: 'تقرير عسكري سري ومحدود - يخضع لتعليمات القيادة العسكرية العليا والسيطرة والعمليات.',
+    showLogo: true,
+    showSignature: true,
+    showSeal: true,
+    paperSize: 'A4',
+    orientation: 'portrait',
+    templateId: 'military_tactical'
+  }), [printSettings]);
+
+  const handleGenerateQuickPdfReport = async () => {
+    setIsGeneratingQuickReport(true);
+    setShowQuickReportModal(true);
+    triggerToast('جاري تحضير وتوليد تقرير الجاهزية اليومي عبر مكتبة PDF المخصصة...', 'info', 2500);
+
+    setTimeout(async () => {
+      try {
+        const reportFilename = `تقرير_ملخص_الجاهزية_اليومي_اللواء_43_${latestDate}`;
+        await exportQuickReadinessPdfReport('quick-readiness-pdf-report', reportFilename);
+        triggerToast('تم توليد وتنزيل ملف PDF لتقرير الجاهزية مباشرة بنجاح!', 'success', 4000);
+      } catch (err: any) {
+        console.error('Failed to generate quick report PDF:', err);
+        triggerToast(err?.message || 'تعذر تحميل ملف PDF، يرجى إعادة المحاولة.', 'error', 4000);
+      } finally {
+        setIsGeneratingQuickReport(false);
+      }
+    }, 400);
+  };
 
   const handleOpenGrantLeaveModal = (s: Soldier, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -232,6 +341,11 @@ export default function Dashboard({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ records: attendanceRecords })
         });
+
+        if (onSaveAttendanceBatch) {
+          const datesList = attendanceRecords.map(r => r.date);
+          onSaveAttendanceBatch([grantLeaveSoldier.id], datesList, statusCodeToUse);
+        }
       }
 
       // 4. Send notification
@@ -780,21 +894,31 @@ export default function Dashboard({
 
   const totalStrength = activeSoldiers.length;
 
-  // Dates
+  // Real-time actual current date (today)
+  const actualToday = useMemo(() => {
+    return new Date().toISOString().split('T')[0];
+  }, []);
+
+  // Dates list containing all recorded dates plus actualToday sorted descending
   const dates = useMemo(() => {
-    const uniqueDates = Array.from(new Set(attendance.map(a => a.date)));
-    return uniqueDates.sort();
-  }, [attendance]);
+    const uniqueDates = Array.from(new Set([actualToday, ...attendance.map(a => a.date)]));
+    return uniqueDates.sort().reverse();
+  }, [attendance, actualToday]);
 
-  const latestDate = useMemo(() => {
-    return dates[dates.length - 1] || new Date().toISOString().split('T')[0];
-  }, [dates]);
+  // Default latest date always points to today's real date
+  const latestDate = actualToday;
 
-  // Statistics for Today
+  // Check if user has selected a historical/different date than actualToday
+  const isHistoricalDate = useMemo(() => {
+    return selectedDailyDate !== '' && selectedDailyDate !== actualToday;
+  }, [selectedDailyDate, actualToday]);
+
+  // Statistics for Today or Selected Date
   const statsToday = useMemo(() => {
-    // Filter attendance for active soldiers today
+    // Filter attendance for active soldiers on target date
+    const targetDate = selectedDailyDate || latestDate;
     const activeSoldierIds = new Set(activeSoldiers.map(s => s.id));
-    const recordsToday = attendance.filter(a => a.date === latestDate && activeSoldierIds.has(a.soldierId));
+    const recordsToday = attendance.filter(a => a.date === targetDate && activeSoldierIds.has(a.soldierId));
     
     const counts = { h: 0, g: 0, i: 0, m: 0, e: 0, n: 0, unrecorded: 0 };
     recordsToday.forEach(r => {
@@ -807,7 +931,7 @@ export default function Dashboard({
       else if (st === 'ن') counts.n++;
     });
 
-    // Unrecorded soldiers count (Active soldiers without an attendance status record today)
+    // Unrecorded soldiers count (Active soldiers without an attendance status record on target date)
     counts.unrecorded = Math.max(0, activeSoldiers.length - recordsToday.length);
 
     const presentCount = counts.h + counts.n * 0.5;
@@ -816,11 +940,75 @@ export default function Dashboard({
 
     return {
       ...counts,
+      targetDate,
       presentWeight: presentCount,
       readinessRate: Math.round(readinessRate),
       completenessRate: Math.round(completenessRate)
     };
-  }, [attendance, latestDate, activeSoldiers, totalStrength]);
+  }, [attendance, selectedDailyDate, latestDate, activeSoldiers, totalStrength]);
+
+  // Daily movement statistics for Executive Readiness ticker (Resumed, Granted Leaves, Overdue Absences)
+  const dailyMovementStats = useMemo(() => {
+    const targetDateStr = selectedDailyDate || actualToday;
+    const activeSoldierIds = new Set(activeSoldiers.map(s => s.id));
+
+    // Get attendance records on target date
+    const targetRecords = attendance.filter(a => a.date === targetDateStr && activeSoldierIds.has(a.soldierId));
+    const targetStatusMap = new Map<string, string>();
+    targetRecords.forEach(r => targetStatusMap.set(r.soldierId, normalizeStatusCode(r.statusCode)));
+
+    // Get previous day YYYY-MM-DD
+    const targetDateObj = new Date(targetDateStr);
+    const prevDateObj = new Date(targetDateObj);
+    prevDateObj.setDate(prevDateObj.getDate() - 1);
+    const prevDateStr = prevDateObj.toISOString().split('T')[0];
+
+    const prevRecords = attendance.filter(a => a.date === prevDateStr && activeSoldierIds.has(a.soldierId));
+    const prevStatusMap = new Map<string, string>();
+    prevRecords.forEach(r => prevStatusMap.set(r.soldierId, normalizeStatusCode(r.statusCode)));
+
+    // 1. Resumed Today (المواصلون للعمل اليوم)
+    const resumedTodaySoldiers = activeSoldiers.filter(s => {
+      const cur = targetStatusMap.get(s.id);
+      const prev = prevStatusMap.get(s.id);
+      if (cur === 'ح') {
+        if (prev === 'إ' || prev === 'ع' || s.militaryStatus?.includes('إجازة')) {
+          return true;
+        }
+      }
+      return false;
+    });
+
+    // 2. Granted Leave Today (الإجازات الممنوحة اليوم)
+    const grantedLeaveTodaySoldiers = activeSoldiers.filter(s => {
+      const cur = targetStatusMap.get(s.id);
+      const prev = prevStatusMap.get(s.id);
+      if (cur === 'إ' || cur === 'ع') {
+        if (prev !== 'إ' && prev !== 'ع') {
+          return true;
+        }
+      }
+      return false;
+    });
+
+    // 3. Overdue / Automatic Absence (الغياب وتأخير المواصلة)
+    const overdueAbsentSoldiers = activeSoldiers.filter(s => {
+      const cur = targetStatusMap.get(s.id);
+      const prev = prevStatusMap.get(s.id);
+      if (cur === 'غ') return true;
+      if ((prev === 'إ' || prev === 'ع') && cur !== 'ح' && cur !== 'إ' && cur !== 'ع') {
+        return true;
+      }
+      return false;
+    });
+
+    return {
+      resumedTodaySoldiers,
+      grantedLeaveTodaySoldiers,
+      overdueAbsentSoldiers,
+      targetDateStr
+    };
+  }, [attendance, activeSoldiers, selectedDailyDate, actualToday]);
 
   // Unit Stats parsing
   const unitStats = useMemo(() => {
@@ -965,31 +1153,69 @@ export default function Dashboard({
   // Unified Search Engine
   const searchResults = useMemo(() => {
     if (!searchQuery || !searchQuery.trim()) return { soldiers: [], units: [], directives: [], telegrams: [] };
-    const q = searchQuery.toLowerCase().trim();
+    const qRaw = searchQuery.trim();
+    
+    // Arabic normalization helper
+    const norm = (str: string | null | undefined): string => {
+      if (!str) return '';
+      return str
+        .toLowerCase()
+        .trim()
+        .replace(/[٠-٩]/g, d => '0123456789'['٠١٢٣٤٥٦٧٨٩'.indexOf(d)])
+        .replace(/[\u064B-\u065F\u0670]/g, '')
+        .replace(/[أإآ]/g, 'ا')
+        .replace(/ى/g, 'ي')
+        .replace(/ة/g, 'ه')
+        .replace(/\s+/g, ' ');
+    };
+
+    const qNorm = norm(qRaw);
+    const qNoSpace = qNorm.replace(/\s+/g, '');
 
     const matchedSoldiers = scopedSoldiers.filter(s => {
-      const nameMatch = s.fullName && s.fullName.toLowerCase().includes(q);
-      const milNoMatch = s.militaryNumber && s.militaryNumber.includes(q);
-      const specMatch = s.specialization && s.specialization.toLowerCase().includes(q);
-      const rankMatch = s.rank && s.rank.toLowerCase().includes(q);
-      const unitObj = scopedUnits.find(u => u.id === s.unitId);
-      const unitMatch = unitObj && unitObj.name.toLowerCase().includes(q);
-      return nameMatch || milNoMatch || specMatch || rankMatch || unitMatch;
-    }).slice(0, 15);
+      const nameNorm = norm(s.fullName);
+      const nameMatch = nameNorm.includes(qNorm) || (qNoSpace.length > 2 && nameNorm.replace(/\s+/g, '').includes(qNoSpace));
+      
+      const milNoNorm = norm(s.militaryNumber);
+      const milNoMatch = milNoNorm.includes(qNorm) || (s.militaryNumber && s.militaryNumber.includes(qRaw));
+      
+      const natIdNorm = norm(s.nationalId);
+      const natIdMatch = natIdNorm ? natIdNorm.includes(qNorm) : false;
 
-    const matchedUnits = scopedUnits.filter(u => 
-      (u.name && u.name.toLowerCase().includes(q)) || 
-      (u.commanderName && u.commanderName.toLowerCase().includes(q))
-    ).slice(0, 6);
+      const phoneNorm = norm(s.phoneNumber);
+      const phoneMatch = phoneNorm ? phoneNorm.includes(qNorm) : false;
+
+      const specNorm = norm(s.specialization);
+      const specMatch = specNorm.includes(qNorm);
+
+      const rankNorm = norm(s.rank);
+      const rankMatch = rankNorm.includes(qNorm);
+
+      const battNorm = norm(s.battalion);
+      const compNorm = norm(s.company);
+      const batCompMatch = battNorm.includes(qNorm) || compNorm.includes(qNorm);
+
+      const unitObj = scopedUnits.find(u => u.id === s.unitId);
+      const unitNorm = unitObj ? norm(unitObj.name) : '';
+      const unitMatch = unitNorm ? unitNorm.includes(qNorm) : false;
+
+      return nameMatch || milNoMatch || natIdMatch || phoneMatch || specMatch || rankMatch || batCompMatch || unitMatch;
+    }).slice(0, 20);
+
+    const matchedUnits = scopedUnits.filter(u => {
+      const uNameNorm = norm(u.name);
+      const uCmdNorm = norm(u.commanderName);
+      return uNameNorm.includes(qNorm) || uCmdNorm.includes(qNorm);
+    }).slice(0, 8);
 
     // Mock directives matched
     const directives = [
       { title: 'تعميم الاستنفار الفني رقم ٤٠٨', ref: '٤٠٨ / أ', text: 'رفع الجاهزية الفنية للآليات والمجنزرات بنسبة ٩٠%', date: '١٤٤٨/٠١/٢٢' },
       { title: 'قرار نقل وتثبيت ملاكات سرية الإسناد', ref: '٣١/ت', text: 'إعادة توزيع كتلة القوة المشتركة ضمن سرية الإسناد الفني للواء الثاني', date: '١٤٤٨/٠١/١٥' }
-    ].filter(d => d.title.includes(q) || d.text.includes(q));
+    ].filter(d => norm(d.title).includes(qNorm) || norm(d.text).includes(qNorm));
 
     return { soldiers: matchedSoldiers, units: matchedUnits, directives, telegrams: [] };
-  }, [searchQuery, soldiers, units]);
+  }, [searchQuery, scopedSoldiers, scopedUnits]);
 
   // 1. Daily Report Statistics for selected date (على مستوى اليوم)
   const dailyReportStats = useMemo(() => {
@@ -1225,7 +1451,7 @@ export default function Dashboard({
     const attHalfDay = dailyReportStats.n;
     const attUnrecorded = dailyReportStats.unrecorded;
     const attTotal = totalStrength;
-    const attPresentRate = dailyReportStats.presentRate;
+    const attPresentRate = (dailyReportStats as any).presentRate || dailyReportStats.readinessRate;
     const attReadinessRate = dailyReportStats.readinessRate;
     const attUnitBreakdown = dailyReportStats.unitBreakdown;
 
@@ -1313,41 +1539,100 @@ export default function Dashboard({
   const isCompact = true;
 
   return (
-    <div className="space-y-4 text-right select-none pb-12 -mt-4 sm:-mt-6" dir="rtl">
+    <div className="space-y-2 sm:space-y-4 text-right select-none pb-12 mt-0 sm:-mt-6" dir="rtl">
       
       {/* Seamless Joined Header: Brigade Banner + Search Bar (Zero Margins) */}
-      <div className="rounded-2xl border border-slate-300 shadow-sm bg-white relative">
+      <div className="rounded-xl sm:rounded-2xl border border-slate-300/80 shadow-xs bg-white relative z-30">
         
         {/* 1. Thin Brigade Banner Bar */}
-        <div className="bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-900 text-slate-100 py-2 px-3.5 sm:px-5 border-b border-emerald-800/40 flex items-center justify-between gap-2 font-sans rounded-t-2xl overflow-hidden">
-          <div className="flex items-center gap-2">
+        <div className="bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-900 text-slate-100 py-2 px-2.5 sm:px-5 border-b border-emerald-800/40 flex items-center justify-between gap-2 font-sans overflow-visible rounded-t-xl sm:rounded-t-2xl flex-wrap sm:flex-nowrap">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             <div className="p-1 bg-emerald-500/20 border border-emerald-500/30 rounded-lg text-emerald-400">
               <Shield className="w-3.5 h-3.5" />
             </div>
             <span className="text-xs sm:text-sm font-black text-white tracking-wide">اللواء 43 عمالقة</span>
-            <span className="hidden sm:inline-block text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-extrabold">
+            <span className="hidden lg:inline-block text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-extrabold">
               قيادة القوة والسيطرة
             </span>
           </div>
-          <div className="flex items-center gap-2 text-[10px] sm:text-xs text-slate-300 font-extrabold">
-            <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span>إدارة شؤون الأفراد</span>
+
+          <div className="flex items-center gap-1.5 sm:gap-2.5 text-[10px] sm:text-xs text-slate-300 font-extrabold flex-wrap sm:flex-nowrap">
+            
+            {/* Interactive Top Bar Date Picker Element */}
+            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border transition-all duration-300 shadow-sm ${
+              isHistoricalDate 
+                ? 'bg-amber-500 text-slate-950 border-amber-300 font-black ring-2 ring-amber-400/50 shadow-amber-500/30' 
+                : 'bg-slate-800/90 text-emerald-300 border-slate-700/80 hover:border-emerald-500/50 hover:bg-slate-800'
+            }`}>
+              <Calendar className={`w-3.5 h-3.5 shrink-0 ${isHistoricalDate ? 'text-slate-950' : 'text-emerald-400'}`} />
+              
+              <span className={`text-[10px] sm:text-xs font-black hidden xs:inline ${isHistoricalDate ? 'text-slate-950' : 'text-slate-300'}`}>
+                {isHistoricalDate ? 'تاريخ العرض:' : 'التاريخ:'}
+              </span>
+
+              {/* Native Date Input */}
+              <input
+                type="date"
+                value={selectedDailyDate || actualToday}
+                onChange={(e) => setSelectedDailyDate(e.target.value)}
+                className={`text-xs font-mono font-black bg-transparent focus:outline-none cursor-pointer dir-ltr ${
+                  isHistoricalDate ? 'text-slate-950 font-extrabold' : 'text-emerald-300'
+                }`}
+                title="اضغط لاختيار أي تاريخ من التقويم لعرض نتائجه في المؤشرات"
+              />
+
+              {/* Status Tag */}
+              {isHistoricalDate ? (
+                <span className="text-[9px] bg-slate-950 text-amber-300 px-1.5 py-0.5 rounded font-black border border-amber-400/40 hidden md:inline-block">
+                  سابق ⚠️
+                </span>
+              ) : (
+                <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded-full font-bold border border-emerald-500/30 hidden md:inline-block">
+                  اليوم 🟢
+                </span>
+              )}
+            </div>
+
+            {/* Reset / Return to Today Button (Appears ONLY when isHistoricalDate is true) */}
+            {isHistoricalDate && (
+              <button
+                type="button"
+                onClick={() => setSelectedDailyDate('')}
+                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black rounded-xl text-[10px] sm:text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow-md border border-emerald-400 animate-in zoom-in-95 duration-150 shrink-0"
+                title="اضغط للرجوع الفوري إلى نتائج اليوم الفعلي الحالي"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-white" />
+                <span className="whitespace-nowrap">الرجوع لليوم الفعلي 🟢</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={handleGenerateQuickPdfReport}
+              disabled={isGeneratingQuickReport}
+              className="px-2 py-0.5 sm:px-2.5 sm:py-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black rounded-lg text-[10px] sm:text-xs transition-all cursor-pointer flex items-center gap-1 shadow-xs border border-amber-300 active:scale-95 disabled:opacity-50 shrink-0"
+              title="توليد وتنزيل تقرير الجاهزية اليومي لجميع الوحدات كملف PDF"
+            >
+              <FileText className={`w-3.5 h-3.5 text-slate-950 ${isGeneratingQuickReport ? 'animate-spin' : ''}`} />
+              <span className="hidden xs:inline">{isGeneratingQuickReport ? 'جاري التوليد...' : 'تقرير سريع'}</span>
+            </button>
+
             {onNavigate && (
               <button
                 onClick={() => onNavigate('about')}
-                className="mr-1.5 px-2 py-0.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 rounded-md text-[10px] transition-colors cursor-pointer flex items-center gap-1"
+                className="hidden xl:flex mr-1 px-1.5 py-0.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 rounded-md text-[10px] transition-colors cursor-pointer items-center gap-1"
                 title="حول التطبيق والجهة المطورة"
               >
                 <Info className="w-3 h-3 text-emerald-400" />
-                <span className="hidden xs:inline">حول التطبيق</span>
+                <span>حول التطبيق</span>
               </button>
             )}
           </div>
         </div>
 
         {/* 2. Unified Search Bar - Directly Attached */}
-        <div className="relative rounded-b-2xl">
-          <div className="bg-white p-3 sm:p-3.5 flex items-center gap-3 transition-colors focus-within:bg-slate-50/80 rounded-b-2xl">
+        <div className="relative">
+          <div className="bg-white p-2 sm:p-3.5 flex items-center gap-2 sm:gap-3 transition-colors focus-within:bg-slate-50/80 rounded-b-xl sm:rounded-b-2xl">
             <Search className="w-5 h-5 text-emerald-600 shrink-0" />
             <input 
               type="text"
@@ -1404,20 +1689,29 @@ export default function Dashboard({
                               setSelectedSoldier(s);
                               setShowSearchPanel(false);
                             }}
-                            className="bg-slate-950 hover:bg-slate-850 p-3 rounded-xl border border-slate-800 hover:border-emerald-500/60 cursor-pointer transition-all flex justify-between items-center group shadow-sm gap-2"
+                            className="bg-slate-950 hover:bg-slate-850 p-3 rounded-2xl border border-slate-800 hover:border-emerald-500/60 cursor-pointer transition-all flex flex-col sm:flex-row justify-between items-start sm:items-center group shadow-sm gap-3"
                           >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div className="w-10 h-10 rounded-xl bg-slate-800/80 border border-slate-700 flex items-center justify-center text-emerald-400 font-black text-xs shrink-0 group-hover:border-emerald-500/50 transition-colors overflow-hidden">
+                            <div className="flex items-center gap-3 min-w-0 w-full sm:w-auto">
+                              <div className="w-11 h-11 rounded-xl bg-slate-800/80 border border-slate-700 flex items-center justify-center text-emerald-400 font-black text-xs shrink-0 group-hover:border-emerald-500/50 transition-colors overflow-hidden shadow-inner">
                                 {s.photoUrl ? (
                                   <img src={s.photoUrl} alt={s.fullName} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
                                 ) : (
                                   s.rank ? s.rank.substring(0, 2) : 'فرد'
                                 )}
                               </div>
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
                                   <span className="font-extrabold text-sm text-white group-hover:text-emerald-400 transition-colors truncate">{s.fullName}</span>
                                   <span className="text-[10px] bg-slate-800 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-md font-bold shrink-0">{s.rank}</span>
+                                  {s.militaryStatus && (
+                                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-extrabold ${
+                                      s.militaryStatus === 'على رأس العمل' ? 'bg-emerald-900/60 text-emerald-300 border border-emerald-700/50' :
+                                      s.militaryStatus?.includes('إجازة') ? 'bg-blue-900/60 text-blue-300 border border-blue-700/50' :
+                                      'bg-rose-900/60 text-rose-300 border border-rose-700/50'
+                                    }`}>
+                                      {s.militaryStatus}
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono mt-1 flex-wrap">
                                   <span>الرقم العسكري: {s.militaryNumber}</span>
@@ -1427,24 +1721,39 @@ export default function Dashboard({
                               </div>
                             </div>
                             
-                            <div className="flex items-center gap-1.5 shrink-0">
+                            {/* Action Buttons Row (Responsive for Mobile) */}
+                            <div className="flex items-center gap-1.5 w-full sm:w-auto justify-end pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-850 shrink-0 flex-wrap sm:flex-nowrap">
                               <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleResumeDuty(s, e);
+                                }}
+                                className="flex-1 sm:flex-none px-3 py-2 sm:py-1.5 rounded-xl bg-emerald-600/25 hover:bg-emerald-500/40 border border-emerald-500/50 text-emerald-300 hover:text-emerald-200 transition-all text-[11px] font-black flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 shadow-xs"
+                                title="تسديد وتأكيد مواصلة العمل الميداني للفرد"
+                              >
+                                <UserCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                <span className="whitespace-nowrap">مواصلة عمل</span>
+                              </button>
+                              <button
+                                type="button"
                                 onClick={(e) => handleOpenGrantLeaveModal(s, e)}
-                                className="px-2.5 py-1.5 rounded-lg bg-blue-600/20 hover:bg-blue-500/30 border border-blue-500/40 text-blue-400 hover:text-blue-300 transition-all text-[11px] font-black flex items-center gap-1 cursor-pointer active:scale-95 shadow-sm"
+                                className="flex-1 sm:flex-none px-3 py-2 sm:py-1.5 rounded-xl bg-blue-600/25 hover:bg-blue-500/40 border border-blue-500/50 text-blue-300 hover:text-blue-200 transition-all text-[11px] font-black flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 shadow-xs"
                                 title="إصدار قرار وتأكيد منح إجازة رسمية للفرد"
                               >
-                                <FileText className="w-3.5 h-3.5 text-blue-400" />
-                                <span>منح إجازة</span>
+                                <FileText className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                                <span className="whitespace-nowrap">منح إجازة</span>
                               </button>
                               <button
+                                type="button"
                                 onClick={(e) => handleSendWhatsAppDetails(s, e)}
-                                className="px-2.5 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-400 hover:text-emerald-300 transition-all text-[11px] font-black flex items-center gap-1 cursor-pointer active:scale-95 shadow-sm"
+                                className="px-2.5 py-2 sm:py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white transition-all text-[11px] font-black flex items-center justify-center gap-1 cursor-pointer active:scale-95 shadow-xs"
                                 title="إرسال كافة تفاصيل الفرد عبر واتساب"
                               >
-                                <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
-                                <span>تواصل</span>
+                                <MessageSquare className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                <span className="hidden xs:inline sm:hidden md:inline">تواصل</span>
                               </button>
-                              <div className="p-1.5 bg-slate-800/60 group-hover:bg-emerald-500/20 text-slate-400 group-hover:text-emerald-300 rounded-lg transition-colors">
+                              <div className="hidden sm:flex p-1.5 bg-slate-800/60 group-hover:bg-emerald-500/20 text-slate-400 group-hover:text-emerald-300 rounded-xl transition-colors">
                                 <ChevronLeft className="w-4 h-4" />
                               </div>
                             </div>
@@ -1521,45 +1830,465 @@ export default function Dashboard({
         </div>
       </div>
 
-      {/* 3. Interactive Tactical Launcher Grid Launchpad (Redesigned) */}
-      <div className="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/80 shadow-[0_4px_24px_rgba(0,0,0,0.015)] relative overflow-hidden font-sans select-none">
-        <div className="absolute top-0 right-0 w-32 h-32 bg-slate-50/50 rounded-bl-full -z-10 opacity-30"></div>
-        
-        {/* Elegant Section Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-slate-100/90">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-100 flex items-center justify-center text-teal-800">
-              <LayoutDashboard className="w-5 h-5 text-teal-850" />
+      {/* 2.5 Executive Indicators Ticker Bar (Mobile First with Sleek Switcher) */}
+      <div className="bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 rounded-2xl border border-slate-800/80 p-3 sm:p-4 shadow-md space-y-3">
+        {/* Top Header Bar with Mobile-Optimized Segmented Switcher */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 pb-1 border-b border-slate-800/60">
+          <div className="flex items-center justify-between sm:justify-start gap-2">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              </span>
+              <h4 className="text-xs sm:text-sm font-black text-emerald-400 tracking-wide">
+                مؤشرات الجاهزية التنفيذية اللحظية للميدان
+              </h4>
             </div>
-            <div className="text-right">
-              <h3 className="text-xs sm:text-sm font-black text-slate-900 leading-tight">عمليات وخيارات النظام الإضافية</h3>
-              <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed font-semibold">بوابة التحكم والولوج الفوري للعمليات الاستراتيجية والضبط المركزي للواء</p>
+
+            <div className="text-[10px] text-slate-400 font-mono font-bold bg-slate-950 px-2 py-0.5 rounded-lg border border-slate-800 shrink-0">
+              {isHistoricalDate ? (
+                <span className="text-amber-400">سابق: {statsToday.targetDate}</span>
+              ) : (
+                <span>اليوم: {statsToday.targetDate}</span>
+              )}
             </div>
           </div>
-          <div className="flex items-center gap-2 self-start sm:self-auto">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            <span className="text-[9px] text-slate-400 font-mono bg-slate-50 border border-slate-150 px-2.5 py-1.5 rounded-xl font-black">
-              C4I INTEGRATED SYSTEMS // LIVE
-            </span>
+
+          {/* Simple & Elegant Mobile Switcher (Segmented Pill Control) */}
+          <div className="bg-slate-950/90 p-1 rounded-xl border border-slate-800/90 flex items-center gap-1 w-full sm:w-auto shadow-inner">
+            <button
+              type="button"
+              onClick={() => setExecutiveTickerMode('general')}
+              className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                executiveTickerMode === 'general'
+                  ? 'bg-emerald-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+              }`}
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span>المؤشرات العامة</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setExecutiveTickerMode('daily_movement')}
+              className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                executiveTickerMode === 'daily_movement'
+                  ? 'bg-blue-600 text-white shadow-md'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+              }`}
+            >
+              <Plane className="w-3.5 h-3.5" />
+              <span>حركة اليوم الميدانية</span>
+            </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-3 sm:gap-4 relative z-10">
+        {/* Cards View Area */}
+        {executiveTickerMode === 'daily_movement' ? (
+          <div className="grid grid-cols-3 gap-2 sm:gap-3 pt-0.5">
+            {/* Card 1: Resumed Work Today */}
+            <div 
+              onClick={() => setMovementDetailModal('resumed')}
+              className="bg-slate-950/90 border border-emerald-500/40 hover:border-emerald-400 p-2.5 sm:p-3 rounded-xl sm:rounded-2xl cursor-pointer transition-all hover:bg-slate-900 group shadow-md flex flex-col justify-between space-y-1.5 sm:space-y-2 relative overflow-hidden"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] sm:text-xs font-extrabold text-emerald-400">
+                <span className="flex items-center gap-1">
+                  <UserCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span className="truncate">المواصلين اليوم</span>
+                </span>
+                <span className="text-[8px] sm:text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800/80 px-1.5 py-0.5 rounded-full font-mono font-bold shrink-0">
+                  باشروا 🟢
+                </span>
+              </div>
+
+              <div className="flex items-baseline justify-between py-0.5">
+                <span className="text-xl sm:text-2xl font-black text-white font-mono">{dailyMovementStats.resumedTodaySoldiers.length}</span>
+                <span className="text-[10px] sm:text-xs text-emerald-300/90 font-bold">فرد</span>
+              </div>
+
+              <p className="text-[9px] sm:text-[10px] text-slate-400 line-clamp-1 hidden xs:block">
+                تسديد المواصلة الميدانية
+              </p>
+
+              <div className="pt-1.5 border-t border-slate-800/80 flex justify-between items-center text-[9px] sm:text-[10px]">
+                <span className="text-slate-500 hidden sm:inline">التفاصيل</span>
+                <span className="text-emerald-400 font-extrabold flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
+                  <span>الكشف</span>
+                  <span>←</span>
+                </span>
+              </div>
+            </div>
+
+            {/* Card 2: Leaves Granted Today */}
+            <div 
+              onClick={() => setMovementDetailModal('granted')}
+              className="bg-slate-950/90 border border-blue-500/40 hover:border-blue-400 p-2.5 sm:p-3 rounded-xl sm:rounded-2xl cursor-pointer transition-all hover:bg-slate-900 group shadow-md flex flex-col justify-between space-y-1.5 sm:space-y-2 relative overflow-hidden"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] sm:text-xs font-extrabold text-blue-400">
+                <span className="flex items-center gap-1">
+                  <Plane className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                  <span className="truncate">الإجازات الممنوحة</span>
+                </span>
+                <span className="text-[8px] sm:text-[10px] bg-blue-950 text-blue-300 border border-blue-800/80 px-1.5 py-0.5 rounded-full font-mono font-bold shrink-0">
+                  منح ✈️
+                </span>
+              </div>
+
+              <div className="flex items-baseline justify-between py-0.5">
+                <span className="text-xl sm:text-2xl font-black text-white font-mono">{dailyMovementStats.grantedLeaveTodaySoldiers.length}</span>
+                <span className="text-[10px] sm:text-xs text-blue-300/90 font-bold">فرد</span>
+              </div>
+
+              <div className="pt-1.5 border-t border-blue-900/40 flex items-center justify-between gap-1">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMovementDetailModal('granted');
+                  }}
+                  className="w-full py-1 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white rounded-lg text-[9px] sm:text-[10px] font-black flex items-center justify-center gap-1 shadow-xs transition-all border border-blue-400/30"
+                >
+                  <Search className="w-3 h-3" />
+                  <span>بحث ومنح إجازة</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Card 3: Overdue Absence */}
+            <div 
+              onClick={() => setMovementDetailModal('overdue')}
+              className="bg-slate-950/90 border border-rose-500/40 hover:border-rose-400 p-2.5 sm:p-3 rounded-xl sm:rounded-2xl cursor-pointer transition-all hover:bg-slate-900 group shadow-md flex flex-col justify-between space-y-1.5 sm:space-y-2 relative overflow-hidden"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] sm:text-xs font-extrabold text-rose-400">
+                <span className="flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-400 animate-pulse shrink-0" />
+                  <span className="truncate">تأخير المواصلة</span>
+                </span>
+                <span className="text-[8px] sm:text-[10px] bg-rose-950 text-rose-300 border border-rose-800/80 px-1.5 py-0.5 rounded-full font-mono font-bold shrink-0">
+                  غياب ⚠️
+                </span>
+              </div>
+
+              <div className="flex items-baseline justify-between py-0.5">
+                <span className="text-xl sm:text-2xl font-black text-rose-400 font-mono">{dailyMovementStats.overdueAbsentSoldiers.length}</span>
+                <span className="text-[10px] sm:text-xs text-rose-300/90 font-bold">فرد</span>
+              </div>
+
+              <p className="text-[9px] sm:text-[10px] text-slate-400 line-clamp-1 hidden xs:block">
+                غياب تلقائي بعد الإجازة
+              </p>
+
+              <div className="pt-1.5 border-t border-slate-800/80 flex justify-between items-center text-[9px] sm:text-[10px]">
+                <span className="text-slate-500 hidden sm:inline">متابعة</span>
+                <span className="text-rose-400 font-extrabold flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
+                  <span>التسديد</span>
+                  <span>←</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex overflow-x-auto whitespace-nowrap scrollbar-none gap-2 sm:gap-2.5 pb-0.5 snap-x">
+            {/* Card 1: Readiness */}
+            <div 
+              onClick={() => {
+                const targetDate = statsToday.targetDate;
+                const activeSoldierIds = new Set(activeSoldiers.map(s => s.id));
+                const dayRecordsMap = new Map(attendance.filter(a => a.date === targetDate && activeSoldierIds.has(a.soldierId)).map(a => [a.soldierId, normalizeStatusCode(a.statusCode)]));
+                
+                const soldierList = activeSoldiers.map(s => {
+                  const st = dayRecordsMap.get(s.id) || 'unrecorded';
+                  const unit = scopedUnits.find(u => u.id === s.unitId);
+                  return {
+                    ...s,
+                    unitName: unit?.name || 'غير محدد',
+                    statusCode: st,
+                    recordDate: targetDate
+                  };
+                });
+
+                setDrillDownStatusFilter('all');
+                setDrillDownSearch('');
+                setDrillDownModal({
+                  title: `موقف الجاهزية العامة اليومية (${targetDate})`,
+                  categoryName: 'الجاهزية_العامة',
+                  count: activeSoldiers.length,
+                  type: 'soldiers',
+                  color: 'emerald',
+                  items: soldierList
+                });
+              }}
+              className="bg-slate-950/80 border border-slate-800 hover:border-emerald-500/50 p-2 sm:p-2.5 rounded-lg sm:rounded-xl min-w-[120px] sm:flex-1 shrink-0 snap-start flex flex-col justify-between cursor-pointer transition-all hover:bg-slate-900/90 group"
+              title="اضغط لعرض تفاصيل الجاهزية الكلية"
+            >
+              <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold mb-1">
+                <span className="group-hover:text-emerald-300 transition-colors">الجاهزية العامة</span>
+                <Shield className="w-3.5 h-3.5 text-emerald-400" />
+              </div>
+              <div className="flex items-baseline justify-between gap-1">
+                <span className="text-sm sm:text-base font-black text-white font-mono">{statsToday.readinessRate}%</span>
+                <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md ${
+                  statsToday.readinessRate >= 80 ? 'bg-emerald-500/20 text-emerald-300' :
+                  statsToday.readinessRate >= 60 ? 'bg-amber-500/20 text-amber-300' :
+                  'bg-rose-500/20 text-rose-300'
+                }`}>
+                  {statsToday.readinessRate >= 80 ? 'عالية' : statsToday.readinessRate >= 60 ? 'متوسطة' : 'منخفضة'}
+                </span>
+              </div>
+              <div className="w-full bg-slate-800 rounded-full h-1 mt-1 overflow-hidden">
+                <div 
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    statsToday.readinessRate >= 80 ? 'bg-emerald-500' :
+                    statsToday.readinessRate >= 60 ? 'bg-amber-500' :
+                    'bg-rose-500'
+                  }`} 
+                  style={{ width: `${statsToday.readinessRate}%` }}
+                ></div>
+              </div>
+            </div>
+
+            {/* Card 2: Present Strength */}
+            <div 
+              onClick={() => {
+                const targetDate = statsToday.targetDate;
+                const activeSoldierIds = new Set(activeSoldiers.map(s => s.id));
+                const dayRecordsMap = new Map(attendance.filter(a => a.date === targetDate && activeSoldierIds.has(a.soldierId)).map(a => [a.soldierId, normalizeStatusCode(a.statusCode)]));
+                
+                const presentSoldiers = activeSoldiers.filter(s => {
+                  const st = dayRecordsMap.get(s.id);
+                  return st === 'ح' || st === 'ن';
+                }).map(s => {
+                  const unit = scopedUnits.find(u => u.id === s.unitId);
+                  return {
+                    ...s,
+                    unitName: unit?.name || 'غير محدد',
+                    statusCode: dayRecordsMap.get(s.id) || 'ح',
+                    recordDate: targetDate
+                  };
+                });
+
+                setDrillDownStatusFilter('all');
+                setDrillDownSearch('');
+                setDrillDownModal({
+                  title: `قائمة الحضور الفعلي بالميدان (${targetDate})`,
+                  categoryName: 'الحضور_الفعلي',
+                  count: presentSoldiers.length,
+                  type: 'soldiers',
+                  color: 'emerald',
+                  items: presentSoldiers
+                });
+              }}
+              className="bg-slate-950/80 border border-slate-800 hover:border-emerald-500/50 p-2 sm:p-2.5 rounded-lg sm:rounded-xl min-w-[120px] sm:flex-1 shrink-0 snap-start flex flex-col justify-between cursor-pointer transition-all hover:bg-slate-900/90 group"
+              title="اضغط لعرض الأفراد الحاضرين"
+            >
+              <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold mb-1">
+                <span className="group-hover:text-emerald-300 transition-colors">الحضور الفعلي</span>
+                <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
+              </div>
+              <div className="flex items-baseline justify-between gap-1">
+                <span className="text-sm sm:text-base font-black text-emerald-400 font-mono">{statsToday.h}</span>
+                <span className="text-[10px] text-slate-400 font-mono">من {totalStrength}</span>
+              </div>
+              <span className="text-[9px] text-emerald-300/80 font-bold mt-0.5">منتسب متواجد بالميدان</span>
+            </div>
+
+            {/* Card 3: Missions & Duty */}
+            <div 
+              onClick={() => {
+                const targetDate = statsToday.targetDate;
+                const activeSoldierIds = new Set(activeSoldiers.map(s => s.id));
+                const dayRecordsMap = new Map(attendance.filter(a => a.date === targetDate && activeSoldierIds.has(a.soldierId)).map(a => [a.soldierId, normalizeStatusCode(a.statusCode)]));
+                
+                const missionSoldiers = activeSoldiers.filter(s => dayRecordsMap.get(s.id) === 'م').map(s => {
+                  const unit = scopedUnits.find(u => u.id === s.unitId);
+                  return {
+                    ...s,
+                    unitName: unit?.name || 'غير محدد',
+                    statusCode: 'م',
+                    recordDate: targetDate
+                  };
+                });
+
+                setDrillDownStatusFilter('all');
+                setDrillDownSearch('');
+                setDrillDownModal({
+                  title: `قائمة المكلفين بمهمات رسمية خارجية (${targetDate})`,
+                  categoryName: 'المهمات_الرسمية',
+                  count: missionSoldiers.length,
+                  type: 'soldiers',
+                  color: 'purple',
+                  items: missionSoldiers
+                });
+              }}
+              className="bg-slate-950/80 border border-slate-800 hover:border-purple-500/50 p-2 sm:p-2.5 rounded-lg sm:rounded-xl min-w-[120px] sm:flex-1 shrink-0 snap-start flex flex-col justify-between cursor-pointer transition-all hover:bg-slate-900/90 group"
+              title="اضغط لعرض الأفراد بالمهمات الرسمية"
+            >
+              <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold mb-1">
+                <span className="group-hover:text-purple-300 transition-colors">المهمات الرسمية</span>
+                <Briefcase className="w-3.5 h-3.5 text-purple-400" />
+              </div>
+              <div className="flex items-baseline justify-between gap-1">
+                <span className="text-base font-black text-purple-400 font-mono">{statsToday.m}</span>
+                <span className="text-[9px] text-purple-300/80 font-bold">فرد مكلف</span>
+              </div>
+              <span className="text-[9px] text-slate-400 font-bold mt-1">تأمين ومهمات خارجية</span>
+            </div>
+
+            {/* Card 4: On Leave & Medical */}
+            <div 
+              onClick={() => {
+                const targetDate = statsToday.targetDate;
+                const activeSoldierIds = new Set(activeSoldiers.map(s => s.id));
+                const dayRecordsMap = new Map(attendance.filter(a => a.date === targetDate && activeSoldierIds.has(a.soldierId)).map(a => [a.soldierId, normalizeStatusCode(a.statusCode)]));
+                
+                const leaveSoldiers = activeSoldiers.filter(s => {
+                  const st = dayRecordsMap.get(s.id);
+                  return st === 'إ' || st === 'ع';
+                }).map(s => {
+                  const unit = scopedUnits.find(u => u.id === s.unitId);
+                  return {
+                    ...s,
+                    unitName: unit?.name || 'غير محدد',
+                    statusCode: dayRecordsMap.get(s.id) || 'إ',
+                    recordDate: targetDate
+                  };
+                });
+
+                setDrillDownStatusFilter('all');
+                setDrillDownSearch('');
+                setDrillDownModal({
+                  title: `قائمة الإجازات الرسمية والأعذار المرضية (${targetDate})`,
+                  categoryName: 'الإجازات_والمرضيات',
+                  count: leaveSoldiers.length,
+                  type: 'soldiers',
+                  color: 'blue',
+                  items: leaveSoldiers
+                });
+              }}
+              className="bg-slate-950/80 border border-slate-800 hover:border-blue-500/50 p-2 sm:p-2.5 rounded-lg sm:rounded-xl min-w-[120px] sm:flex-1 shrink-0 snap-start flex flex-col justify-between cursor-pointer transition-all hover:bg-slate-900/90 group"
+              title="اضغط لعرض الأفراد في الإجازات والمرضيات"
+            >
+              <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold mb-1">
+                <span className="group-hover:text-blue-300 transition-colors">الإجازات والمرضيات</span>
+                <Plane className="w-3.5 h-3.5 text-blue-400" />
+              </div>
+              <div className="flex items-baseline justify-between gap-1">
+                <span className="text-sm sm:text-base font-black text-blue-400 font-mono">{statsToday.i + statsToday.e}</span>
+                <span className="text-[9px] text-blue-300/80 font-bold">إجازات/مرضيات</span>
+              </div>
+              <span className="text-[9px] text-slate-400 font-bold mt-0.5">
+                {statsToday.e > 0 ? `إجازة: ${statsToday.i} | مرض/عذر: ${statsToday.e}` : 'إجازات سنوية ومرضية'}
+              </span>
+            </div>
+
+            {/* Card 5: Absences */}
+            <div 
+              onClick={() => {
+                const targetDate = statsToday.targetDate;
+                const activeSoldierIds = new Set(activeSoldiers.map(s => s.id));
+                const dayRecordsMap = new Map(attendance.filter(a => a.date === targetDate && activeSoldierIds.has(a.soldierId)).map(a => [a.soldierId, normalizeStatusCode(a.statusCode)]));
+                
+                const absentSoldiers = activeSoldiers.filter(s => dayRecordsMap.get(s.id) === 'غ').map(s => {
+                  const unit = scopedUnits.find(u => u.id === s.unitId);
+                  return {
+                    ...s,
+                    unitName: unit?.name || 'غير محدد',
+                    statusCode: 'غ',
+                    recordDate: targetDate
+                  };
+                });
+
+                setDrillDownStatusFilter('all');
+                setDrillDownSearch('');
+                setDrillDownModal({
+                  title: `قائمة حالات الغياب بدون عذر (${targetDate})`,
+                  categoryName: 'حالات_الغياب',
+                  count: absentSoldiers.length,
+                  type: 'soldiers',
+                  color: 'rose',
+                  items: absentSoldiers
+                });
+              }}
+              className="bg-slate-950/80 border border-slate-800 hover:border-rose-500/50 p-2 sm:p-2.5 rounded-lg sm:rounded-xl min-w-[120px] sm:flex-1 shrink-0 snap-start flex flex-col justify-between cursor-pointer transition-all hover:bg-slate-900/90 group"
+              title="اضغط لعرض الأفراد الغائبين"
+            >
+              <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold mb-1">
+                <span className="group-hover:text-rose-300 transition-colors">حالات الغياب</span>
+                <XCircle className="w-3.5 h-3.5 text-rose-400" />
+              </div>
+              <div className="flex items-baseline justify-between gap-1">
+                <span className="text-base font-black text-rose-400 font-mono">{statsToday.g}</span>
+                <span className={`text-[9px] font-bold ${statsToday.g > 0 ? 'text-rose-300' : 'text-slate-500'}`}>
+                  {statsToday.g > 0 ? 'يتطلب متابعة' : 'لا يوجد غياب'}
+                </span>
+              </div>
+              <span className="text-[9px] text-slate-400 font-bold mt-1">بدون عذر معتمد</span>
+            </div>
+
+            {/* Card 6: Unrecorded / Pending Roll-call */}
+            {statsToday.unrecorded > 0 && (
+              <div 
+                onClick={() => {
+                  const targetDate = statsToday.targetDate;
+                  const activeSoldierIds = new Set(activeSoldiers.map(s => s.id));
+                  const dayRecordsMap = new Map(attendance.filter(a => a.date === targetDate && activeSoldierIds.has(a.soldierId)).map(a => [a.soldierId, normalizeStatusCode(a.statusCode)]));
+                  
+                  const unrecordedSoldiers = activeSoldiers.filter(s => !dayRecordsMap.has(s.id)).map(s => {
+                    const unit = scopedUnits.find(u => u.id === s.unitId);
+                    return {
+                      ...s,
+                      unitName: unit?.name || 'غير محدد',
+                      statusCode: 'unrecorded',
+                      recordDate: targetDate
+                    };
+                  });
+
+                  setDrillDownStatusFilter('all');
+                  setDrillDownSearch('');
+                  setDrillDownModal({
+                    title: `قائمة الأفراد الذين لم يتم تحضيرهم بعد (${targetDate})`,
+                    categoryName: 'غير_المحضرين',
+                    count: unrecordedSoldiers.length,
+                    type: 'soldiers',
+                    color: 'amber',
+                    items: unrecordedSoldiers
+                  });
+                }}
+                className="bg-slate-950/80 border border-amber-500/40 hover:border-amber-400 p-2 sm:p-2.5 rounded-lg sm:rounded-xl min-w-[120px] sm:flex-1 shrink-0 snap-start flex flex-col justify-between cursor-pointer transition-all hover:bg-slate-900/90 group"
+                title="اضغط لعرض الأفراد الذين لم يُحضروا بعد"
+              >
+                <div className="flex justify-between items-center text-[10px] text-slate-400 font-bold mb-1">
+                  <span className="group-hover:text-amber-300 transition-colors">لم يحضر بعد</span>
+                  <Clock className="w-3.5 h-3.5 text-amber-400" />
+                </div>
+                <div className="flex items-baseline justify-between gap-1">
+                  <span className="text-base font-black text-amber-400 font-mono">{statsToday.unrecorded}</span>
+                  <span className="text-[9px] text-amber-300/80 font-bold">قيد التحضير</span>
+                </div>
+                <span className="text-[9px] text-slate-400 font-bold mt-1">تنسيق الكشوفات</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+
+
+      {/* Interactive Tactical Launcher Grid Launchpad (Header Bar Removed - 3 Apps per Row on Mobile) */}
+      <div className="bg-white p-2 sm:p-3.5 rounded-2xl sm:rounded-3xl border border-slate-200/80 shadow-[0_2px_16px_rgba(0,0,0,0.015)] relative overflow-hidden font-sans select-none">
+        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-10 gap-1.5 sm:gap-2.5 relative z-10">
           
           {/* TILE 1: Roll-Call & Attendance App */}
           <motion.button 
-            whileHover={{ y: -4, scale: 1.015, boxShadow: '0 12px 24px -10px rgba(16,185,129,0.18)' }}
-            whileTap={{ scale: 0.97 }}
+            whileHover={{ y: -2, scale: 1.015, boxShadow: '0 8px 20px -8px rgba(16,185,129,0.2)' }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => setSelectedLauncherInfo({ 
               id: 'attendance', 
               title: 'دفتر الحضور والغياب اليومي', 
               badge: 'جاهزية وتواجد القوات', 
               description: 'نظام دفتر الحضور والتحقق التكتيكي اليومي. يتيح تتبع ومراقبة تواجد وغياب وتفاصيل إجازات وميدانيات العناصر والضباط ومزامنتها للقيادة لتحديد مستويات التأهب.', 
               color: 'emerald', 
-              icon: <Calendar className="w-10 h-10 text-emerald-500" />, 
+              icon: <Calendar className="w-9 h-9 text-emerald-500" />, 
               statsLabel: 'القوات المتواجدة اليوم', 
               statsValue: `${statsToday.h} حاضر`, 
               detailsList: [
@@ -1572,30 +2301,30 @@ export default function Dashboard({
                 onNavigate && onNavigate('attendance'); 
               } 
             })}
-            className="flex flex-col items-center justify-between p-3 pb-2.5 rounded-2xl bg-white hover:bg-slate-50/40 border border-slate-200/80 shadow-[0_2px_8px_rgba(0,0,0,0.02)] transition-all duration-300 cursor-pointer group relative h-[126px] w-full overflow-hidden"
+            className="flex flex-col items-center justify-between p-2 pb-1.5 rounded-xl sm:rounded-2xl bg-gradient-to-b from-white to-slate-50/30 hover:to-emerald-50/20 border border-slate-200/80 shadow-[0_2px_6px_rgba(0,0,0,0.015)] transition-all duration-300 cursor-pointer group relative h-[102px] sm:h-[108px] w-full overflow-hidden"
             title="حضور وجاهزية القوات"
           >
-            <div className="absolute top-0 inset-x-0 h-[3.5px] bg-emerald-500 rounded-t-2xl transition-all duration-300 group-hover:h-[5px]" />
-            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center border bg-emerald-50/85 text-emerald-650 border-emerald-100/50 group-hover:bg-emerald-500 group-hover:text-white transition-all duration-300 shadow-xs group-hover:scale-105">
-              <Calendar className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-3" />
+            <div className="absolute top-0 inset-x-0 h-[2.5px] bg-emerald-500 rounded-t-2xl transition-all duration-300 group-hover:h-[4px]" />
+            <div className="w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border bg-gradient-to-br from-emerald-50 to-emerald-100/60 text-emerald-600 border-emerald-200/50 group-hover:bg-emerald-500 group-hover:text-white group-hover:border-emerald-500 transition-all duration-300 shadow-2xs group-hover:scale-105">
+              <Calendar className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
             </div>
-            <span className="text-[10px] sm:text-[11px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight mt-1 truncate w-full px-1">دفتر الحضور</span>
-            <span className="px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded-lg border bg-emerald-50/60 text-emerald-700 border-emerald-100/30 group-hover:bg-emerald-100/80 group-hover:text-emerald-900 transition-all duration-300 truncate max-w-full">
+            <span className="text-[9.5px] sm:text-[10.5px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight truncate w-full px-0.5">دفتر الحضور</span>
+            <span className="px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border bg-emerald-50/70 text-emerald-700 border-emerald-200/40 group-hover:bg-emerald-100 group-hover:text-emerald-900 transition-all duration-300 truncate max-w-full">
               {statsToday.h} حاضر
             </span>
           </motion.button>
 
           {/* TILE 2: Military Registry & Cards App */}
           <motion.button 
-            whileHover={{ y: -4, scale: 1.015, boxShadow: '0 12px 24px -10px rgba(14,165,233,0.18)' }}
-            whileTap={{ scale: 0.97 }}
+            whileHover={{ y: -2, scale: 1.015, boxShadow: '0 8px 20px -8px rgba(14,165,233,0.2)' }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => setSelectedLauncherInfo({ 
               id: 'soldiers', 
               title: 'المنتسبين والبطاقات التعريفية', 
               badge: 'أرشيف الهويات والسير الذاتية', 
               description: 'السجل العسكري الكامل والموحد للأفراد والضباط. يسهل عملية البحث، الأرشفة الإلكترونية، تعديل الهويات، وطباعة بطاقات الميدان التكتيكية والهوية التعريفية الموحدة.', 
               color: 'sky', 
-              icon: <Users className="w-10 h-10 text-sky-500" />, 
+              icon: <Users className="w-9 h-9 text-sky-500" />, 
               statsLabel: 'إجمالي القوة المسجلة', 
               statsValue: `${totalStrength} فرد بالخدمة`, 
               detailsList: [
@@ -1608,30 +2337,30 @@ export default function Dashboard({
                 onNavigate && onNavigate('org_manager'); 
               } 
             })}
-            className="flex flex-col items-center justify-between p-3 pb-2.5 rounded-2xl bg-white hover:bg-slate-50/40 border border-slate-200/80 shadow-[0_2px_8px_rgba(0,0,0,0.02)] transition-all duration-300 cursor-pointer group relative h-[126px] w-full overflow-hidden"
+            className="flex flex-col items-center justify-between p-2 pb-1.5 rounded-xl sm:rounded-2xl bg-gradient-to-b from-white to-slate-50/30 hover:to-sky-50/20 border border-slate-200/80 shadow-[0_2px_6px_rgba(0,0,0,0.015)] transition-all duration-300 cursor-pointer group relative h-[102px] sm:h-[108px] w-full overflow-hidden"
             title="الأفراد والبطاقات التعريفية"
           >
-            <div className="absolute top-0 inset-x-0 h-[3.5px] bg-sky-500 rounded-t-2xl transition-all duration-300 group-hover:h-[5px]" />
-            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center border bg-sky-50/85 text-sky-650 border-sky-100/50 group-hover:bg-sky-500 group-hover:text-white transition-all duration-300 shadow-xs group-hover:scale-105">
-              <Users className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-3" />
+            <div className="absolute top-0 inset-x-0 h-[2.5px] bg-sky-500 rounded-t-2xl transition-all duration-300 group-hover:h-[4px]" />
+            <div className="w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border bg-gradient-to-br from-sky-50 to-sky-100/60 text-sky-600 border-sky-200/50 group-hover:bg-sky-500 group-hover:text-white group-hover:border-sky-500 transition-all duration-300 shadow-2xs group-hover:scale-105">
+              <Users className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
             </div>
-            <span className="text-[10px] sm:text-[11px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight mt-1 truncate w-full px-1">المنتسبين والبطاقات</span>
-            <span className="px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded-lg border bg-sky-50/60 text-sky-700 border-sky-100/30 group-hover:bg-sky-100/80 group-hover:text-sky-900 transition-all duration-300 truncate max-w-full">
+            <span className="text-[9.5px] sm:text-[10.5px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight truncate w-full px-0.5">المنتسبين والبطاقات</span>
+            <span className="px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border bg-sky-50/70 text-sky-700 border-sky-200/40 group-hover:bg-sky-100 group-hover:text-sky-900 transition-all duration-300 truncate max-w-full">
               {totalStrength} فرد
             </span>
           </motion.button>
 
           {/* TILE 3: Force Structure */}
           <motion.button 
-            whileHover={{ y: -4, scale: 1.015, boxShadow: '0 12px 24px -10px rgba(20,184,166,0.18)' }}
-            whileTap={{ scale: 0.97 }}
+            whileHover={{ y: -2, scale: 1.015, boxShadow: '0 8px 20px -8px rgba(20,184,166,0.2)' }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => setSelectedLauncherInfo({ 
               id: 'structure', 
               title: 'هيكلية وتشكيل الوحدات', 
               badge: 'ميزان القوى البشرية والشعب', 
               description: 'لوحة التحكم والتشكيل الهرمي لوحدات اللواء والكتائب التابعة. تتيح لقائد التشكيل تقسيم القوات وتوزيع نقاط الحراسة وتحديد الكتائب والسرايا التابعة.', 
               color: 'teal', 
-              icon: <Shield className="w-10 h-10 text-teal-500" />, 
+              icon: <Building2 className="w-9 h-9 text-teal-500" />, 
               statsLabel: 'إجمالي الشعب القائمة', 
               statsValue: `${units.length} شعبة وتشكيل`, 
               detailsList: [
@@ -1644,30 +2373,30 @@ export default function Dashboard({
                 onNavigate && onNavigate('org_manager'); 
               } 
             })}
-            className="flex flex-col items-center justify-between p-3 pb-2.5 rounded-2xl bg-white hover:bg-slate-50/40 border border-slate-200/80 shadow-[0_2px_8px_rgba(0,0,0,0.02)] transition-all duration-300 cursor-pointer group relative h-[126px] w-full overflow-hidden"
+            className="flex flex-col items-center justify-between p-2 pb-1.5 rounded-xl sm:rounded-2xl bg-gradient-to-b from-white to-slate-50/30 hover:to-teal-50/20 border border-slate-200/80 shadow-[0_2px_6px_rgba(0,0,0,0.015)] transition-all duration-300 cursor-pointer group relative h-[102px] sm:h-[108px] w-full overflow-hidden"
             title="هيكلية وتشكيل الوحدات"
           >
-            <div className="absolute top-0 inset-x-0 h-[3.5px] bg-teal-500 rounded-t-2xl transition-all duration-300 group-hover:h-[5px]" />
-            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center border bg-teal-50/85 text-teal-650 border-teal-100/50 group-hover:bg-teal-500 group-hover:text-white transition-all duration-300 shadow-xs group-hover:scale-105">
-              <Shield className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-3" />
+            <div className="absolute top-0 inset-x-0 h-[2.5px] bg-teal-500 rounded-t-2xl transition-all duration-300 group-hover:h-[4px]" />
+            <div className="w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border bg-gradient-to-br from-teal-50 to-teal-100/60 text-teal-600 border-teal-200/50 group-hover:bg-teal-500 group-hover:text-white group-hover:border-teal-500 transition-all duration-300 shadow-2xs group-hover:scale-105">
+              <Building2 className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
             </div>
-            <span className="text-[10px] sm:text-[11px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight mt-1 truncate w-full px-1">هيكلية الوحدات</span>
-            <span className="px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded-lg border bg-teal-50/60 text-teal-700 border-teal-100/30 group-hover:bg-teal-100/80 group-hover:text-teal-900 transition-all duration-300 truncate max-w-full">
+            <span className="text-[9.5px] sm:text-[10.5px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight truncate w-full px-0.5">هيكلية الوحدات</span>
+            <span className="px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border bg-teal-50/70 text-teal-700 border-teal-200/40 group-hover:bg-teal-100 group-hover:text-teal-900 transition-all duration-300 truncate max-w-full">
               {units.length} شعبة
             </span>
           </motion.button>
 
           {/* TILE 4: Readiness Radar App */}
           <motion.button 
-            whileHover={{ y: -4, scale: 1.015, boxShadow: '0 12px 24px -10px rgba(16,185,129,0.18)' }}
-            whileTap={{ scale: 0.97 }}
+            whileHover={{ y: -2, scale: 1.015, boxShadow: '0 8px 20px -8px rgba(16,185,129,0.2)' }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => setSelectedLauncherInfo({ 
               id: 'units_readiness', 
               title: 'مصفوفة الجاهزية والاستعداد', 
               badge: 'مؤشرات الكفاءة والجاهزية القتالية', 
               description: 'لوحة متقدمة لمراقبة نسب الاستنفار العسكري ومستويات تواجد القوة الفعلية. تقوم المصفوفة بحساب آلي دقيق لنسب الاستعداد القتالي بناءً على حضور المنتسبين.', 
               color: 'emerald', 
-              icon: <TrendingUp className="w-10 h-10 text-emerald-500" />, 
+              icon: <Activity className="w-9 h-9 text-emerald-500" />, 
               statsLabel: 'معدل الجاهزية العام للواء', 
               statsValue: `${statsToday.readinessRate}% جاهز`, 
               detailsList: [
@@ -1677,39 +2406,39 @@ export default function Dashboard({
               ], 
               onConfirm: () => handleScrollToWorkspace('units_readiness') 
             })}
-            className={`flex flex-col items-center justify-between p-3 pb-2.5 rounded-2xl transition-all duration-300 cursor-pointer group relative h-[126px] w-full border overflow-hidden ${
+            className={`flex flex-col items-center justify-between p-2 pb-1.5 rounded-xl sm:rounded-2xl transition-all duration-300 cursor-pointer group relative h-[102px] sm:h-[108px] w-full border overflow-hidden ${
               activeSubTab === 'units_readiness' 
-                ? 'bg-gradient-to-br from-white to-emerald-50/35 border-emerald-500 shadow-[0_4px_16px_rgba(16,185,129,0.08)] ring-1 ring-emerald-500/10' 
-                : 'bg-white border-slate-200/80 shadow-[0_2px_8px_rgba(0,0,0,0.02)] hover:bg-slate-50/40'
+                ? 'bg-gradient-to-br from-white to-emerald-50/40 border-emerald-500 shadow-[0_4px_12px_rgba(16,185,129,0.1)] ring-1 ring-emerald-500/10' 
+                : 'bg-gradient-to-b from-white to-slate-50/30 border-slate-200/80 shadow-[0_2px_6px_rgba(0,0,0,0.015)] hover:to-emerald-50/20'
             }`}
             title="مصفوفة جاهزية الكتائب"
           >
             {activeSubTab === 'units_readiness' && (
-              <div className="absolute top-1.5 left-1.5 flex items-center gap-1 bg-emerald-100/90 px-1 py-0.5 rounded-md border border-emerald-200 shadow-2xs z-20 animate-scale-in">
+              <div className="absolute top-0.5 left-0.5 flex items-center gap-0.5 bg-emerald-100/90 px-1 py-0.2 rounded border border-emerald-200 z-20">
                 <span className="relative flex h-1 w-1">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-1 w-1 bg-emerald-500"></span>
                 </span>
-                <span className="text-[7px] font-black text-emerald-800">معروض</span>
+                <span className="text-[6.5px] font-black text-emerald-800">معروض</span>
               </div>
             )}
-            <div className={`absolute top-0 inset-x-0 h-[3.5px] bg-emerald-500 rounded-t-2xl transition-all duration-300 ${
-              activeSubTab === 'units_readiness' ? 'h-[5px]' : 'group-hover:h-[5px]'
+            <div className={`absolute top-0 inset-x-0 h-[2.5px] bg-emerald-500 rounded-t-2xl transition-all duration-300 ${
+              activeSubTab === 'units_readiness' ? 'h-[4px]' : 'group-hover:h-[4px]'
             }`} />
-            <div className={`w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center border transition-all duration-300 shadow-xs ${
+            <div className={`w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border transition-all duration-300 shadow-2xs ${
               activeSubTab === 'units_readiness'
-                ? 'bg-emerald-550 text-white border-transparent scale-105 shadow-emerald-100/50'
-                : 'bg-emerald-50/85 text-emerald-650 border-emerald-100/50 group-hover:bg-emerald-500 group-hover:text-white group-hover:scale-105'
+                ? 'bg-emerald-600 text-white border-transparent scale-105 shadow-emerald-200'
+                : 'bg-gradient-to-br from-emerald-50 to-emerald-100/60 text-emerald-600 border-emerald-200/50 group-hover:bg-emerald-500 group-hover:text-white group-hover:border-emerald-500 group-hover:scale-105'
             }`}>
-              <TrendingUp className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-3" />
+              <Activity className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
             </div>
-            <span className={`text-[10px] sm:text-[11px] text-center leading-tight mt-1 truncate w-full px-1 transition-colors ${
-              activeSubTab === 'units_readiness' ? 'font-black text-emerald-950' : 'font-bold text-slate-800 group-hover:text-slate-950'
+            <span className={`text-[9.5px] sm:text-[10.5px] text-center leading-tight truncate w-full px-0.5 transition-colors ${
+              activeSubTab === 'units_readiness' ? 'font-black text-emerald-950' : 'font-black text-slate-800 group-hover:text-slate-950'
             }`}>مصفوفة الجاهزية</span>
-            <span className={`px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded-lg border transition-all duration-300 truncate max-w-full ${
+            <span className={`px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border transition-all duration-300 truncate max-w-full ${
               activeSubTab === 'units_readiness'
-                ? 'bg-emerald-100/80 text-emerald-900 border-emerald-200'
-                : 'bg-emerald-50/60 text-emerald-700 border-emerald-100/30 group-hover:bg-emerald-100/80 group-hover:text-emerald-900'
+                ? 'bg-emerald-100/90 text-emerald-900 border-emerald-300/80'
+                : 'bg-emerald-50/70 text-emerald-700 border-emerald-200/40 group-hover:bg-emerald-100 group-hover:text-emerald-900'
             }`}>
               {statsToday.readinessRate}% جاهز
             </span>
@@ -1717,15 +2446,15 @@ export default function Dashboard({
 
           {/* TILE 5: Operations Desk & Approvals App */}
           <motion.button 
-            whileHover={{ y: -4, scale: 1.015, boxShadow: '0 12px 24px -10px rgba(244,63,94,0.18)' }}
-            whileTap={{ scale: 0.97 }}
+            whileHover={{ y: -2, scale: 1.015, boxShadow: '0 8px 20px -8px rgba(244,63,94,0.2)' }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => setSelectedLauncherInfo({ 
               id: 'ops_center', 
               title: 'جناح الحركات والعمليات اليومية', 
               badge: 'توجيهات الحركات والموافقة على الأوامر', 
               description: 'مركز تنسيق ومتابعة قرارات القادة لطلبات الإجازات الميدانية، المرضية، الطارئة والتكاليف الرسمية الصادرة من الوحدات ومعالجتها بصورة فورية بموثوقية كاملة.', 
               color: 'rose', 
-              icon: <Radio className="w-10 h-10 text-rose-500" />, 
+              icon: <Radio className="w-9 h-9 text-rose-500" />, 
               statsLabel: 'الطلبات العاجلة بانتظار الاعتماد', 
               statsValue: `${pendingApprovals.length} معلق قيد المراجعة`, 
               detailsList: [
@@ -1735,39 +2464,39 @@ export default function Dashboard({
               ], 
               onConfirm: () => handleScrollToWorkspace('ops_center') 
             })}
-            className={`flex flex-col items-center justify-between p-3 pb-2.5 rounded-2xl transition-all duration-300 cursor-pointer group relative h-[126px] w-full border overflow-hidden ${
+            className={`flex flex-col items-center justify-between p-2 pb-1.5 rounded-xl sm:rounded-2xl transition-all duration-300 cursor-pointer group relative h-[102px] sm:h-[108px] w-full border overflow-hidden ${
               activeSubTab === 'ops_center' 
-                ? 'bg-gradient-to-br from-white to-rose-50/35 border-rose-500 shadow-[0_4px_16px_rgba(244,63,94,0.08)] ring-1 ring-rose-500/10' 
-                : 'bg-white border-slate-200/80 shadow-[0_2px_8px_rgba(0,0,0,0.02)] hover:bg-slate-50/40'
+                ? 'bg-gradient-to-br from-white to-rose-50/40 border-rose-500 shadow-[0_4px_12px_rgba(244,63,94,0.1)] ring-1 ring-rose-500/10' 
+                : 'bg-gradient-to-b from-white to-slate-50/30 border-slate-200/80 shadow-[0_2px_6px_rgba(0,0,0,0.015)] hover:to-rose-50/20'
             }`}
             title="مركز العمليات وجناح الحركات"
           >
             {activeSubTab === 'ops_center' && (
-              <div className="absolute top-1.5 left-1.5 flex items-center gap-1 bg-rose-100/90 px-1 py-0.5 rounded-md border border-rose-200 shadow-2xs z-20 animate-scale-in">
+              <div className="absolute top-0.5 left-0.5 flex items-center gap-0.5 bg-rose-100/90 px-1 py-0.2 rounded border border-rose-200 z-20">
                 <span className="relative flex h-1 w-1">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-1 w-1 bg-rose-500"></span>
                 </span>
-                <span className="text-[7px] font-black text-rose-800">معروض</span>
+                <span className="text-[6.5px] font-black text-rose-800">معروض</span>
               </div>
             )}
-            <div className={`absolute top-0 inset-x-0 h-[3.5px] bg-rose-500 rounded-t-2xl transition-all duration-300 ${
-              activeSubTab === 'ops_center' ? 'h-[5px]' : 'group-hover:h-[5px]'
+            <div className={`absolute top-0 inset-x-0 h-[2.5px] bg-rose-500 rounded-t-2xl transition-all duration-300 ${
+              activeSubTab === 'ops_center' ? 'h-[4px]' : 'group-hover:h-[4px]'
             }`} />
-            <div className={`w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center border transition-all duration-300 shadow-xs ${
+            <div className={`w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border transition-all duration-300 shadow-2xs ${
               activeSubTab === 'ops_center'
-                ? 'bg-rose-550 text-white border-transparent scale-105 shadow-rose-100/50'
-                : 'bg-rose-50/85 text-rose-650 border-rose-100/50 group-hover:bg-rose-500 group-hover:text-white group-hover:scale-105'
+                ? 'bg-rose-600 text-white border-transparent scale-105 shadow-rose-200'
+                : 'bg-gradient-to-br from-rose-50 to-rose-100/60 text-rose-600 border-rose-200/50 group-hover:bg-rose-500 group-hover:text-white group-hover:border-rose-500 group-hover:scale-105'
             }`}>
-              <Radio className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-3" />
+              <Radio className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
             </div>
-            <span className={`text-[10px] sm:text-[11px] text-center leading-tight mt-1 truncate w-full px-1 transition-colors ${
-              activeSubTab === 'ops_center' ? 'font-black text-rose-950' : 'font-bold text-slate-800 group-hover:text-slate-950'
+            <span className={`text-[9.5px] sm:text-[10.5px] text-center leading-tight truncate w-full px-0.5 transition-colors ${
+              activeSubTab === 'ops_center' ? 'font-black text-rose-950' : 'font-black text-slate-800 group-hover:text-slate-950'
             }`}>جناح الحركات</span>
-            <span className={`px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded-lg border transition-all duration-300 truncate max-w-full ${
+            <span className={`px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border transition-all duration-300 truncate max-w-full ${
               activeSubTab === 'ops_center'
-                ? 'bg-rose-100/80 text-rose-900 border-rose-200'
-                : 'bg-rose-50/60 text-rose-700 border-rose-100/30 group-hover:bg-rose-100/80 group-hover:text-rose-900'
+                ? 'bg-rose-100/90 text-rose-900 border-rose-300/80'
+                : 'bg-rose-50/70 text-rose-700 border-rose-200/40 group-hover:bg-rose-100 group-hover:text-rose-900'
             }`}>
               {pendingApprovals.length} معلق
             </span>
@@ -1775,15 +2504,15 @@ export default function Dashboard({
 
           {/* TILE 6: Command Decisions & Transfer Orders */}
           <motion.button 
-            whileHover={{ y: -4, scale: 1.015, boxShadow: '0 12px 24px -10px rgba(168,85,247,0.18)' }}
-            whileTap={{ scale: 0.97 }}
+            whileHover={{ y: -2, scale: 1.015, boxShadow: '0 8px 20px -8px rgba(168,85,247,0.2)' }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => setSelectedLauncherInfo({ 
               id: 'transfer', 
               title: 'الأوامر والتنقلات العسكرية', 
               badge: 'حركة الأفراد وإعادة الهيكلة البشرية', 
               description: 'نظام إدارة ونقل المنتسبين العسكريين والضباط بين الكتائب والسرايا المختلفة داخل اللواء لضمان سد الثغرات العسكرية وموازنة القوى بالتوجيه القيادي المباشر.', 
               color: 'purple', 
-              icon: <ArrowLeftRight className="w-10 h-10 text-purple-500" />, 
+              icon: <ArrowLeftRight className="w-9 h-9 text-purple-500" />, 
               statsLabel: 'إجراءات التنقلات والتبديل', 
               statsValue: 'نشطة ومؤمنة 🔄', 
               detailsList: [
@@ -1796,30 +2525,30 @@ export default function Dashboard({
                 onNavigate && onNavigate('org_manager'); 
               } 
             })}
-            className="flex flex-col items-center justify-between p-3 pb-2.5 rounded-2xl bg-white hover:bg-slate-50/40 border border-slate-200/80 shadow-[0_2px_8px_rgba(0,0,0,0.02)] transition-all duration-300 cursor-pointer group relative h-[126px] w-full overflow-hidden"
+            className="flex flex-col items-center justify-between p-2 pb-1.5 rounded-xl sm:rounded-2xl bg-gradient-to-b from-white to-slate-50/30 hover:to-purple-50/20 border border-slate-200/80 shadow-[0_2px_6px_rgba(0,0,0,0.015)] transition-all duration-300 cursor-pointer group relative h-[102px] sm:h-[108px] w-full overflow-hidden"
             title="الأوامر ونقل المنتسبين"
           >
-            <div className="absolute top-0 inset-x-0 h-[3.5px] bg-purple-500 rounded-t-2xl transition-all duration-300 group-hover:h-[5px]" />
-            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center border bg-purple-50/85 text-purple-650 border-purple-100/50 group-hover:bg-purple-500 group-hover:text-white transition-all duration-300 shadow-xs group-hover:scale-105">
-              <ArrowLeftRight className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-3" />
+            <div className="absolute top-0 inset-x-0 h-[2.5px] bg-purple-500 rounded-t-2xl transition-all duration-300 group-hover:h-[4px]" />
+            <div className="w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border bg-gradient-to-br from-purple-50 to-purple-100/60 text-purple-600 border-purple-200/50 group-hover:bg-purple-500 group-hover:text-white group-hover:border-purple-500 transition-all duration-300 shadow-2xs group-hover:scale-105">
+              <ArrowLeftRight className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
             </div>
-            <span className="text-[10px] sm:text-[11px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight mt-1 truncate w-full px-1">الأوامر والتنقلات</span>
-            <span className="px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded-lg border bg-purple-50/60 text-purple-700 border-purple-100/30 group-hover:bg-purple-100/80 group-hover:text-purple-900 transition-all duration-300 truncate max-w-full">
+            <span className="text-[9.5px] sm:text-[10.5px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight truncate w-full px-0.5">الأوامر والتنقلات</span>
+            <span className="px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border bg-purple-50/70 text-purple-700 border-purple-200/40 group-hover:bg-purple-100 group-hover:text-purple-900 transition-all duration-300 truncate max-w-full">
               تبديل 🔄
             </span>
           </motion.button>
 
           {/* TILE 7: Certified Reports Generator App */}
           <motion.button 
-            whileHover={{ y: -4, scale: 1.015, boxShadow: '0 12px 24px -10px rgba(245,158,11,0.18)' }}
-            whileTap={{ scale: 0.97 }}
+            whileHover={{ y: -2, scale: 1.015, boxShadow: '0 8px 20px -8px rgba(245,158,11,0.2)' }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => setSelectedLauncherInfo({ 
               id: 'reports', 
               title: 'التقارير والكشوفات المصدقة', 
               badge: 'توليد التقارير والمستندات الإدارية والميدانية', 
               description: 'مركز إصدار وتوليد التقارير والكشوفات العسكرية المصدقة. يوفر الكشوف الدورية، لوحات الجرد البشري، مصفوفات الحضور ونسب الغياب لطباعتها واعتمادها رسمياً.', 
               color: 'amber', 
-              icon: <FileCheck2 className="w-10 h-10 text-amber-500" />, 
+              icon: <FileCheck2 className="w-9 h-9 text-amber-500" />, 
               statsLabel: 'حالة اعتماد المستندات والتصدير', 
               statsValue: 'مصدق ومعتمد قيادياً 📄', 
               detailsList: [
@@ -1832,30 +2561,30 @@ export default function Dashboard({
                 onNavigate && onNavigate('reports'); 
               } 
             })}
-            className="flex flex-col items-center justify-between p-3 pb-2.5 rounded-2xl bg-white hover:bg-slate-50/40 border border-slate-200/80 shadow-[0_2px_8px_rgba(0,0,0,0.02)] transition-all duration-300 cursor-pointer group relative h-[126px] w-full overflow-hidden"
+            className="flex flex-col items-center justify-between p-2 pb-1.5 rounded-xl sm:rounded-2xl bg-gradient-to-b from-white to-slate-50/30 hover:to-amber-50/20 border border-slate-200/80 shadow-[0_2px_6px_rgba(0,0,0,0.015)] transition-all duration-300 cursor-pointer group relative h-[102px] sm:h-[108px] w-full overflow-hidden"
             title="مركز التقارير الفورية المصدقة"
           >
-            <div className="absolute top-0 inset-x-0 h-[3.5px] bg-amber-500 rounded-t-2xl transition-all duration-300 group-hover:h-[5px]" />
-            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center border bg-amber-50/85 text-amber-655 border-amber-100/50 group-hover:bg-amber-500 group-hover:text-white transition-all duration-300 shadow-xs group-hover:scale-105">
-              <FileCheck2 className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-3" />
+            <div className="absolute top-0 inset-x-0 h-[2.5px] bg-amber-500 rounded-t-2xl transition-all duration-300 group-hover:h-[4px]" />
+            <div className="w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border bg-gradient-to-br from-amber-50 to-amber-100/60 text-amber-600 border-amber-200/50 group-hover:bg-amber-500 group-hover:text-white group-hover:border-amber-500 transition-all duration-300 shadow-2xs group-hover:scale-105">
+              <FileCheck2 className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
             </div>
-            <span className="text-[10px] sm:text-[11px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight mt-1 truncate w-full px-1">التقارير والكشوفات</span>
-            <span className="px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded-lg border bg-amber-50/60 text-amber-700 border-amber-100/30 group-hover:bg-amber-100/80 group-hover:text-amber-900 transition-all duration-300 truncate max-w-full">
+            <span className="text-[9.5px] sm:text-[10.5px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight truncate w-full px-0.5">التقارير والكشوفات</span>
+            <span className="px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border bg-amber-50/70 text-amber-700 border-amber-200/40 group-hover:bg-amber-100 group-hover:text-amber-900 transition-all duration-300 truncate max-w-full">
               مصدق 📄
             </span>
           </motion.button>
 
           {/* TILE 8: Certified Audit Logs */}
           <motion.button 
-            whileHover={{ y: -4, scale: 1.015, boxShadow: '0 12px 24px -10px rgba(99,102,241,0.18)' }}
-            whileTap={{ scale: 0.97 }}
+            whileHover={{ y: -2, scale: 1.015, boxShadow: '0 8px 20px -8px rgba(99,102,241,0.2)' }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => setSelectedLauncherInfo({ 
               id: 'audit', 
               title: 'سجل الرقابة الفوري والأمني', 
               badge: 'توثيق الإجراءات ومحاضر التعديل', 
               description: 'أداة حماية النظام والتسجيل الأمني الفوري. توثق المنظومة أوتوماتيكياً كل حركات الدخول، وتعديل بيانات الأفراد، والغيابات، والحذف لضمان أعلى مستوى من الأمن والشفافية العسكرية والمساءلة الإدارية.', 
               color: 'indigo', 
-              icon: <History className="w-10 h-10 text-indigo-500" />, 
+              icon: <History className="w-9 h-9 text-indigo-500" />, 
               statsLabel: 'حالة حفظ وتأمين العمليات', 
               statsValue: 'مؤمن بالكامل بالخلفية 🔒', 
               detailsList: [
@@ -1868,30 +2597,30 @@ export default function Dashboard({
                 onNavigate && onNavigate('settings'); 
               } 
             })}
-            className="flex flex-col items-center justify-between p-3 pb-2.5 rounded-2xl bg-white hover:bg-slate-50/40 border border-slate-200/80 shadow-[0_2px_8px_rgba(0,0,0,0.02)] transition-all duration-300 cursor-pointer group relative h-[126px] w-full overflow-hidden"
+            className="flex flex-col items-center justify-between p-2 pb-1.5 rounded-xl sm:rounded-2xl bg-gradient-to-b from-white to-slate-50/30 hover:to-indigo-50/20 border border-slate-200/80 shadow-[0_2px_6px_rgba(0,0,0,0.015)] transition-all duration-300 cursor-pointer group relative h-[102px] sm:h-[108px] w-full overflow-hidden"
             title="سجل الرقابة وحماية النظام"
           >
-            <div className="absolute top-0 inset-x-0 h-[3.5px] bg-indigo-500 rounded-t-2xl transition-all duration-300 group-hover:h-[5px]" />
-            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center border bg-indigo-50/85 text-indigo-650 border-indigo-100/50 group-hover:bg-indigo-500 group-hover:text-white transition-all duration-300 shadow-xs group-hover:scale-105">
-              <History className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-3" />
+            <div className="absolute top-0 inset-x-0 h-[2.5px] bg-indigo-500 rounded-t-2xl transition-all duration-300 group-hover:h-[4px]" />
+            <div className="w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border bg-gradient-to-br from-indigo-50 to-indigo-100/60 text-indigo-600 border-indigo-200/50 group-hover:bg-indigo-500 group-hover:text-white group-hover:border-indigo-500 transition-all duration-300 shadow-2xs group-hover:scale-105">
+              <History className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
             </div>
-            <span className="text-[10px] sm:text-[11px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight mt-1 truncate w-full px-1">سجل الرقابة والأمن</span>
-            <span className="px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded-lg border bg-indigo-50/60 text-indigo-700 border-indigo-100/30 group-hover:bg-indigo-100/80 group-hover:text-indigo-900 transition-all duration-300 truncate max-w-full">
+            <span className="text-[9.5px] sm:text-[10.5px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight truncate w-full px-0.5">سجل الرقابة والأمن</span>
+            <span className="px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border bg-indigo-50/70 text-indigo-700 border-indigo-200/40 group-hover:bg-indigo-100 group-hover:text-indigo-900 transition-all duration-300 truncate max-w-full">
               مؤمن 🔒
             </span>
           </motion.button>
 
           {/* TILE 9: Identity & IAM Security */}
           <motion.button 
-            whileHover={{ y: -4, scale: 1.015, boxShadow: '0 12px 24px -10px rgba(249,115,22,0.18)' }}
-            whileTap={{ scale: 0.97 }}
+            whileHover={{ y: -2, scale: 1.015, boxShadow: '0 8px 20px -8px rgba(249,115,22,0.2)' }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => setSelectedLauncherInfo({ 
               id: 'iam', 
               title: 'إدارة الهوية والصلاحيات (IAM)', 
               badge: 'تأمين الحسابات ومستويات الدخول القيادية', 
               description: 'نظام إدارة المستخدمين والتحقق الثنائي والوصول المبني على الأدوار والرتب القيادية في لواء المشاة. يمنع الاستخدام غير المصرح به ويخصص نطاقات الإدخال.', 
               color: 'orange', 
-              icon: <Lock className="w-10 h-10 text-orange-500" />, 
+              icon: <Lock className="w-9 h-9 text-orange-500" />, 
               statsLabel: 'بروتوكول الأمان الحالي المعتمد', 
               statsValue: 'نشط ومحمي عسكرياً 🛡️', 
               detailsList: [
@@ -1904,30 +2633,30 @@ export default function Dashboard({
                 onNavigate && onNavigate('settings'); 
               } 
             })}
-            className="flex flex-col items-center justify-between p-3 pb-2.5 rounded-2xl bg-white hover:bg-slate-50/40 border border-slate-200/80 shadow-[0_2px_8px_rgba(0,0,0,0.02)] transition-all duration-300 cursor-pointer group relative h-[126px] w-full overflow-hidden"
+            className="flex flex-col items-center justify-between p-2 pb-1.5 rounded-xl sm:rounded-2xl bg-gradient-to-b from-white to-slate-50/30 hover:to-orange-50/20 border border-slate-200/80 shadow-[0_2px_6px_rgba(0,0,0,0.015)] transition-all duration-300 cursor-pointer group relative h-[102px] sm:h-[108px] w-full overflow-hidden"
             title="إدارة الهوية والتشفير (IAM)"
           >
-            <div className="absolute top-0 inset-x-0 h-[3.5px] bg-orange-500 rounded-t-2xl transition-all duration-300 group-hover:h-[5px]" />
-            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center border bg-orange-50/85 text-orange-650 border-orange-100/50 group-hover:bg-orange-500 group-hover:text-white transition-all duration-300 shadow-xs group-hover:scale-105">
-              <Lock className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-3" />
+            <div className="absolute top-0 inset-x-0 h-[2.5px] bg-orange-500 rounded-t-2xl transition-all duration-300 group-hover:h-[4px]" />
+            <div className="w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border bg-gradient-to-br from-orange-50 to-orange-100/60 text-orange-600 border-orange-200/50 group-hover:bg-orange-500 group-hover:text-white group-hover:border-orange-500 transition-all duration-300 shadow-2xs group-hover:scale-105">
+              <Lock className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
             </div>
-            <span className="text-[10px] sm:text-[11px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight mt-1 truncate w-full px-1">صلاحيات وتشفير</span>
-            <span className="px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded-lg border bg-orange-50/60 text-orange-700 border-orange-100/30 group-hover:bg-orange-100/80 group-hover:text-orange-900 transition-all duration-300 truncate max-w-full">
+            <span className="text-[9.5px] sm:text-[10.5px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight truncate w-full px-0.5">صلاحيات وتشفير</span>
+            <span className="px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border bg-orange-50/70 text-orange-700 border-orange-200/40 group-hover:bg-orange-100 group-hover:text-orange-900 transition-all duration-300 truncate max-w-full">
               نشط 🛡️
             </span>
           </motion.button>
 
           {/* TILE 10: Special Administrative Services & Brigade Sections */}
           <motion.button 
-            whileHover={{ y: -4, scale: 1.015, boxShadow: '0 12px 24px -10px rgba(16,185,129,0.22)' }}
-            whileTap={{ scale: 0.97 }}
+            whileHover={{ y: -2, scale: 1.015, boxShadow: '0 8px 20px -8px rgba(16,185,129,0.25)' }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => setSelectedLauncherInfo({ 
               id: 'special_sections', 
               title: 'الأقسام والخدمات الإدارية والعملياتية المميزة', 
               badge: 'لوحة التحكم بخدمات اللواء وشؤون الأفراد', 
               description: 'منظومة الأقسام والخدمات المميزة في قوة اللواء 43 عمالقة وشؤون الأفراد. تشمل الإجازات والمهمات الميدانية، الترقيات والدورات القتالية، رعاية الشهداء والجرحى والمساعدات، توثيق العهد العسكرية الفردية، والأرشيف الرقمي للتوجيهات.', 
               color: 'emerald', 
-              icon: <Sparkles className="w-10 h-10 text-emerald-500" />, 
+              icon: <Sparkles className="w-9 h-9 text-emerald-500" />, 
               statsLabel: 'إجمالي الخدمات والملفات الموثقة', 
               statsValue: 'مكتمل وموثق قيادياً ✨', 
               detailsList: [
@@ -1940,15 +2669,15 @@ export default function Dashboard({
                 onNavigate && onNavigate('special_sections'); 
               } 
             })}
-            className="flex flex-col items-center justify-between p-3 pb-2.5 rounded-2xl bg-gradient-to-b from-emerald-50/50 to-white hover:bg-emerald-50/80 border border-emerald-300/80 shadow-[0_2px_12px_rgba(16,185,129,0.08)] transition-all duration-300 cursor-pointer group relative h-[126px] w-full overflow-hidden"
+            className="flex flex-col items-center justify-between p-2 pb-1.5 rounded-xl sm:rounded-2xl bg-gradient-to-b from-emerald-50/60 to-white hover:bg-emerald-50/90 border border-emerald-300/80 shadow-[0_2px_8px_rgba(16,185,129,0.08)] transition-all duration-300 cursor-pointer group relative h-[102px] sm:h-[108px] w-full overflow-hidden"
             title="الأقسام والخدمات المميزة"
           >
-            <div className="absolute top-0 inset-x-0 h-[3.5px] bg-emerald-600 rounded-t-2xl transition-all duration-300 group-hover:h-[5px]" />
-            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center border bg-emerald-600 text-white border-emerald-500 group-hover:bg-emerald-700 transition-all duration-300 shadow-sm group-hover:scale-105">
-              <Sparkles className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-6" />
+            <div className="absolute top-0 inset-x-0 h-[2.5px] bg-emerald-600 rounded-t-2xl transition-all duration-300 group-hover:h-[4px]" />
+            <div className="w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border bg-emerald-600 text-white border-emerald-500 group-hover:bg-emerald-700 transition-all duration-300 shadow-2xs group-hover:scale-105">
+              <Sparkles className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-6" />
             </div>
-            <span className="text-[10px] sm:text-[11px] text-center font-black text-emerald-950 group-hover:text-emerald-900 leading-tight mt-1 truncate w-full px-1">الأقسام والخدمات</span>
-            <span className="px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded-lg border bg-emerald-100 text-emerald-900 border-emerald-300/60 group-hover:bg-emerald-200 transition-all duration-300 truncate max-w-full">
+            <span className="text-[9.5px] sm:text-[10.5px] text-center font-black text-emerald-950 group-hover:text-emerald-900 leading-tight truncate w-full px-0.5">الأقسام والخدمات</span>
+            <span className="px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border bg-emerald-100 text-emerald-900 border-emerald-300/70 group-hover:bg-emerald-200 transition-all duration-300 truncate max-w-full">
               مميز ✨
             </span>
           </motion.button>
@@ -1956,57 +2685,6 @@ export default function Dashboard({
         </div>
       </div>
 
-      {/* 4. Glowing Command Alerts & Resolution Center */}
-      {systemAlerts.some(a => !a.resolved) && (
-        <div className="bg-slate-900 border-2 border-rose-950 p-5 rounded-3xl shadow-xl relative overflow-hidden">
-          <div className="absolute top-0 bottom-0 right-0 w-2 bg-rose-600 rounded-r-3xl animate-pulse"></div>
-          
-          <div className="flex items-center gap-2 text-rose-400 font-black text-xs mb-4 font-sans">
-            <ShieldAlert className="w-5 h-5 text-rose-500 animate-bounce" />
-            <span>مركز الإنذارات والتنبيهات العملياتية العاجلة (TOC Alerts)</span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {systemAlerts.filter(a => !a.resolved).map(alert => (
-              <div 
-                key={alert.id}
-                className="bg-slate-950 p-4 rounded-xl border border-slate-850 flex flex-col justify-between font-sans text-right gap-3"
-              >
-                <div>
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-[9px] font-mono text-slate-500">ID: {alert.id}</span>
-                    <span className={`px-2 py-0.5 rounded text-[8px] font-bold border ${
-                      alert.type === 'error' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                      alert.type === 'warning' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
-                      'bg-blue-500/10 text-blue-400 border-blue-500/20'
-                    }`}>
-                      {alert.type === 'error' ? 'إنذار حرج' : alert.type === 'warning' ? 'تحذير تكتيكي' : 'توجيه إداري'}
-                    </span>
-                  </div>
-                  <h6 className="font-extrabold text-xs text-slate-100">{alert.title}</h6>
-                  <p className="text-[10px] text-slate-400 leading-normal mt-1">{alert.text}</p>
-                </div>
-
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => handleResolveAlert(alert.id, alert.action)}
-                    className="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-[10px] font-bold rounded-lg transition-all cursor-pointer active:scale-97"
-                  >
-                    إجراء: {alert.action}
-                  </button>
-                  <button 
-                    onClick={() => handleResolveAlert(alert.id, 'تم التخطي')}
-                    className="p-1.5 bg-slate-950 hover:bg-slate-900 border border-slate-850 text-slate-500 hover:text-slate-300 rounded-lg transition-all cursor-pointer"
-                    title="تجاهل الإنذار"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* 5. Multi-Tab Dynamic Workspace Panel with Anchor Scroll */}
       <div 
@@ -2066,9 +2744,21 @@ export default function Dashboard({
                 className="space-y-6"
               >
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-100 pb-4">
-                  <div className="text-right">
-                    <h5 className="font-extrabold text-sm text-slate-800 font-sans">مصفوفة تتبع وتحليل القوى العاملة باللواء</h5>
-                    <p className="text-[11px] text-slate-400 font-sans mt-0.5">انقر على تصنيفات الهيكل العسكري المعتمد لتصفية مستوى الاستعراض والتدقيق الآلي.</p>
+                  <div className="text-right flex flex-col sm:flex-row sm:items-center gap-3">
+                    <div>
+                      <h5 className="font-extrabold text-sm text-slate-800 font-sans">مصفوفة تتبع وتحليل القوى العاملة باللواء</h5>
+                      <p className="text-[11px] text-slate-400 font-sans mt-0.5">انقر على تصنيفات الهيكل العسكري المعتمد لتصفية مستوى الاستعراض والتدقيق الآلي.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleGenerateQuickPdfReport}
+                      disabled={isGeneratingQuickReport}
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow-sm border border-emerald-500 shrink-0 self-start sm:self-auto disabled:opacity-50"
+                      title="تحميل ملخص الجاهزية اليومي لجميع الوحدات كملف PDF"
+                    >
+                      <FileText className={`w-4 h-4 text-white ${isGeneratingQuickReport ? 'animate-spin' : ''}`} />
+                      <span>توليد تقرير سريع (PDF)</span>
+                    </button>
                   </div>
 
                   {/* Hierarchy Filters */}
@@ -2094,8 +2784,74 @@ export default function Dashboard({
                   </div>
                 </div>
 
-                {/* Table */}
-                <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                {/* Mobile Cards View for Units Readiness */}
+                <div className="block md:hidden space-y-3 font-sans">
+                  {filteredUnitStats.map((u) => (
+                    <div 
+                      key={u.id}
+                      className="bg-white rounded-2xl border border-slate-200/90 p-4 shadow-xs space-y-3 text-right"
+                    >
+                      <div className="flex justify-between items-start gap-2 border-b border-slate-100 pb-2.5">
+                        <div>
+                          <h6 className="font-extrabold text-sm text-slate-900 leading-snug">{u.name}</h6>
+                          <p className="text-[11px] text-slate-500 font-medium mt-0.5">{u.commanderName || 'لم يعين قائد رسمي'}</p>
+                        </div>
+                        <span className={`px-2.5 py-1 text-[10px] font-black rounded-full border shrink-0 ${u.badgeColor}`}>
+                          {u.status}
+                        </span>
+                      </div>
+
+                      {/* Readiness Bar */}
+                      <div className="space-y-1">
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-slate-500 font-bold">معدل الجاهزية اللحظي:</span>
+                          <span className="font-mono font-black text-slate-900 text-sm">{u.today.rate}%</span>
+                        </div>
+                        <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                          <div 
+                            className={`h-full rounded-full transition-all duration-300 ${u.today.rate >= 90 ? 'bg-emerald-500' : u.today.rate >= 70 ? 'bg-amber-500' : 'bg-red-500'}`}
+                            style={{ width: `${u.today.rate}%` }}
+                          ></div>
+                        </div>
+                      </div>
+
+                      {/* 4 Attendance Pills Grid */}
+                      <div className="grid grid-cols-4 gap-1.5 text-center text-[11px] font-bold">
+                        <div className="bg-emerald-50 border border-emerald-100 text-emerald-800 p-2 rounded-xl">
+                          <span className="block text-[9px] text-emerald-600 font-sans mb-0.5">حاضر</span>
+                          <span className="font-mono text-xs font-black">{u.today.h}</span>
+                        </div>
+                        <div className="bg-purple-50 border border-purple-100 text-purple-800 p-2 rounded-xl">
+                          <span className="block text-[9px] text-purple-600 font-sans mb-0.5">مهمة</span>
+                          <span className="font-mono text-xs font-black">{u.today.m}</span>
+                        </div>
+                        <div className="bg-blue-50 border border-blue-100 text-blue-800 p-2 rounded-xl">
+                          <span className="block text-[9px] text-blue-600 font-sans mb-0.5">إجازة</span>
+                          <span className="font-mono text-xs font-black">{u.today.i}</span>
+                        </div>
+                        <div className="bg-rose-50 border border-rose-100 text-rose-800 p-2 rounded-xl">
+                          <span className="block text-[9px] text-rose-600 font-sans mb-0.5">غائب</span>
+                          <span className="font-mono text-xs font-black">{u.today.g}</span>
+                        </div>
+                      </div>
+
+                      {/* Footnote */}
+                      <div className="flex justify-between items-center text-[10px] text-slate-400 font-mono border-t border-slate-100 pt-2">
+                        <span>القوة المسجلة: <strong className="text-slate-700 font-bold">{u.strength}</strong></span>
+                        <span>الهدف التعبوي: <strong className="text-slate-700 font-bold">{u.targetStrength}</strong></span>
+                      </div>
+                    </div>
+                  ))}
+
+                  {filteredUnitStats.length === 0 && (
+                    <div className="p-6 bg-white rounded-2xl border border-slate-200 text-center text-slate-400 text-xs font-sans">
+                      لا توجد وحدات مطابقة لمستوى الفرز العسكري المطلوب حالياً.
+                    </div>
+                  )}
+                </div>
+
+                {/* Desktop Table View */}
+                <div className="hidden md:block overflow-x-auto rounded-2xl border border-slate-200">
                   <table className="w-full text-right text-xs">
                     <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <tr className="font-sans">
@@ -3010,12 +3766,12 @@ export default function Dashboard({
                           <tr key={ub.unitId} className="hover:bg-slate-50 transition-colors">
                             <td className="py-2.5 px-3 font-black text-slate-900">{ub.unitName}</td>
                             <td className="py-2.5 px-3 text-slate-500 text-[11px]">{ub.commanderName}</td>
-                            <td className="py-2.5 px-3 text-center font-mono">{ub.totalPersonnel}</td>
-                            <td className="py-2.5 px-3 text-center font-mono text-emerald-700">{ub.present}</td>
-                            <td className="py-2.5 px-3 text-center font-mono text-purple-700">{ub.mission}</td>
-                            <td className="py-2.5 px-3 text-center font-mono text-blue-700">{ub.leave}</td>
-                            <td className="py-2.5 px-3 text-center font-mono text-rose-700">{ub.absent}</td>
-                            <td className="py-2.5 px-3 text-center font-mono font-black text-emerald-800">{ub.readinessRate}%</td>
+                            <td className="py-2.5 px-3 text-center font-mono">{(ub as any).totalPersonnel || ub.total}</td>
+                            <td className="py-2.5 px-3 text-center font-mono text-emerald-700">{(ub as any).present || ub.h}</td>
+                            <td className="py-2.5 px-3 text-center font-mono text-purple-700">{(ub as any).mission || ub.m}</td>
+                            <td className="py-2.5 px-3 text-center font-mono text-blue-700">{(ub as any).leave || ub.i}</td>
+                            <td className="py-2.5 px-3 text-center font-mono text-rose-700">{(ub as any).absent || ub.g}</td>
+                            <td className="py-2.5 px-3 text-center font-mono font-black text-emerald-800">{(ub as any).readinessRate || ub.rate}%</td>
                             <td className="py-2.5 px-3 text-center print:hidden">
                               <button
                                 type="button"
@@ -3199,10 +3955,10 @@ export default function Dashboard({
 
                       return (
                         <tr key={soldier.id} className="hover:bg-slate-50 transition-colors">
-                          <td className="py-2.5 px-3 font-mono text-slate-600 font-bold">{soldier.militaryId}</td>
+                          <td className="py-2.5 px-3 font-mono text-slate-600 font-bold">{soldier.militaryNumber || (soldier as any).militaryId}</td>
                           <td className="py-2.5 px-3 font-black text-slate-900">
                             <span className="text-slate-500 text-[10px] ml-1">{soldier.rank}</span>
-                            <span>{soldier.name}</span>
+                            <span>{(soldier as any).fullName || (soldier as any).name}</span>
                           </td>
                           <td className="py-2.5 px-3 text-center">
                             <span className={`px-2.5 py-1 rounded-full text-[10px] font-black border ${statusBg[st] || 'bg-slate-100'}`}>
@@ -3250,109 +4006,785 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* 7. Soldier Profile Detail Drawer Modal */}
-      {selectedSoldier && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn" dir="rtl">
-          <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-6 relative text-slate-100 shadow-2xl">
-            <button 
-              onClick={() => setSelectedSoldier(null)}
-              className="absolute top-4 left-4 p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
+      {/* 7. Soldier Profile Detail Drawer Modal - Ultra Prestigious Military ID Card + Embedded Monthly Attendance */}
+      {selectedSoldier && (() => {
+        // Calculate monthly attendance data for selectedSoldier in the ID Card
+        const daysInIdCardMonth = new Date(parseInt(idCardYear), parseInt(idCardMonth), 0).getDate();
+        const idCardDaysList = Array.from({ length: daysInIdCardMonth }, (_, i) => i + 1);
 
-            <div className="flex items-center gap-3 border-b border-slate-800 pb-3 mb-4 text-xs font-sans text-amber-400 font-bold">
-              <Users className="w-5 h-5 text-amber-400" />
-              <span>بطاقة الهوية والتحقق العسكرية الفورية</span>
-            </div>
+        const idCardMonthlyData = idCardDaysList.map(dayNum => {
+          const dayPadded = String(dayNum).padStart(2, '0');
+          const dateStr = `${idCardYear}-${idCardMonth}-${dayPadded}`;
+          
+          let dayName = '';
+          try {
+            const dt = new Date(parseInt(idCardYear), parseInt(idCardMonth) - 1, dayNum);
+            dayName = dt.toLocaleDateString('ar-SA', { weekday: 'long' });
+          } catch {
+            dayName = '';
+          }
 
-            <div className="space-y-4 text-right text-xs">
-              <div 
-                onClick={() => {
-                  if (onViewSoldierProfile) {
-                    onViewSoldierProfile(selectedSoldier.id);
-                  }
-                  setSelectedSoldier(null);
-                }}
-                className="bg-slate-950 p-4 rounded-2xl border border-slate-850 hover:border-amber-500/60 hover:bg-slate-900/60 cursor-pointer transition-all flex justify-between items-center group"
-                title="اضغط على الاسم لعرض كامل تفاصيل الفرد في صفحته العسكرية"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 bg-slate-800 rounded-xl border border-slate-750 flex items-center justify-center text-slate-400 group-hover:text-amber-400 group-hover:border-amber-500/30 shrink-0 transition-all">
-                    <Users className="w-8 h-8 stroke-[1.25]" />
+          const record = attendance.find(a => a.soldierId === selectedSoldier.id && a.date === dateStr);
+          const rawCode = record ? record.statusCode : null;
+          const normCode = record ? normalizeStatusCode(record.statusCode) : 'unrecorded';
+          const isSick = normCode === 'ع' || String(rawCode) === 'مريض' || String(rawCode) === 'طبي' || String(rawCode) === 'ط';
+
+          return { dayNum, dateStr, dayName, record, rawCode, normCode, isSick };
+        });
+
+        const idCardPresentCount = idCardMonthlyData.filter(d => d.normCode === 'ح').length;
+        const idCardDutyCount = idCardMonthlyData.filter(d => d.normCode === 'م').length;
+        const idCardLeaveCount = idCardMonthlyData.filter(d => d.normCode === 'إ').length;
+        const idCardSickCount = idCardMonthlyData.filter(d => d.isSick).length;
+        const idCardAbsentCount = idCardMonthlyData.filter(d => d.normCode === 'غ').length;
+        const idCardSickDaysList = idCardMonthlyData.filter(d => d.isSick);
+
+        const displayedIdCardDays = idCardFilter === 'sick_only' ? idCardSickDaysList : idCardMonthlyData;
+
+        // Today's attendance status for selected soldier
+        const todayDateStr = latestDate || new Date().toISOString().split('T')[0];
+        const todayRecord = attendance.find(a => a.soldierId === selectedSoldier.id && a.date === todayDateStr);
+        const todayNormCode = todayRecord ? normalizeStatusCode(todayRecord.statusCode) : 'unrecorded';
+        const isTodaySick = todayNormCode === 'ع' || String(todayRecord?.statusCode) === 'مريض' || String(todayRecord?.statusCode) === 'طبي';
+
+        const unitObj = units.find(u => u.id === selectedSoldier.unitId);
+        const unitName = unitObj?.name || 'قيادة اللواء والسيطرة';
+
+        const handleCopyText = (text: string) => {
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(text);
+            setCopiedMilitaryNum(true);
+            setTimeout(() => setCopiedMilitaryNum(false), 2000);
+          }
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/90 backdrop-blur-md animate-fadeIn" dir="rtl">
+            <div className="w-full max-w-2xl bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 border-2 border-amber-500/60 rounded-3xl p-4 sm:p-6 relative text-slate-100 shadow-[0_0_60px_rgba(217,119,6,0.2)] overflow-hidden font-sans flex flex-col max-h-[92vh]">
+              
+              {/* Background Glows */}
+              <div className="absolute -top-24 -right-24 w-64 h-64 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+              <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+              <div className="absolute inset-0 bg-[radial-gradient(#334155_1px,transparent_1px)] [background-size:16px_16px] opacity-15 pointer-events-none" />
+
+              {/* Top Header Bar */}
+              <div className="flex items-center justify-between border-b border-amber-500/30 pb-3 mb-3 shrink-0 relative z-10">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-amber-500/25 to-amber-700/40 border border-amber-500/60 flex items-center justify-center text-amber-300 shadow-inner shrink-0">
+                    <ShieldCheck className="w-6 h-6" />
                   </div>
                   <div>
-                    <span className="text-[10px] bg-slate-800 text-slate-300 px-2.5 py-0.5 rounded-md font-bold group-hover:bg-amber-500/10 group-hover:text-amber-300 transition-all">{selectedSoldier.rank}</span>
-                    <h4 className="text-sm font-black text-white mt-1 group-hover:text-amber-400 group-hover:underline transition-all flex items-center gap-1.5">
-                      {selectedSoldier.fullName}
-                      <span className="text-[9px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded-sm animate-pulse mr-1">انقر للتفاصيل ➜</span>
-                    </h4>
-                    <p className="text-[10px] text-slate-400 font-mono mt-0.5">الرقم العسكري: {selectedSoldier.militaryNumber}</p>
-                  </div>
-                </div>
-                <ChevronLeft className="w-4 h-4 text-slate-500 group-hover:text-amber-400 group-hover:translate-x-[-4px] transition-all" />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3.5 bg-slate-950/40 p-4 rounded-xl border border-slate-850">
-                <div>
-                  <span className="text-slate-500 font-bold block mb-0.5">الوحدة الحالية:</span>
-                  <p className="text-slate-300 font-bold">{units.find(u => u.id === selectedSoldier.unitId)?.name || 'غير معروفة'}</p>
-                </div>
-                <div>
-                  <span className="text-slate-500 font-bold block mb-0.5">التخصص العسكري:</span>
-                  <p className="text-slate-300 font-bold">{selectedSoldier.specialization || 'إسناد ميداني عام'}</p>
-                </div>
-                <div>
-                  <span className="text-slate-500 font-bold block mb-0.5">الهاتف المسجل:</span>
-                  <p className="text-slate-300 font-mono">{selectedSoldier.phoneNumber || '••••••••••'}</p>
-                </div>
-                <div>
-                  <span className="text-slate-500 font-bold block mb-0.5">فصيلة الدم:</span>
-                  <p className="text-rose-400 font-black">{selectedSoldier.bloodType || 'A+'}</p>
-                </div>
-              </div>
-
-              <div className="p-3 bg-slate-950/20 border border-slate-850 rounded-xl text-slate-400 leading-normal">
-                <strong>تاريخ الترقيات والملاحظات الميدانية:</strong>
-                <p className="mt-1 text-[11px] text-slate-500">
-                  العنصر نشط بالخدمة الميدانية وحاصل على شهادة الخدمة الذاتية بالانضباط. لا تتوفر عقوبات أو مخالفات مسجلة بملفه التاريخي حالياً.
-                </p>
-              </div>
-
-              {/* Action Button: Monthly Attendance Card */}
-              <div 
-                onClick={() => {
-                  setSelectedSoldierMonthlyAttendance(selectedSoldier);
-                }}
-                className="p-3.5 bg-gradient-to-r from-amber-500/10 via-slate-950 to-amber-500/10 border border-amber-500/40 hover:border-amber-400 rounded-2xl cursor-pointer transition-all flex items-center justify-between group shadow-md"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 group-hover:scale-105 transition-transform shadow-inner">
-                    <Calendar className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h5 className="text-xs font-black text-amber-300 group-hover:text-amber-200 flex items-center gap-1.5">
-                      <span>كشف التحضير وتواجد الفرد الشهري (بالأيام)</span>
-                      <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded font-bold">1 - 31</span>
-                    </h5>
-                    <p className="text-[10px] text-slate-400 mt-0.5 font-semibold">
-                      استعراض أيام الحضور (ح)، المهام (م)، الإجازات (إ)، والأيام المرضية (ع/مريض) لأي شهر
+                    <h3 className="text-sm sm:text-base font-black text-amber-300 flex items-center gap-1.5">
+                      <span>بطاقة الهوية الرقمية والعرض العسكري</span>
+                      <BadgeCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-mono">
+                      OFFICIAL MILITARY CARD & MONTHLY ATTENDANCE // C4I SYSTEM
                     </p>
                   </div>
                 </div>
-                <ChevronLeft className="w-4 h-4 text-amber-400 group-hover:translate-x-[-4px] transition-transform shrink-0" />
-              </div>
-            </div>
 
-            <button 
-              onClick={() => setSelectedSoldier(null)}
-              className="w-full mt-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs cursor-pointer"
-            >
-              إغلاق نافذة التفاصيل
-            </button>
+                <div className="flex items-center gap-2">
+                  <span className="hidden sm:inline-block text-[9px] font-black px-2.5 py-1 bg-amber-500/15 text-amber-300 rounded-lg border border-amber-500/30 tracking-wider uppercase">
+                    مـوثّـق وسـرّي
+                  </span>
+                  <button 
+                    onClick={() => setSelectedSoldier(null)}
+                    className="p-2 text-slate-400 hover:text-white bg-slate-800/80 hover:bg-slate-700/80 rounded-xl transition-all cursor-pointer border border-slate-700"
+                    title="إغلاق بطاقة الهوية"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Segmented Mobile-Friendly Navigation Tabs */}
+              <div className="flex items-center p-1 bg-slate-950 rounded-2xl border border-slate-800 mb-3 shrink-0 gap-1 overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={() => setIdCardTab('identity')}
+                  className={`flex-1 min-w-[120px] py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                    idCardTab === 'identity'
+                      ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-black shadow-md'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                  }`}
+                >
+                  <User className="w-4 h-4 shrink-0" />
+                  <span>العرض العسكري</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIdCardTab('attendance')}
+                  className={`flex-1 min-w-[140px] py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 relative ${
+                    idCardTab === 'attendance'
+                      ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-black shadow-md'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                  }`}
+                >
+                  <Calendar className="w-4 h-4 shrink-0" />
+                  <span>كشف الحضور الشهري</span>
+                  {idCardSickCount > 0 && (
+                    <span className="text-[9px] bg-amber-900 text-amber-200 px-1.5 py-0.2 rounded-full font-extrabold border border-amber-400">
+                      {idCardSickCount} مرض
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIdCardTab('contact')}
+                  className={`flex-1 min-w-[120px] py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                    idCardTab === 'contact'
+                      ? 'bg-gradient-to-r from-amber-500 to-amber-600 text-slate-950 font-black shadow-md'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+                  }`}
+                >
+                  <PhoneCall className="w-4 h-4 shrink-0" />
+                  <span>التواصل للهاتف</span>
+                </button>
+              </div>
+
+              {/* Scrollable Main Content Area */}
+              <div className="flex-1 overflow-y-auto pr-1 space-y-4 relative z-10">
+                
+                {/* TAB 1: Military Identity & Digital Card Parameters */}
+                {idCardTab === 'identity' && (
+                  <div className="space-y-3.5 animate-fadeIn">
+                    
+                    {/* Main Soldier Profile Banner */}
+                    <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 p-4 rounded-2xl border border-amber-500/40 relative overflow-hidden shadow-lg">
+                      <div className="absolute top-0 right-0 w-2 h-full bg-gradient-to-b from-amber-500 via-emerald-500 to-amber-600" />
+
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pr-2">
+                        
+                        <div className="flex items-center gap-3.5">
+                          {/* Photo Avatar */}
+                          <div className="relative shrink-0">
+                            <div className="w-16 h-16 sm:w-20 sm:h-20 bg-slate-900 rounded-2xl border-2 border-amber-500/60 p-0.5 shadow-xl overflow-hidden">
+                              <div className="w-full h-full rounded-xl overflow-hidden bg-slate-800 flex items-center justify-center relative">
+                                {selectedSoldier.photoUrl ? (
+                                  <img 
+                                    src={selectedSoldier.photoUrl} 
+                                    alt={selectedSoldier.fullName} 
+                                    referrerPolicy="no-referrer"
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <User className="w-9 h-9 text-amber-400/80 stroke-[1.25]" />
+                                )}
+                              </div>
+                            </div>
+                            <div className="absolute -bottom-1 -left-1 bg-slate-950 border border-emerald-500/60 p-1 rounded-full text-emerald-400 shadow-md">
+                              <CheckCircle2 className="w-4 h-4" />
+                            </div>
+                          </div>
+
+                          {/* Identity details */}
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2.5 py-0.5 rounded-md uppercase tracking-wider">
+                                {selectedSoldier.rank}
+                              </span>
+                              <span className="text-xs font-bold bg-slate-800 text-slate-300 px-2.5 py-0.5 rounded-md border border-slate-700">
+                                {unitName}
+                              </span>
+                            </div>
+
+                            <h4 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+                              <span>{selectedSoldier.fullName}</span>
+                            </h4>
+
+                            <div className="flex items-center gap-2 text-xs font-mono text-slate-300 flex-wrap">
+                              <span>الرقم العسكري: <strong className="text-emerald-400 font-bold">{selectedSoldier.militaryNumber}</strong></span>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyText(selectedSoldier.militaryNumber)}
+                                className="p-1 bg-slate-800 hover:bg-amber-500/20 text-slate-300 hover:text-amber-300 rounded transition-all cursor-pointer flex items-center gap-1 text-[10px]"
+                                title="نسخ الرقم العسكري"
+                              >
+                                {copiedMilitaryNum ? (
+                                  <span className="text-emerald-400 font-bold flex items-center gap-0.5"><Check className="w-3 h-3" /> تم النسخ</span>
+                                ) : (
+                                  <span className="flex items-center gap-0.5"><Copy className="w-3 h-3" /> نسخ</span>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Direct Profile Button */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onViewSoldierProfile) onViewSoldierProfile(selectedSoldier.id);
+                            setSelectedSoldier(null);
+                          }}
+                          className="w-full sm:w-auto py-2.5 px-4 bg-amber-500/10 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-500/40 font-black rounded-xl text-xs transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 active:scale-95 shadow-md"
+                        >
+                          <User className="w-4 h-4" />
+                          <span>فتح الملف الكامل ➜</span>
+                        </button>
+
+                      </div>
+                    </div>
+
+                    {/* Today's Live Attendance Quick Registration Bar */}
+                    <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                          <Clock className="w-4 h-4 text-amber-400" />
+                          <span>حالة التحضير اليومية اليوم ({todayDateStr}):</span>
+                        </span>
+                        
+                        {isTodaySick ? (
+                          <span className="text-xs font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                            <Stethoscope className="w-3.5 h-3.5 text-amber-400" />
+                            <span>مريض / عذر (ع)</span>
+                          </span>
+                        ) : todayNormCode === 'ح' ? (
+                          <span className="text-xs font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>حاضر (ح)</span>
+                          </span>
+                        ) : todayNormCode === 'م' ? (
+                          <span className="text-xs font-black bg-purple-500/20 text-purple-300 border border-purple-500/40 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                            <Briefcase className="w-3.5 h-3.5 text-purple-400" />
+                            <span>مهمة ميدانية (م)</span>
+                          </span>
+                        ) : todayNormCode === 'إ' ? (
+                          <span className="text-xs font-black bg-blue-500/20 text-blue-300 border border-blue-500/40 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                            <FileText className="w-3.5 h-3.5 text-blue-400" />
+                            <span>إجازة رسمية (إ)</span>
+                          </span>
+                        ) : todayNormCode === 'غ' ? (
+                          <span className="text-xs font-black bg-rose-500/20 text-rose-300 border border-rose-500/40 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                            <XCircle className="w-3.5 h-3.5 text-rose-400" />
+                            <span>غائب (غ)</span>
+                          </span>
+                        ) : (
+                          <span className="text-xs font-bold bg-slate-800 text-slate-400 border border-slate-700 px-2.5 py-0.5 rounded-full">
+                            غير محضر اليوم
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Quick 1-Tap Attendance Status Change Buttons */}
+                      {onSaveAttendanceBatch && (
+                        <div className="flex items-center gap-1.5 pt-1">
+                          <span className="text-[10px] text-slate-400 font-bold shrink-0">تحديث سريع:</span>
+                          <div className="flex items-center gap-1.5 flex-1 overflow-x-auto pb-0.5">
+                            <button
+                              type="button"
+                              onClick={() => onSaveAttendanceBatch([selectedSoldier.id], [todayDateStr], 'ح')}
+                              className={`flex-1 py-1 px-2 rounded-lg text-xs font-black transition-all cursor-pointer border ${
+                                todayNormCode === 'ح' && !isTodaySick
+                                  ? 'bg-emerald-600 text-white border-emerald-400 shadow-sm'
+                                  : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-emerald-950 hover:text-emerald-300'
+                              }`}
+                            >
+                              حاضر (ح)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onSaveAttendanceBatch([selectedSoldier.id], [todayDateStr], 'م')}
+                              className={`flex-1 py-1 px-2 rounded-lg text-xs font-black transition-all cursor-pointer border ${
+                                todayNormCode === 'م'
+                                  ? 'bg-purple-600 text-white border-purple-400 shadow-sm'
+                                  : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-purple-950 hover:text-purple-300'
+                              }`}
+                            >
+                              مهمة (م)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onSaveAttendanceBatch([selectedSoldier.id], [todayDateStr], 'إ')}
+                              className={`flex-1 py-1 px-2 rounded-lg text-xs font-black transition-all cursor-pointer border ${
+                                todayNormCode === 'إ'
+                                  ? 'bg-blue-600 text-white border-blue-400 shadow-sm'
+                                  : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-blue-950 hover:text-blue-300'
+                              }`}
+                            >
+                              إجازة (إ)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onSaveAttendanceBatch([selectedSoldier.id], [todayDateStr], 'ع')}
+                              className={`flex-1 py-1 px-2 rounded-lg text-xs font-black transition-all cursor-pointer border ${
+                                isTodaySick
+                                  ? 'bg-amber-500 text-slate-950 border-amber-300 font-extrabold shadow-sm'
+                                  : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-amber-950 hover:text-amber-300'
+                              }`}
+                            >
+                              مريض (ع)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onSaveAttendanceBatch([selectedSoldier.id], [todayDateStr], 'غ')}
+                              className={`flex-1 py-1 px-2 rounded-lg text-xs font-black transition-all cursor-pointer border ${
+                                todayNormCode === 'غ'
+                                  ? 'bg-rose-600 text-white border-rose-400 shadow-sm'
+                                  : 'bg-slate-900 text-slate-300 border-slate-800 hover:bg-rose-950 hover:text-rose-300'
+                              }`}
+                            >
+                              غائب (غ)
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 4-Box Tactical Parameters Grid */}
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 space-y-1">
+                        <span className="text-[10px] text-slate-400 font-bold block flex items-center gap-1.5">
+                          <Building2 className="w-3.5 h-3.5 text-amber-400" />
+                          <span>الوحدة والكتيبة:</span>
+                        </span>
+                        <p className="text-xs font-black text-slate-100">{unitName}</p>
+                      </div>
+
+                      <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 space-y-1">
+                        <span className="text-[10px] text-slate-400 font-bold block flex items-center gap-1.5">
+                          <Activity className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>التخصص الميداني:</span>
+                        </span>
+                        <p className="text-xs font-black text-slate-100">
+                          {selectedSoldier.specialization || 'إسناد ميداني عام'}
+                        </p>
+                      </div>
+
+                      <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 space-y-1">
+                        <span className="text-[10px] text-slate-400 font-bold block flex items-center gap-1.5">
+                          <Phone className="w-3.5 h-3.5 text-sky-400" />
+                          <span>الهاتف المسجل:</span>
+                        </span>
+                        <p className="text-xs font-mono font-black text-sky-300">
+                          {selectedSoldier.phoneNumber || 'غير مسجل'}
+                        </p>
+                      </div>
+
+                      <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 space-y-1">
+                        <span className="text-[10px] text-slate-400 font-bold block flex items-center gap-1.5">
+                          <HeartPulse className="w-3.5 h-3.5 text-rose-400" />
+                          <span>فصيلة الدم واللياقة:</span>
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-black text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/30">
+                            {selectedSoldier.bloodType || 'A+'}
+                          </span>
+                          <span className="text-[10px] text-emerald-400 font-bold">لائق للخدمة ✓</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Barcode & Digital C4I Authentication Bar */}
+                    <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 flex items-center justify-between text-xs font-mono text-slate-400">
+                      <div className="flex items-center gap-2">
+                        <QrCode className="w-8 h-8 text-amber-400 shrink-0" />
+                        <div>
+                          <span className="text-[10px] text-slate-500 font-bold block">التشفير العسكري:</span>
+                          <span className="text-[11px] font-black text-amber-300 tracking-wider">
+                            MIL-SEC-{selectedSoldier.militaryNumber || '0000'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="text-left font-sans text-[10px] font-bold text-slate-400 border-r border-slate-800 pr-3">
+                        <span className="text-emerald-400 block font-black">جاهزية قتالية عالية</span>
+                        <span className="text-slate-500">القيادة والسيطرة C4I</span>
+                      </div>
+                    </div>
+
+                  </div>
+                )}
+
+                {/* TAB 2: Embedded Monthly Attendance Calendar & Breakdown */}
+                {idCardTab === 'attendance' && (
+                  <div className="space-y-3 animate-fadeIn">
+                    
+                    {/* Month & Year Selectors Bar */}
+                    <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-2.5">
+                      <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            let m = parseInt(idCardMonth) - 1;
+                            let y = parseInt(idCardYear);
+                            if (m < 1) { m = 12; y -= 1; }
+                            setIdCardMonth(String(m).padStart(2, '0'));
+                            setIdCardYear(String(y));
+                          }}
+                          className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl transition-all cursor-pointer border border-slate-800"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+
+                        <select
+                          value={idCardMonth}
+                          onChange={(e) => setIdCardMonth(e.target.value)}
+                          className="bg-slate-900 border border-slate-700 text-amber-400 font-bold text-xs rounded-xl px-2.5 py-1.5 outline-none cursor-pointer"
+                        >
+                          {MONTHS_LIST.map(m => (
+                            <option key={m.value} value={m.value} className="bg-slate-900 text-white">
+                              {m.name}
+                            </option>
+                          ))}
+                        </select>
+
+                        <select
+                          value={idCardYear}
+                          onChange={(e) => setIdCardYear(e.target.value)}
+                          className="bg-slate-900 border border-slate-700 text-slate-200 font-bold font-mono text-xs rounded-xl px-2.5 py-1.5 outline-none cursor-pointer"
+                        >
+                          {['2026', '2025', '2024', '2027'].map(y => (
+                            <option key={y} value={y} className="bg-slate-900 text-white">
+                              {y}
+                            </option>
+                          ))}
+                        </select>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            let m = parseInt(idCardMonth) + 1;
+                            let y = parseInt(idCardYear);
+                            if (m > 12) { m = 1; y += 1; }
+                            setIdCardMonth(String(m).padStart(2, '0'));
+                            setIdCardYear(String(y));
+                          }}
+                          className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-xl transition-all cursor-pointer border border-slate-800"
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* Filter Mode Toggle */}
+                      <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 w-full sm:w-auto justify-center">
+                        <button
+                          type="button"
+                          onClick={() => setIdCardFilter('all')}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-all ${
+                            idCardFilter === 'all'
+                              ? 'bg-amber-500 text-slate-950 font-black shadow-xs'
+                              : 'text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          جميع الأيام ({daysInIdCardMonth})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIdCardFilter('sick_only')}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-all ${
+                            idCardFilter === 'sick_only'
+                              ? 'bg-rose-500 text-white font-black shadow-xs'
+                              : 'text-slate-400 hover:text-rose-400'
+                          }`}
+                        >
+                          الأيام المرضية ({idCardSickCount})
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* KPI Badges Bar */}
+                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                      <div className="bg-slate-950 border border-slate-800 p-2 rounded-xl text-center">
+                        <span className="text-[9px] text-slate-400 block font-bold">أيام الشهر</span>
+                        <span className="text-xs font-black text-slate-100 font-mono">{daysInIdCardMonth}</span>
+                      </div>
+                      <div className="bg-emerald-950/40 border border-emerald-500/30 p-2 rounded-xl text-center">
+                        <span className="text-[9px] text-emerald-400 block font-bold">حاضر (ح)</span>
+                        <span className="text-xs font-black text-emerald-300 font-mono">{idCardPresentCount}</span>
+                      </div>
+                      <div className="bg-purple-950/40 border border-purple-500/30 p-2 rounded-xl text-center">
+                        <span className="text-[9px] text-purple-400 block font-bold">مهمة (م)</span>
+                        <span className="text-xs font-black text-purple-300 font-mono">{idCardDutyCount}</span>
+                      </div>
+                      <div className="bg-blue-950/40 border border-blue-500/30 p-2 rounded-xl text-center">
+                        <span className="text-[9px] text-blue-400 block font-bold">إجازة (إ)</span>
+                        <span className="text-xs font-black text-blue-300 font-mono">{idCardLeaveCount}</span>
+                      </div>
+                      <div className="bg-amber-950/50 border border-amber-500/40 p-2 rounded-xl text-center">
+                        <span className="text-[9px] text-amber-400 block font-bold">مريض (ع)</span>
+                        <span className="text-xs font-black text-amber-300 font-mono">{idCardSickCount}</span>
+                      </div>
+                      <div className="bg-rose-950/40 border border-rose-500/30 p-2 rounded-xl text-center">
+                        <span className="text-[9px] text-rose-400 block font-bold">غائب (غ)</span>
+                        <span className="text-xs font-black text-rose-300 font-mono">{idCardAbsentCount}</span>
+                      </div>
+                    </div>
+
+                    {/* Sick / Medical Days Dedicated Highlight Strip */}
+                    {idCardSickDaysList.length > 0 && (
+                      <div className="bg-amber-950/30 border border-amber-500/30 p-2.5 rounded-2xl space-y-1.5">
+                        <div className="flex items-center justify-between text-xs font-bold text-amber-300">
+                          <span className="flex items-center gap-1.5">
+                            <Stethoscope className="w-4 h-4 text-amber-400" />
+                            <span>الأيام والأعذار المرضية المسجلة للشهر:</span>
+                          </span>
+                          <span className="text-[10px] font-mono bg-amber-500/20 px-2 py-0.5 rounded text-amber-200">
+                            {idCardSickCount} يوم
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 max-h-[70px] overflow-y-auto">
+                          {idCardSickDaysList.map(item => (
+                            <span 
+                              key={item.dateStr}
+                              className="bg-amber-500/20 border border-amber-500/40 text-amber-200 px-2 py-0.5 rounded text-[10px] font-mono font-bold"
+                            >
+                              {item.dateStr} ({item.dayName})
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Daily Attendance Grid Table */}
+                    <div className="rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden">
+                      <div className="max-h-[220px] overflow-y-auto">
+                        <table className="w-full text-right text-xs font-sans">
+                          <thead className="bg-slate-900 text-slate-300 font-bold border-b border-slate-800 sticky top-0 z-10">
+                            <tr>
+                              <th className="p-2 text-[11px]">التاريخ واليوم</th>
+                              <th className="p-2 text-[11px] text-center">الحالة</th>
+                              {onSaveAttendanceBatch && <th className="p-2 text-[11px] text-center">تغيير سريع</th>}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-850">
+                            {displayedIdCardDays.map(item => {
+                              const { dayNum, dateStr, dayName, normCode, isSick } = item;
+                              let rowClass = 'hover:bg-slate-900/50';
+                              if (isSick) rowClass = 'bg-amber-950/20 hover:bg-amber-950/30 border-r-2 border-r-amber-500';
+                              else if (normCode === 'غ') rowClass = 'bg-rose-950/20 hover:bg-rose-950/30 border-r-2 border-r-rose-500';
+
+                              return (
+                                <tr key={dateStr} className={rowClass}>
+                                  <td className="p-2">
+                                    <div className="flex items-center gap-2">
+                                      <span className="w-6 h-6 rounded bg-slate-800 text-slate-200 text-[10px] font-mono font-bold flex items-center justify-center shrink-0">
+                                        {String(dayNum).padStart(2, '0')}
+                                      </span>
+                                      <div>
+                                        <span className="font-mono text-xs font-bold text-slate-200 block">{dateStr}</span>
+                                        <span className="text-[10px] text-slate-400">{dayName}</span>
+                                      </div>
+                                    </div>
+                                  </td>
+
+                                  <td className="p-2 text-center">
+                                    {isSick ? (
+                                      <span className="text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                                        <Stethoscope className="w-3 h-3 text-amber-400" />
+                                        <span>مريض (ع)</span>
+                                      </span>
+                                    ) : normCode === 'ح' ? (
+                                      <span className="text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                        <span>حاضر (ح)</span>
+                                      </span>
+                                    ) : normCode === 'م' ? (
+                                      <span className="text-[10px] font-black bg-purple-500/20 text-purple-300 border border-purple-500/40 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                                        <Briefcase className="w-3 h-3 text-purple-400" />
+                                        <span>مهمة (م)</span>
+                                      </span>
+                                    ) : normCode === 'إ' ? (
+                                      <span className="text-[10px] font-black bg-blue-500/20 text-blue-300 border border-blue-500/40 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                                        <FileText className="w-3 h-3 text-blue-400" />
+                                        <span>إجازة (إ)</span>
+                                      </span>
+                                    ) : normCode === 'غ' ? (
+                                      <span className="text-[10px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/40 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                                        <XCircle className="w-3 h-3 text-rose-400" />
+                                        <span>غائب (غ)</span>
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] text-slate-500 font-semibold">غير محضر</span>
+                                    )}
+                                  </td>
+
+                                  {onSaveAttendanceBatch && (
+                                    <td className="p-2 text-center">
+                                      <div className="flex items-center justify-center gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => onSaveAttendanceBatch([selectedSoldier.id], [dateStr], 'ح')}
+                                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold cursor-pointer border ${
+                                            normCode === 'ح' && !isSick
+                                              ? 'bg-emerald-600 text-white border-emerald-400'
+                                              : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-emerald-300'
+                                          }`}
+                                        >
+                                          ح
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => onSaveAttendanceBatch([selectedSoldier.id], [dateStr], 'م')}
+                                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold cursor-pointer border ${
+                                            normCode === 'م'
+                                              ? 'bg-purple-600 text-white border-purple-400'
+                                              : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-purple-300'
+                                          }`}
+                                        >
+                                          م
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => onSaveAttendanceBatch([selectedSoldier.id], [dateStr], 'إ')}
+                                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold cursor-pointer border ${
+                                            normCode === 'إ'
+                                              ? 'bg-blue-600 text-white border-blue-400'
+                                              : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-blue-300'
+                                          }`}
+                                        >
+                                          إ
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => onSaveAttendanceBatch([selectedSoldier.id], [dateStr], 'ع')}
+                                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold cursor-pointer border ${
+                                            isSick
+                                              ? 'bg-amber-500 text-slate-950 border-amber-300'
+                                              : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-amber-300'
+                                          }`}
+                                        >
+                                          ع
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => onSaveAttendanceBatch([selectedSoldier.id], [dateStr], 'غ')}
+                                          className={`px-1.5 py-0.5 rounded text-[9px] font-bold cursor-pointer border ${
+                                            normCode === 'غ'
+                                              ? 'bg-rose-600 text-white border-rose-400'
+                                              : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-rose-300'
+                                          }`}
+                                        >
+                                          غ
+                                        </button>
+                                      </div>
+                                    </td>
+                                  )}
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                  </div>
+                )}
+
+                {/* TAB 3: Mobile Direct Actions & Quick Tools */}
+                {idCardTab === 'contact' && (
+                  <div className="space-y-3 animate-fadeIn">
+                    <p className="text-xs text-slate-400 font-semibold">
+                      أدوات التواصل السريع المباشرة من أجهزة الهاتف الذكية والأجهزة الميدانية:
+                    </p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      
+                      {/* Phone Call */}
+                      {selectedSoldier.phoneNumber ? (
+                        <a
+                          href={`tel:${selectedSoldier.phoneNumber}`}
+                          className="p-4 bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-500/50 rounded-2xl transition-all cursor-pointer flex items-center gap-3.5 group shadow-md"
+                        >
+                          <div className="w-11 h-11 rounded-xl bg-emerald-500/20 border border-emerald-500/50 flex items-center justify-center text-emerald-400 shrink-0 group-hover:scale-105 transition-transform">
+                            <PhoneCall className="w-6 h-6" />
+                          </div>
+                          <div>
+                            <h5 className="text-xs font-black text-emerald-300">اتصال هاتفي مباشر</h5>
+                            <p className="text-xs font-mono font-bold text-slate-200 mt-0.5">{selectedSoldier.phoneNumber}</p>
+                            <span className="text-[10px] text-emerald-400 font-semibold">انقر للاتصال فوراً 📞</span>
+                          </div>
+                        </a>
+                      ) : (
+                        <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl text-slate-500 text-xs font-bold flex items-center gap-3">
+                          <Phone className="w-5 h-5 text-slate-600" />
+                          <span>رقم الهاتف غير مسجل ببطاقة الفرد</span>
+                        </div>
+                      )}
+
+                      {/* WhatsApp Share */}
+                      <button
+                        type="button"
+                        onClick={(e) => handleSendWhatsAppDetails(selectedSoldier, e)}
+                        className="p-4 bg-emerald-900/30 hover:bg-emerald-800/50 border border-emerald-600/40 rounded-2xl transition-all cursor-pointer text-right flex items-center gap-3.5 group shadow-md"
+                      >
+                        <div className="w-11 h-11 rounded-xl bg-emerald-500/20 border border-emerald-500/50 flex items-center justify-center text-emerald-400 shrink-0 group-hover:scale-105 transition-transform">
+                          <MessageSquare className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <h5 className="text-xs font-black text-emerald-300">رسالة واتساب رسمية</h5>
+                          <p className="text-[11px] text-slate-300 mt-0.5">مشاركة بيانات الهوية وحالة التحضير</p>
+                          <span className="text-[10px] text-emerald-400 font-semibold">إرسال تفاصيل الفرد عبر الواتساب 💬</span>
+                        </div>
+                      </button>
+
+                      {/* Copy Military Identity Card Summary */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const text = `🎖️ **بطاقة الهوية العسكرية**\n• الرتبة والاسم: ${selectedSoldier.rank} / ${selectedSoldier.fullName}\n• الرقم العسكري: ${selectedSoldier.militaryNumber}\n• الوحدة: ${unitName}\n• التخصص: ${selectedSoldier.specialization || 'إسناد ميداني'}\n• الهاتف: ${selectedSoldier.phoneNumber || 'غير مسجل'}\n• فصيلة الدم: ${selectedSoldier.bloodType || 'A+'}\n• حالة اليوم: ${todayNormCode === 'ح' ? 'حاضر' : todayNormCode === 'م' ? 'مهمة' : todayNormCode === 'إ' ? 'إجازة' : isTodaySick ? 'مريض' : 'غير محضر'}`;
+                          handleCopyText(text);
+                        }}
+                        className="p-4 bg-slate-950 hover:bg-slate-900 border border-slate-800 rounded-2xl transition-all cursor-pointer text-right flex items-center gap-3.5 group"
+                      >
+                        <div className="w-11 h-11 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 group-hover:scale-105 transition-transform">
+                          <Copy className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <h5 className="text-xs font-black text-amber-300">نسخ بيانات الهوية العسكرية</h5>
+                          <p className="text-[11px] text-slate-400 mt-0.5">نسخ كامل ملخص بطاقة العسكري للحافظة</p>
+                          <span className="text-[10px] text-amber-400 font-semibold">
+                            {copiedMilitaryNum ? 'تم نسخ البيانات بنجاح ✓' : 'انقر لنسخ النص للمفكرة 📋'}
+                          </span>
+                        </div>
+                      </button>
+
+                      {/* Open Full Profile */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onViewSoldierProfile) onViewSoldierProfile(selectedSoldier.id);
+                          setSelectedSoldier(null);
+                        }}
+                        className="p-4 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/40 rounded-2xl transition-all cursor-pointer text-right flex items-center gap-3.5 group"
+                      >
+                        <div className="w-11 h-11 rounded-xl bg-amber-500/20 border border-amber-500/50 flex items-center justify-center text-amber-400 shrink-0 group-hover:scale-105 transition-transform">
+                          <User className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <h5 className="text-xs font-black text-amber-300">فتح الملف العسكري الكامل</h5>
+                          <p className="text-[11px] text-slate-400 mt-0.5">الانتقال لصفحة البروفايل والسجلات الكاملة</p>
+                          <span className="text-[10px] text-amber-400 font-semibold">استعراض العهد والترقيات والأرشيف ➜</span>
+                        </div>
+                      </button>
+
+                    </div>
+                  </div>
+                )}
+
+              </div>
+
+              {/* Bottom Card Footer */}
+              <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500 font-bold shrink-0">
+                <span className="flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                  <span>قيادة القوات المسلحة - منظومة السيطرة والضبط C4I</span>
+                </span>
+                <button 
+                  onClick={() => setSelectedSoldier(null)}
+                  className="text-slate-400 hover:text-white underline text-[11px] cursor-pointer"
+                >
+                  إغلاق البطاقة
+                </button>
+              </div>
+
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Monthly Attendance Modal for Selected Soldier */}
       {selectedSoldierMonthlyAttendance && (
@@ -5519,6 +6951,452 @@ export default function Dashboard({
               </div>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* Quick Readiness Summary Report Modal / Printable Document */}
+      {showQuickReportModal && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto animate-fadeIn font-sans dir-rtl">
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-4xl w-full p-3.5 sm:p-6 space-y-4 sm:space-y-6 shadow-2xl border border-slate-200 relative my-2 sm:my-8 max-h-[94vh] flex flex-col">
+            {/* Modal Action Header */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-slate-200 pb-3 sm:pb-4 gap-3 shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-2 sm:p-2.5 bg-emerald-100 text-emerald-800 rounded-xl sm:rounded-2xl border border-emerald-200 shrink-0">
+                  <FileText className="w-5 h-5 text-emerald-800" />
+                </div>
+                <div className="text-right min-w-0">
+                  <h3 className="text-sm sm:text-base font-black text-slate-900 truncate">تقرير ملخص الجاهزية اليومي لجميع الوحدات</h3>
+                  <p className="text-[10px] sm:text-xs text-slate-500 font-bold truncate">معاينة وتوليد ملف PDF رسمي معتمد - اللواء 43 عمالقة</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end shrink-0">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setIsGeneratingQuickReport(true);
+                    try {
+                      const reportFilename = `تقرير_ملخص_الجاهزية_اليومي_اللواء_43_${latestDate}`;
+                      await exportQuickReadinessPdfReport('quick-readiness-pdf-report', reportFilename);
+                      triggerToast('تم تنزيل ملف PDF بنجاح عبر مكتبة PDF المخصصة!', 'success');
+                    } catch (e: any) {
+                      console.error(e);
+                      triggerToast(e?.message || 'حدث خطأ أثناء تحميل الملف', 'error');
+                    } finally {
+                      setIsGeneratingQuickReport(false);
+                    }
+                  }}
+                  disabled={isGeneratingQuickReport}
+                  className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                >
+                  <Download className={`w-4 h-4 ${isGeneratingQuickReport ? 'animate-spin' : ''}`} />
+                  <span>{isGeneratingQuickReport ? 'جاري التحميل...' : 'تنزيل PDF مباشر (jsPDF)'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowQuickReportModal(false)}
+                  className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition-colors cursor-pointer shrink-0"
+                  title="إغلاق"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Printable Area Wrapper with Scroll for Mobile */}
+            <div className="overflow-y-auto overflow-x-auto flex-1 p-2 sm:p-4 bg-slate-100/80 rounded-2xl">
+              <div
+                id="quick-readiness-pdf-report"
+                className="w-[794px] mx-auto p-8 bg-white text-slate-900 space-y-5 border-4 border-double border-slate-900 rounded-xl shadow-xl font-sans shrink-0"
+                style={{ backgroundColor: '#ffffff', color: '#0f172a', minWidth: '794px' }}
+              >
+                {/* Official Bismillah Heading */}
+                <div className="text-center pb-2 border-b-2 border-slate-900" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                  <p className="text-sm font-black text-slate-900 tracking-widest font-serif">بسم الله الرحمن الرحيم</p>
+                </div>
+
+                <PrintHeader
+                  printSettings={quickReportPrintSettings}
+                  documentTitle="تقرير ملخص الجاهزية والاستعداد القتالي اليومي لجميع الوحدات"
+                  documentSubtitle="قيادة السيطرة والعمليات - اللواء 43 عمالقة - الموقف اليومي الشامل"
+                  documentRef={`QUICK-READINESS-${latestDate.replace(/-/g, '')}`}
+                  documentDate={latestDate}
+                />
+
+                {/* Official Memo Addressee Header Box */}
+                <div 
+                  className="bg-slate-50 border-r-4 border-slate-900 p-3.5 rounded-l-xl text-xs space-y-1.5 shadow-2xs"
+                  style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}
+                >
+                  <div className="flex justify-between items-center font-black text-slate-900">
+                    <span className="text-sm font-extrabold text-slate-900">الموضوع: مذكرة تقرير الجاهزية العملياتية والموقف اليومي العسكري</span>
+                    <span className="text-[10px] font-mono bg-slate-900 text-amber-300 px-2.5 py-0.5 rounded-md">مذكرة رقم: م ج / 43 / {latestDate.replace(/-/g, '')}</span>
+                  </div>
+                  <p className="text-slate-800 font-black">إلـى: السيّد قائد اللواء 43 عمالقة / أركان حرب اللواء المحترم</p>
+                  <p className="text-slate-600 font-bold text-[11px]">سلام الله عليكم ورحمته وبركاته،، نرفق لسيادتكم أدناه الموقف الميداني اليومي الشامل لمستوى الجاهزية والاستعداد القتالي والقوة البشرية لكافة كتائب وسرايا اللواء 43 عمالقة بتاريخ {latestDate}:</p>
+                </div>
+
+                {/* Executive Metrics Summary Box */}
+                <div 
+                  className="grid grid-cols-6 gap-2 bg-slate-50 p-3.5 rounded-xl border-2 border-slate-300 text-center font-sans shadow-xs"
+                  style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}
+                >
+                  <div className="p-2 bg-white rounded-lg border border-slate-300">
+                    <span className="text-[10px] text-slate-500 font-bold block mb-1">إجمالي القوة</span>
+                    <span className="text-base font-black text-slate-900 font-mono">{totalStrength}</span>
+                  </div>
+                  <div className="p-2 bg-emerald-50 rounded-lg border border-emerald-300">
+                    <span className="text-[10px] text-emerald-800 font-bold block mb-1">الحضور الميداني</span>
+                    <span className="text-base font-black text-emerald-900 font-mono">{statsToday.h}</span>
+                  </div>
+                  <div className="p-2 bg-amber-50 rounded-lg border border-amber-300">
+                    <span className="text-[10px] text-amber-800 font-bold block mb-1">الإجازات والراحات</span>
+                    <span className="text-base font-black text-amber-900 font-mono">{statsToday.i}</span>
+                  </div>
+                  <div className="p-2 bg-sky-50 rounded-lg border border-sky-300">
+                    <span className="text-[10px] text-sky-800 font-bold block mb-1">المهام والدوريات</span>
+                    <span className="text-base font-black text-sky-900 font-mono">{statsToday.m}</span>
+                  </div>
+                  <div className="p-2 bg-rose-50 rounded-lg border border-rose-300">
+                    <span className="text-[10px] text-rose-800 font-bold block mb-1">الغياب / العجز</span>
+                    <span className="text-base font-black text-rose-900 font-mono">{statsToday.g}</span>
+                  </div>
+                  <div className="p-2 bg-slate-900 text-white rounded-lg border border-slate-800 flex flex-col justify-between">
+                    <span className="text-[10px] text-amber-300 font-bold block">مؤشر الجاهزية</span>
+                    <span className="text-base font-black text-emerald-400 font-mono">{statsToday.readinessRate}%</span>
+                  </div>
+                </div>
+
+                {/* Full Units Readiness Table */}
+                <div className="overflow-hidden rounded-xl border-2 border-slate-900">
+                  <table className="w-full text-right text-xs">
+                    <thead className="bg-slate-900 text-amber-300 border-b-2 border-slate-900 font-black" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                      <tr>
+                        <th className="py-2.5 px-2 text-center border-l border-slate-800 w-8">#</th>
+                        <th className="py-2.5 px-3 border-l border-slate-800">اسم التشكيل / الوحدة</th>
+                        <th className="py-2.5 px-3 border-l border-slate-800">القائد المباشر</th>
+                        <th className="py-2.5 px-2 text-center border-l border-slate-800 font-mono text-white">القوة</th>
+                        <th className="py-2.5 px-2 text-center border-l border-slate-800 font-mono text-emerald-300">حاضر</th>
+                        <th className="py-2.5 px-2 text-center border-l border-slate-800 font-mono text-amber-300">إجازة</th>
+                        <th className="py-2.5 px-2 text-center border-l border-slate-800 font-mono text-sky-300">مهمة</th>
+                        <th className="py-2.5 px-2 text-center border-l border-slate-800 font-mono text-rose-300">غائب</th>
+                        <th className="py-2.5 px-2 text-center border-l border-slate-800 font-mono text-amber-300">الجاهزية</th>
+                        <th className="py-2.5 px-3 text-center">الحالة العملياتية</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-300 font-bold text-slate-900">
+                      {unitStats.map((u, idx) => (
+                        <tr 
+                          key={u.id || idx} 
+                          className={idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}
+                          style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}
+                        >
+                          <td className="py-2 px-2 text-center border-l border-slate-200 font-mono text-slate-500 text-[11px]">{idx + 1}</td>
+                          <td className="py-2 px-3 border-l border-slate-200 font-black text-slate-900">{u.name}</td>
+                          <td className="py-2 px-3 border-l border-slate-200 text-slate-700">{u.commanderName || 'قيادة التشكيل'}</td>
+                          <td className="py-2 px-2 text-center border-l border-slate-200 font-mono text-slate-900 font-black">{u.strength}</td>
+                          <td className="py-2 px-2 text-center border-l border-slate-200 font-mono text-emerald-800 font-black bg-emerald-50/50">{u.today.h}</td>
+                          <td className="py-2 px-2 text-center border-l border-slate-200 font-mono text-amber-800 bg-amber-50/50">{u.today.i}</td>
+                          <td className="py-2 px-2 text-center border-l border-slate-200 font-mono text-sky-800 bg-sky-50/50">{u.today.m}</td>
+                          <td className="py-2 px-2 text-center border-l border-slate-200 font-mono text-rose-800 bg-rose-50/50">{u.today.g}</td>
+                          <td className="py-2 px-2 text-center border-l border-slate-200 font-mono font-black text-slate-900">{u.today.rate}%</td>
+                          <td className="py-2 px-3 text-center text-[11px] font-black">
+                            <span className={`inline-block px-2 py-0.5 rounded border text-[10px] ${
+                              u.today.rate >= 80 
+                                ? 'bg-emerald-100 text-emerald-900 border-emerald-300' 
+                                : u.today.rate >= 60 
+                                ? 'bg-amber-100 text-amber-900 border-amber-300' 
+                                : 'bg-rose-100 text-rose-900 border-rose-300'
+                            }`}>
+                              {u.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    {/* Totals Grand Summary Row */}
+                    <tfoot className="bg-slate-900 text-white font-black text-xs border-t-2 border-slate-900" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
+                      <tr>
+                        <td colSpan={3} className="py-2.5 px-4 text-right border-l border-slate-800 font-black text-amber-300">
+                          الإجمالي العام لجميع التشكيلات والوحدات
+                        </td>
+                        <td className="py-2.5 px-2 text-center border-l border-slate-800 font-mono text-white font-black">{totalStrength}</td>
+                        <td className="py-2.5 px-2 text-center border-l border-slate-800 font-mono text-emerald-400 font-black">{statsToday.h}</td>
+                        <td className="py-2.5 px-2 text-center border-l border-slate-800 font-mono text-amber-300">{statsToday.i}</td>
+                        <td className="py-2.5 px-2 text-center border-l border-slate-800 font-mono text-sky-300">{statsToday.m}</td>
+                        <td className="py-2.5 px-2 text-center border-l border-slate-800 font-mono text-rose-400">{statsToday.g}</td>
+                        <td className="py-2.5 px-2 text-center border-l border-slate-800 font-mono text-emerald-400 font-black">{statsToday.readinessRate}%</td>
+                        <td className="py-2.5 px-3 text-center text-[11px] text-amber-300 font-black">
+                          موقف متكامل
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                {/* Military Signatures & Approvals Section */}
+                <div 
+                  className="pt-4 border-t-2 border-slate-300 grid grid-cols-3 gap-4 text-center font-sans"
+                  style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}
+                >
+                  <div className="space-y-4 p-3 bg-slate-50/80 rounded-lg border border-slate-200 flex flex-col justify-between h-36">
+                    <div>
+                      <p className="text-[11px] font-black text-slate-800">مسؤول القوة البشرية</p>
+                      <p className="text-[10px] text-slate-500 font-bold">اللواء 43 عمالقة</p>
+                    </div>
+                    <div className="w-10 h-10 rounded-full border border-dashed border-slate-300 mx-auto flex items-center justify-center text-[8px] text-slate-400 font-bold">
+                      [ الختم ]
+                    </div>
+                    <div className="text-[10px] text-slate-400 italic">التوقيع: ...................</div>
+                  </div>
+
+                  <div className="space-y-4 p-3 bg-slate-50/80 rounded-lg border border-slate-200 flex flex-col justify-between h-36">
+                    <div>
+                      <p className="text-[11px] font-black text-slate-800">رئيس أركان اللواء</p>
+                      <p className="text-[10px] text-slate-500 font-bold">قيادة السيطرة والعمليات</p>
+                    </div>
+                    <div className="w-10 h-10 rounded-full border border-dashed border-slate-300 mx-auto flex items-center justify-center text-[8px] text-slate-400 font-bold">
+                      [ الختم ]
+                    </div>
+                    <div className="text-[10px] text-slate-400 italic">التوقيع: ...................</div>
+                  </div>
+
+                  <div className="space-y-4 p-3 bg-slate-50/80 rounded-lg border border-slate-200 flex flex-col justify-between h-36">
+                    <div>
+                      <p className="text-[11px] font-black text-slate-800">قائد اللواء 43 عمالقة</p>
+                      <p className="text-[10px] text-slate-500 font-bold">المصادقة والاعتماد الرسمية</p>
+                    </div>
+                    <div className="w-10 h-10 rounded-full border border-dashed border-slate-300 mx-auto flex items-center justify-center text-[8px] text-slate-400 font-bold">
+                      [ الختم ]
+                    </div>
+                    <div className="text-[10px] text-slate-400 italic">التوقيع: ...................</div>
+                  </div>
+                </div>
+
+                {/* Administrative Footnote & Verification */}
+                <div 
+                  className="pt-2 border-t border-slate-200 flex justify-between items-center text-[10px] text-slate-600 font-bold"
+                  style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}
+                >
+                  <p>تنويه عملياتي: هذا التقرير مستخرج إلكترونياً ويعكس موقف الجاهزية والاستعداد القتالي اليومي لجميع تشكيلات اللواء 43 عمالقة.</p>
+                  <p className="font-mono text-slate-400">رمز التوثيق: AUT-43-RDN-{latestDate.replace(/-/g, '')}</p>
+                </div>
+
+                <PrintFooter printSettings={quickReportPrintSettings} />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Movement Detail Modal (Resumed, Granted Leaves, Overdue Absences) */}
+      {movementDetailModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-[130] p-3 sm:p-4 font-sans print:hidden overflow-y-auto" dir="rtl">
+          <div className="bg-slate-900 rounded-2xl max-w-2xl w-full border border-slate-700 shadow-2xl overflow-hidden text-right my-auto animate-scaleUp">
+            <div className="p-4 bg-slate-950 flex justify-between items-center border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                {movementDetailModal === 'resumed' && <UserCheck className="w-5 h-5 text-emerald-400" />}
+                {movementDetailModal === 'granted' && <Plane className="w-5 h-5 text-blue-400" />}
+                {movementDetailModal === 'overdue' && <AlertTriangle className="w-5 h-5 text-rose-400" />}
+                <h3 className="font-extrabold text-sm sm:text-base text-white">
+                  {movementDetailModal === 'resumed' && `كشف المواصلين للعمل اليوم (${dailyMovementStats.resumedTodaySoldiers.length} فرد)`}
+                  {movementDetailModal === 'granted' && `كشف الإجازات الممنوحة اليوم (${dailyMovementStats.grantedLeaveTodaySoldiers.length} فرد)`}
+                  {movementDetailModal === 'overdue' && `كشف الغياب وتأخير المواصلة بعد الإجازة (${dailyMovementStats.overdueAbsentSoldiers.length} فرد)`}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMovementDetailModal(null)}
+                className="p-1.5 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 max-h-[70vh] overflow-y-auto space-y-3">
+              {/* Helper Note regarding military attendance rules */}
+              {movementDetailModal === 'overdue' && (
+                <div className="p-3 bg-amber-950/50 border border-amber-800/80 rounded-xl text-xs text-amber-200 flex items-start gap-2">
+                  <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold text-amber-300">قوانين الإنضباط العسكري وتحديد الغياب التلقائي:</p>
+                    <p className="mt-0.5 text-[11px] text-amber-200/90 leading-relaxed">
+                      عند انتهاء الإجازة وعدم مواصلة الفرد للعمل، تعتبر الفترة بين نهاية الإجازة وتاريخ مواصلته الفعلية غياباً تلقائياً. وعند الضغط على زر <strong>"تسديد مواصلة العمل الآن"</strong>، يتم تسديد حضوره اعتباراً من اليوم الحالي وتثبيت الأيام السابقة كغياب.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Search Box for Granting Leave to Any Soldier in System */}
+              {movementDetailModal === 'granted' && (
+                <div className="bg-slate-950 p-3.5 rounded-2xl border border-blue-500/40 space-y-3 shadow-inner mb-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-blue-400 font-extrabold text-xs">
+                      <Search className="w-4 h-4 text-blue-400" />
+                      <span>البحث في النظام كامل لمنح إجازة جديدة لأي فرد:</span>
+                    </div>
+                    {grantSearchQueryModal && (
+                      <button
+                        type="button"
+                        onClick={() => setGrantSearchQueryModal('')}
+                        className="text-[10px] text-slate-400 hover:text-slate-200 underline cursor-pointer"
+                      >
+                        مسح البحث
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={grantSearchQueryModal}
+                      onChange={(e) => setGrantSearchQueryModal(e.target.value)}
+                      placeholder="ابحث بالاسم، الرقم العسكري، أو الرتبة لمنح إجازة فورا..."
+                      className="w-full bg-slate-900 border border-slate-700 focus:border-blue-500 rounded-xl px-3.5 py-2.5 pr-9 text-xs text-white placeholder:text-slate-500 outline-none transition-all shadow-sm"
+                    />
+                    <Search className="w-4 h-4 text-slate-400 absolute right-3 top-3" />
+                  </div>
+
+                  {/* Instant Search Results */}
+                  {grantSearchQueryModal.trim() !== '' && (
+                    <div className="space-y-2 max-h-60 overflow-y-auto pt-1 border-t border-slate-800">
+                      {searchMatchedSoldiers.length === 0 ? (
+                        <div className="text-center text-slate-400 text-xs py-3">
+                          لا يوجد أفراد مطابقين لـ "{grantSearchQueryModal}" في النظام
+                        </div>
+                      ) : (
+                        searchMatchedSoldiers.map(s => {
+                          const unitName = units.find(u => u.id === s.unitId)?.name || 'قيادة اللواء';
+                          return (
+                            <div
+                              key={s.id}
+                              className="bg-slate-900 hover:bg-slate-850 p-2.5 rounded-xl border border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 text-xs transition-colors"
+                            >
+                              <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-lg bg-blue-950 border border-blue-800/60 flex items-center justify-center text-blue-300 font-bold text-[11px] shrink-0">
+                                  {s.rank ? s.rank.substring(0, 2) : 'فرد'}
+                                </div>
+                                <div>
+                                  <div className="font-bold text-white text-xs">{s.fullName} <span className="text-[10px] text-blue-400 font-semibold">({s.rank})</span></div>
+                                  <div className="text-[10px] text-slate-400 font-mono">الرقم العسكري: {s.militaryNumber} • {unitName}</div>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setMovementDetailModal(null);
+                                  handleOpenGrantLeaveModal(s);
+                                  setGrantSearchQueryModal('');
+                                }}
+                                className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95 transition-all w-full sm:w-auto justify-center border border-blue-400/50"
+                              >
+                                <Plane className="w-3.5 h-3.5 text-white" />
+                                <span>منح إجازة الآن ✈️</span>
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* List Items */}
+              {((movementDetailModal === 'resumed' && dailyMovementStats.resumedTodaySoldiers) ||
+                (movementDetailModal === 'granted' && dailyMovementStats.grantedLeaveTodaySoldiers) ||
+                (movementDetailModal === 'overdue' && dailyMovementStats.overdueAbsentSoldiers)
+              )?.length === 0 ? (
+                <div className="py-10 text-center text-slate-400 text-xs">
+                  لا يوجد أفراد مسجلين في هذه القائمة بتاريخ ({dailyMovementStats.targetDateStr})
+                </div>
+              ) : (
+                ((movementDetailModal === 'resumed' && dailyMovementStats.resumedTodaySoldiers) ||
+                 (movementDetailModal === 'granted' && dailyMovementStats.grantedLeaveTodaySoldiers) ||
+                 (movementDetailModal === 'overdue' && dailyMovementStats.overdueAbsentSoldiers)
+                )?.map(s => {
+                  const unitName = units.find(u => u.id === s.unitId)?.name || 'قيادة اللواء';
+                  return (
+                    <div 
+                      key={s.id} 
+                      className="bg-slate-950 p-3 rounded-2xl border border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 shadow-sm"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-emerald-400 font-bold text-xs shrink-0 overflow-hidden shadow-inner">
+                          {s.photoUrl ? (
+                            <img src={s.photoUrl} alt={s.fullName} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                          ) : (
+                            s.rank ? s.rank.substring(0, 2) : 'فرد'
+                          )}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-extrabold text-sm text-white">{s.fullName}</span>
+                            <span className="text-[10px] bg-slate-800 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-md font-bold">{s.rank}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono mt-1">
+                            <span>الرقم العسكري: {s.militaryNumber}</span>
+                            <span>•</span>
+                            <span className="text-slate-300 font-sans font-bold">{unitName}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                        {movementDetailModal === 'overdue' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              handleResumeDuty(s);
+                              setMovementDetailModal(null);
+                            }}
+                            className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-md border border-emerald-400"
+                          >
+                            <UserCheck className="w-4 h-4 text-white" />
+                            <span>تسديد مواصلة العمل الآن 🟢</span>
+                          </button>
+                        )}
+
+                        {movementDetailModal === 'granted' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMovementDetailModal(null);
+                              handleOpenGrantLeaveModal(s);
+                            }}
+                            className="px-3 py-2 rounded-xl bg-blue-600/90 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1 cursor-pointer border border-blue-400/40"
+                          >
+                            <Plane className="w-3.5 h-3.5 text-white" />
+                            <span>تعديل الإجازة ✈️</span>
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={(e) => handleSendWhatsAppDetails(s, e)}
+                          className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
+                        >
+                          <MessageSquare className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>تواصل</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="p-3 bg-slate-950 border-t border-slate-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setMovementDetailModal(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-extrabold cursor-pointer"
+              >
+                إغلاق
+              </button>
+            </div>
           </div>
         </div>
       )}
