@@ -41,6 +41,7 @@ import { downloadElementAsPdf } from '../utils/pdfGenerator';
 import BackupRestore from './BackupRestore';
 import UsersPermissionsManager from './UsersPermissionsManager';
 import PWAInstallBanner from './PWAInstallBanner';
+import DatabaseResetControl from './DatabaseResetControl';
 
 interface SettingsViewProps {
   settings: SystemSettings;
@@ -78,8 +79,9 @@ interface SettingsViewProps {
     attendance: AttendanceRecord[];
     auditLogs: AuditLog[];
   }) => void;
-  initialSubTab?: 'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'print';
-  onSubTabChange?: (tab: 'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'print') => void;
+  onResetDatabase?: () => Promise<void> | void;
+  initialSubTab?: 'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'print' | 'reset';
+  onSubTabChange?: (tab: 'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'print' | 'reset') => void;
 }
 
 // Beautiful Custom ToggleSwitch Component
@@ -205,6 +207,7 @@ export default function SettingsView({
   googleAccessToken,
   onSetGoogleAccessToken,
   onRestoreState,
+  onResetDatabase,
   initialSubTab,
   onSubTabChange
 }: SettingsViewProps) {
@@ -237,7 +240,7 @@ export default function SettingsView({
   }, [settings]);
   
   // Clean settings subtabs
-  const [subTabState, setSubTabState] = useState<'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'print'>(initialSubTab || 'menu');
+  const [subTabState, setSubTabState] = useState<'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'print' | 'reset'>(initialSubTab || 'menu');
 
   // Permission check for General Readiness Settings
   const canAccessGeneralSettings = useMemo(() => {
@@ -260,7 +263,7 @@ export default function SettingsView({
     }
   }, [subTabState, canAccessGeneralSettings]);
 
-  const setSubTab = (tab: 'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'print') => {
+  const setSubTab = (tab: 'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'print' | 'reset') => {
     setSubTabState(tab);
     if (onSubTabChange) {
       onSubTabChange(tab);
@@ -493,7 +496,8 @@ export default function SettingsView({
     { id: 'notifications', label: 'قنوات الإشعار والتنبيه', desc: 'التحضير اليومي والإنذار المبكر', icon: Bell },
     { id: 'users', label: 'صلاحيات الحسابات والوصول', desc: 'إدارة المستخدمين والأدوار والولوج', icon: ShieldCheck },
     { id: 'backup', label: 'النسخ السحابي والبيانات', desc: 'حفظ الكشوفات والمزامنة المشفرة', icon: Database },
-    { id: 'print', label: 'إعدادات الطباعة', desc: 'الهوية الرسمية والشعار والختم والتوقيع', icon: Printer }
+    { id: 'print', label: 'إعدادات الطباعة', desc: 'الهوية الرسمية والشعار والختم والتوقيع', icon: Printer },
+    { id: 'reset', label: 'تهيئة وتصفية قاعدة البيانات', desc: 'تصفية التطبيق بالكامل (ضغط ٥ ثوانٍ)', icon: Trash2 }
   ] as const;
 
   const sidebarTabs = useMemo(() => {
@@ -618,6 +622,24 @@ export default function SettingsView({
               <span className="text-[10px] sm:text-[11px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight mt-1 truncate w-full px-1">إعدادات الطباعة</span>
               <span className="px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded-lg border bg-purple-50/60 text-purple-700 border-purple-100/30 group-hover:bg-purple-100/80 group-hover:text-purple-900 transition-all duration-300 truncate max-w-full">
                 ترويسة + ختم وتوقيع
+              </span>
+            </motion.button>
+
+            {/* TILE 6: Database Reset */}
+            <motion.button 
+              whileHover={{ y: -4, scale: 1.015, boxShadow: '0 12px 24px -10px rgba(225,29,72,0.2)' }}
+              whileTap={{ scale: 0.97 }}
+              onClick={() => setSubTab('reset')}
+              className="flex flex-col items-center justify-between p-3 pb-2.5 rounded-2xl bg-white hover:bg-rose-50/30 border border-rose-200/80 shadow-[0_2px_8px_rgba(0,0,0,0.02)] transition-all duration-300 cursor-pointer group relative h-[126px] w-full overflow-hidden"
+              title="تهيئة وتصفية كافة بيانات قاعدة البيانات"
+            >
+              <div className="absolute top-0 inset-x-0 h-[3.5px] bg-rose-600 rounded-t-2xl transition-all duration-300 group-hover:h-[5px]" />
+              <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center border bg-rose-50/85 text-rose-600 border-rose-200/60 group-hover:bg-rose-600 group-hover:text-white transition-all duration-300 shadow-xs group-hover:scale-105">
+                <Trash2 className="w-5.5 h-5.5 transition-transform duration-300 group-hover:rotate-6" />
+              </div>
+              <span className="text-[10px] sm:text-[11px] text-center font-black text-rose-900 group-hover:text-rose-950 leading-tight mt-1 truncate w-full px-1">تهيئة البيانات</span>
+              <span className="px-1.5 py-0.5 text-[8px] sm:text-[9px] font-black rounded-lg border bg-rose-50/80 text-rose-700 border-rose-200/50 group-hover:bg-rose-100 group-hover:text-rose-900 transition-all duration-300 truncate max-w-full">
+                ضغط ٥ ثوانٍ + تأكيد
               </span>
             </motion.button>
           </div>
@@ -1016,9 +1038,17 @@ export default function SettingsView({
                       onSetGoogleAccessToken={onSetGoogleAccessToken}
                       onRestoreState={onRestoreState}
                       onAddLog={onAddLog}
+                      onResetDatabase={onResetDatabase}
                     />
                   </div>
 
+                </div>
+              )}
+
+              {/* TAB RESET: DATABASE FULL RESET */}
+              {subTab === 'reset' && (
+                <div className="space-y-6">
+                  <DatabaseResetControl onResetDatabase={onResetDatabase || (() => {})} />
                 </div>
               )}
 

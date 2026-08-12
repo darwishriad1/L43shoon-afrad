@@ -1,5 +1,11 @@
 export type UserRole = 'admin' | 'commander_formation' | 'commander_unit' | 'operations' | 'data_writer' | 'soldier';
 
+export interface AuthUser {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+}
+
 export interface User {
   id: string;
   name: string;
@@ -157,8 +163,8 @@ export interface SickLeave {
   createdAt?: string;
 }
 
-// ح: حضور, غ: غياب, إ: إجازة, م: مهمة, ع: بعذر, ن: نصف يوم
-export type AttendanceStatusCode = 'ح' | 'غ' | 'إ' | 'م' | 'ع' | 'ن';
+// ح: حضور, غ: غياب, إ: إجازة, م: مهمة, ع: بعذر, ن: نصف يوم, pending: معلق/غير محدد
+export type AttendanceStatusCode = 'ح' | 'غ' | 'إ' | 'م' | 'ع' | 'ن' | 'pending';
 
 export interface AttendanceRecord {
   id: string;

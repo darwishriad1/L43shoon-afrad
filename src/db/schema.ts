@@ -136,6 +136,12 @@ export const attendance = pgTable('attendance', {
   statusCode: text('status_code').notNull(), // 'ح' | 'غ' | 'إ' | 'م' | 'ع' | 'ن'
   recordedBy: text('recorded_by').notNull(), // User ID
   updatedAt: text('updated_at').notNull(), // ISO string or text
+}, (table) => {
+  return {
+    attSoldierIdx: index('att_soldier_idx').on(table.soldierId),
+    attDateIdx: index('att_date_idx').on(table.date),
+    attSoldierDateIdx: index('att_soldier_date_idx').on(table.soldierId, table.date),
+  };
 });
 
 export const auditLogs = pgTable('audit_logs', {
@@ -147,6 +153,11 @@ export const auditLogs = pgTable('audit_logs', {
   tableName: text('table_name').notNull(),
   details: text('details').notNull(),
   timestamp: text('timestamp').notNull(),
+}, (table) => {
+  return {
+    auditUserIdx: index('audit_user_idx').on(table.userId),
+    auditTimestampIdx: index('audit_timestamp_idx').on(table.timestamp),
+  };
 });
 
 export const notifications = pgTable('notifications', {

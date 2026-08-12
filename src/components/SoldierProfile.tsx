@@ -835,7 +835,7 @@ export default function SoldierProfile({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: 'log_' + Date.now(),
+          id: 'log_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
           userId: currentUser.id,
           userName: currentUser.name || "مدير النظام",
           userRole: currentUser.role,
@@ -963,7 +963,7 @@ export default function SoldierProfile({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: 'log_' + Date.now(),
+          id: 'log_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
           userId: currentUser.id,
           userName: currentUser.name || "مدير النظام",
           userRole: currentUser.role,
@@ -1750,10 +1750,6 @@ export default function SoldierProfile({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ records: attendanceRecords })
         });
-
-        if (onSaveAttendanceBatch) {
-          onSaveAttendanceBatch([soldierId], attendanceRecords.map(r => r.date), statusCodeToUse as any);
-        }
       }
 
       // 4. Send notification to authorized users

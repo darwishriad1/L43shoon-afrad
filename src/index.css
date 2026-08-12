@@ -135,6 +135,14 @@
     40% { transform: scale(1); opacity: 1; }
 }
 
+/* --- GLOBAL SMOOTH THEME TRANSITION --- */
+body, main, aside, header, nav, section, article, table, th, td, input, select, textarea, button {
+  transition: background-color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 /* --- GLOBAL LIGHT MODE COMPONENT OVERRIDES --- */
 .light-mode {
   color-scheme: light;
@@ -162,35 +170,43 @@
   background-color: #e2e8f0 !important;
 }
 
-/* Modal Scrim Backdrop Overrides in Light Mode */
-.light-mode .fixed.inset-0.bg-slate-950\/80,
-.light-mode .fixed.inset-0.bg-slate-950\/85,
-.light-mode .fixed.inset-0.bg-slate-950\/90,
-.light-mode .fixed.inset-0.bg-slate-950\/60,
-.light-mode .fixed.inset-0.bg-slate-950\/70 {
-  background-color: rgba(15, 23, 42, 0.55) !important;
+.light-mode .bg-slate-600 {
+  background-color: #cbd5e1 !important;
 }
 
+/* Semi-transparent Dark Backgrounds converted to Pure Light Panels */
 .light-mode .bg-slate-950\/80,
+.light-mode .bg-slate-950\/85,
 .light-mode .bg-slate-950\/90,
 .light-mode .bg-slate-950\/95,
-.light-mode .bg-slate-950\/60 {
-  background-color: rgba(255, 255, 255, 0.95) !important;
+.light-mode .bg-slate-950\/60,
+.light-mode .bg-slate-950\/70 {
+  background-color: rgba(255, 255, 255, 0.98) !important;
 }
 
 .light-mode .bg-slate-900\/90,
 .light-mode .bg-slate-900\/80,
+.light-mode .bg-slate-900\/70,
 .light-mode .bg-slate-900\/60,
 .light-mode .bg-slate-900\/50,
 .light-mode .bg-slate-900\/40 {
-  background-color: rgba(248, 250, 252, 0.95) !important;
+  background-color: rgba(255, 255, 255, 0.95) !important;
 }
 
 .light-mode .bg-slate-800\/80,
 .light-mode .bg-slate-800\/60,
 .light-mode .bg-slate-800\/50,
 .light-mode .bg-slate-800\/40 {
-  background-color: rgba(241, 245, 249, 0.9) !important;
+  background-color: rgba(241, 245, 249, 0.95) !important;
+}
+
+/* Modal Scrim Backdrop Overrides in Light Mode */
+.light-mode .fixed.inset-0.bg-slate-950\/80,
+.light-mode .fixed.inset-0.bg-slate-950\/85,
+.light-mode .fixed.inset-0.bg-slate-950\/90,
+.light-mode .fixed.inset-0.bg-slate-950\/60,
+.light-mode .fixed.inset-0.bg-slate-950\/70 {
+  background-color: rgba(15, 23, 42, 0.65) !important;
 }
 
 /* Gradients in Light Mode */
@@ -210,7 +226,7 @@
   --tw-gradient-to: #f1f5f9 var(--tw-gradient-to-position) !important;
 }
 
-/* Borders in Light Mode */
+/* Crisp Slate Borders in Light Mode */
 .light-mode .border-slate-800,
 .light-mode .border-slate-800\/80,
 .light-mode .border-slate-800\/60,
@@ -222,7 +238,7 @@
   border-color: #cbd5e1 !important;
 }
 
-/* Typography in Light Mode - High Contrast Fixes */
+/* Typography in Light Mode - High Contrast Crisp Text */
 .light-mode .text-white {
   color: #0f172a !important;
 }
@@ -234,17 +250,17 @@
 }
 
 .light-mode .text-slate-400 {
-  color: #475569 !important;
+  color: #334155 !important;
 }
 
 .light-mode .text-slate-500 {
-  color: #64748b !important;
+  color: #475569 !important;
 }
 
-/* Accent Colors tuned for Light Background Readability */
+/* Accent Colors tuned for Light Background High Contrast */
 .light-mode .text-amber-300,
 .light-mode .text-amber-400 {
-  color: #b45309 !important; /* amber-700 for high-contrast on white */
+  color: #b45309 !important; /* amber-700 */
 }
 
 .light-mode .text-emerald-300,
@@ -268,6 +284,76 @@
   color: #1d4ed8 !important; /* blue-700 */
 }
 
+/* Tinted Badges & Pill Tags in Light Mode */
+.light-mode .bg-amber-500\/10,
+.light-mode .bg-amber-500\/20,
+.light-mode .bg-amber-400\/10,
+.light-mode .bg-amber-400\/20 {
+  background-color: #fef3c7 !important;
+  border-color: #fde68a !important;
+  color: #92400e !important;
+}
+
+.light-mode .bg-emerald-500\/10,
+.light-mode .bg-emerald-500\/20,
+.light-mode .bg-emerald-400\/10,
+.light-mode .bg-emerald-400\/20 {
+  background-color: #d1fae5 !important;
+  border-color: #a7f3d0 !important;
+  color: #065f46 !important;
+}
+
+.light-mode .bg-rose-500\/10,
+.light-mode .bg-rose-500\/20,
+.light-mode .bg-rose-400\/10,
+.light-mode .bg-rose-400\/20 {
+  background-color: #ffe4e6 !important;
+  border-color: #fecdd3 !important;
+  color: #9f1239 !important;
+}
+
+.light-mode .bg-sky-500\/10,
+.light-mode .bg-sky-500\/20,
+.light-mode .bg-sky-400\/10,
+.light-mode .bg-sky-400\/20,
+.light-mode .bg-cyan-500\/10,
+.light-mode .bg-cyan-500\/20 {
+  background-color: #e0f2fe !important;
+  border-color: #bae6fd !important;
+  color: #075985 !important;
+}
+
+/* Preserve White Text on Solid Colored Action Buttons in Light Mode */
+.light-mode .bg-emerald-600,
+.light-mode .bg-emerald-700,
+.light-mode .bg-emerald-800,
+.light-mode .bg-emerald-900,
+.light-mode .bg-amber-600,
+.light-mode .bg-amber-700,
+.light-mode .bg-rose-600,
+.light-mode .bg-rose-700,
+.light-mode .bg-blue-600,
+.light-mode .bg-indigo-600,
+.light-mode button.bg-emerald-600,
+.light-mode button.bg-emerald-700,
+.light-mode button.bg-emerald-800,
+.light-mode button.bg-amber-600,
+.light-mode button.bg-rose-600,
+.light-mode button.bg-rose-700,
+.light-mode button.bg-blue-600 {
+  color: #ffffff !important;
+}
+
+.light-mode .bg-emerald-600 .text-white,
+.light-mode .bg-emerald-700 .text-white,
+.light-mode .bg-emerald-800 .text-white,
+.light-mode .bg-amber-600 .text-white,
+.light-mode .bg-rose-600 .text-white,
+.light-mode .bg-rose-700 .text-white,
+.light-mode .bg-blue-600 .text-white {
+  color: #ffffff !important;
+}
+
 /* Form Inputs, Selects & Textareas in Light Mode */
 .light-mode input,
 .light-mode select,
@@ -285,6 +371,14 @@
 .light-mode input::placeholder,
 .light-mode textarea::placeholder {
   color: #64748b !important;
+}
+
+.light-mode input:focus,
+.light-mode select:focus,
+.light-mode textarea:focus {
+  border-color: #d97706 !important;
+  outline: none !important;
+  box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.15) !important;
 }
 
 /* Hover and Active State Overrides in Light Mode */
@@ -311,7 +405,7 @@
   background-color: #cbd5e1 !important;
 }
 
-/* Contrast Protection for Dark Text on Amber/Colored Accent Buttons */
+/* Contrast Protection for Dark Text on Amber Buttons */
 .light-mode .text-slate-900,
 .light-mode .text-slate-950 {
   color: #020617 !important;
@@ -361,11 +455,12 @@
   background-color: #f8fafc !important;
 }
 
-/* Soft Light Mode Drop Shadows */
+/* Soft Crisp Shadows in Light Mode */
 .light-mode .shadow-2xl,
 .light-mode .shadow-xl,
-.light-mode .shadow-lg {
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.03) !important;
+.light-mode .shadow-lg,
+.light-mode .shadow-md {
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08), 0 8px 10px -6px rgba(15, 23, 42, 0.03) !important;
 }
 
 /* Preserve Authentic Military Dark ID Card Appearance in Light Mode */

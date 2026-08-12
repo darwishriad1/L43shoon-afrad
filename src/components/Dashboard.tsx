@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { 
   ResponsiveContainer, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip 
 } from 'recharts';
@@ -20,15 +20,75 @@ const MONTHS_LIST = [
   { value: '11', name: 'نوفمبر (جمادى الأولى)', short: 'نوفمبر' },
   { value: '12', name: 'ديسمبر (جمادى الآخرة)', short: 'ديسمبر' },
 ];
+
 import { Unit, Soldier, AttendanceRecord, AttendanceStatusCode, AuditLog, User as UserType, PrintSettings } from '../types';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import WhatsAppShareModal from './WhatsAppShareModal';
 import SoldierMonthlyAttendanceModal from './SoldierMonthlyAttendanceModal';
 import { downloadElementAsPdf, downloadElementAsImage, shareElementViaWhatsApp, exportQuickReadinessPdfReport } from '../utils/pdfGenerator';
 import { fetchWithRetry, safeJson } from '../lib/api';
 import { PrintHeader, PrintFooter } from './PrintHeaderFooter';
 import { triggerToast } from './ToastContainer';
+import DashboardErrorBoundary from './DashboardErrorBoundary';
 
+export interface LeavePassData {
+  id: string;
+  soldierName: string;
+  fullName?: string;
+  rank: string;
+  militaryNumber: string;
+  unitName: string;
+  leaveType: string;
+  illnessType?: string;
+  diagnosis?: string;
+  startDate: string;
+  endDate: string;
+  duration: number;
+  grantingAuthority: string;
+  orderNumber: string;
+  orderDate: string;
+  reason?: string;
+}
+
+export interface DrillDownItem {
+  id?: string;
+  fullName?: string;
+  name?: string;
+  unitName?: string;
+  unit?: string;
+  unitId?: string;
+  userName?: string;
+  militaryNumber?: string;
+  militaryStatus?: string;
+  rank?: string;
+  type?: string;
+  role?: string;
+  statusCode?: AttendanceStatusCode | string;
+  details?: string;
+  specialization?: string;
+  commanderName?: string;
+  soldier?: Soldier;
+  [key: string]: any;
+}
+
+export interface DrillDownModalState {
+  title: string;
+  categoryName: string;
+  count: number;
+  type: 'soldiers' | 'units' | 'approvals' | 'audit' | 'users';
+  color: string;
+  items: DrillDownItem[];
+}
+
+export interface ItemDetailModalState {
+  type: 'soldier' | 'unit' | 'approval' | 'audit' | 'user';
+  item: any;
+}
+
+/**
+ * Normalizes military attendance status code to standard character codes:
+ * 'ح': Present, 'غ': Absent, 'إ': Leave, 'م': Mission, 'ع': Excused, 'ن': Half-day, 'pending': Unrecorded
+ */
 export const normalizeStatusCode = (code: string | null | undefined): string => {
   if (!code) return 'pending';
   const c = String(code).trim();
@@ -56,7 +116,7 @@ interface DashboardProps {
   onSaveAttendanceBatch?: (soldierIds: string[], dates: string[], status: AttendanceStatusCode) => void;
 }
 
-export default function Dashboard({ 
+function DashboardContent({ 
   units, 
   soldiers, 
   attendance, 
@@ -73,6 +133,45 @@ export default function Dashboard({
   const activeUser = useMemo(() => {
     return currentUser || { id: 'admin-1', name: 'قائد لواء المشاة الآلي /٢٦/', role: 'admin', unitId: null };
   }, [currentUser]);
+
+  // Real-time actual current date (today)
+  const actualToday = useMemo(() => {
+    return new Date().toISOString().split('T')[0];
+  }, []);
+
+  // Dates list containing all recorded dates plus actualToday sorted descending
+  const dates = useMemo(() => {
+    const uniqueDates = Array.from(new Set([actualToday, ...attendance.map(a => a.date)]));
+    return uniqueDates.sort().reverse();
+  }, [attendance, actualToday]);
+
+  // Default latest date always points to today's real date
+  const latestDate = actualToday;
+
+  // Extract unit-scoped soldiers, units & active soldiers
+  const isRestrictedUser = useMemo(() => {
+    return activeUser.role !== 'admin' && activeUser.role !== 'commander_formation' && Boolean(activeUser.unitId);
+  }, [activeUser]);
+
+  const scopedSoldiers = useMemo(() => {
+    if (isRestrictedUser) {
+      return soldiers.filter(s => s.unitId === activeUser.unitId);
+    }
+    return soldiers;
+  }, [soldiers, isRestrictedUser, activeUser.unitId]);
+
+  const scopedUnits = useMemo(() => {
+    if (isRestrictedUser) {
+      return units.filter(u => u.id === activeUser.unitId);
+    }
+    return units;
+  }, [units, isRestrictedUser, activeUser.unitId]);
+
+  const activeSoldiers = useMemo(() => {
+    return scopedSoldiers.filter(s => s.isActive);
+  }, [scopedSoldiers]);
+
+  const totalStrength = activeSoldiers.length;
 
   // States
   const [activeSubTab, setActiveSubTab] = useState<'units_readiness' | 'analytics' | 'periodic_reports' | 'ops_center' | 'live_feed'>('units_readiness');
@@ -112,7 +211,20 @@ export default function Dashboard({
   const [leaveAttachmentUrl, setLeaveAttachmentUrl] = useState<string | null>(null);
 
   // Printable official leave pass modal state
-  const [printableLeavePass, setPrintableLeavePass] = useState<any | null>(null);
+  const [printableLeavePass, setPrintableLeavePass] = useState<LeavePassData | null>(null);
+
+  // Timer refs for cleanup
+  const quickReportTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const workspaceScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (quickReportTimerRef.current) clearTimeout(quickReportTimerRef.current);
+      if (workspaceScrollTimerRef.current) clearTimeout(workspaceScrollTimerRef.current);
+      if (copyNoticeTimerRef.current) clearTimeout(copyNoticeTimerRef.current);
+    };
+  }, []);
 
   // Quick Daily Readiness PDF Report Modal State
   const [showQuickReportModal, setShowQuickReportModal] = useState(false);
@@ -133,7 +245,7 @@ export default function Dashboard({
     ).slice(0, 15);
   }, [soldiers, grantSearchQueryModal]);
 
-  const handleResumeDuty = async (soldier: Soldier, e?: React.MouseEvent) => {
+  const handleResumeDuty = useCallback(async (soldier: Soldier, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     const targetDateStr = selectedDailyDate || actualToday;
 
@@ -173,10 +285,12 @@ export default function Dashboard({
 
       triggerToast(`✅ تم تسجيل وتسديد مواصلة العمل الميداني بنجاح للفرد: ${soldier.rank} / ${soldier.fullName}`, 'success');
     } catch (err) {
-      console.error('Error in handleResumeDuty:', err);
+      if (process.env.NODE_ENV !== 'production') {
+        console.error('Error in handleResumeDuty:', err);
+      }
       triggerToast(`✅ تم تسديد مواصلة العمل للفرد ${soldier.fullName}`, 'success');
     }
-  };
+  }, [selectedDailyDate, actualToday, onSaveAttendanceBatch, activeUser, onAddLog]);
 
   const quickReportPrintSettings = useMemo<PrintSettings>(() => ({
     logoUrl: printSettings?.logoUrl || null,
@@ -196,26 +310,31 @@ export default function Dashboard({
     templateId: 'military_tactical'
   }), [printSettings]);
 
-  const handleGenerateQuickPdfReport = async () => {
+  const handleGenerateQuickPdfReport = useCallback(async () => {
     setIsGeneratingQuickReport(true);
     setShowQuickReportModal(true);
     triggerToast('جاري تحضير وتوليد تقرير الجاهزية اليومي عبر مكتبة PDF المخصصة...', 'info', 2500);
 
-    setTimeout(async () => {
+    if (quickReportTimerRef.current) clearTimeout(quickReportTimerRef.current);
+
+    quickReportTimerRef.current = setTimeout(async () => {
       try {
         const reportFilename = `تقرير_ملخص_الجاهزية_اليومي_اللواء_43_${latestDate}`;
         await exportQuickReadinessPdfReport('quick-readiness-pdf-report', reportFilename);
         triggerToast('تم توليد وتنزيل ملف PDF لتقرير الجاهزية مباشرة بنجاح!', 'success', 4000);
-      } catch (err: any) {
-        console.error('Failed to generate quick report PDF:', err);
-        triggerToast(err?.message || 'تعذر تحميل ملف PDF، يرجى إعادة المحاولة.', 'error', 4000);
+      } catch (err: unknown) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.error('Failed to generate quick report PDF:', err);
+        }
+        const errMsg = err instanceof Error ? err.message : 'تعذر تحميل ملف PDF، يرجى إعادة المحاولة.';
+        triggerToast(errMsg, 'error', 4000);
       } finally {
         setIsGeneratingQuickReport(false);
       }
     }, 400);
-  };
+  }, [latestDate]);
 
-  const handleOpenGrantLeaveModal = (s: Soldier, e?: React.MouseEvent) => {
+  const handleOpenGrantLeaveModal = useCallback((s: Soldier, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     setGrantLeaveSoldier(s);
     const today = new Date().toISOString().split('T')[0];
@@ -230,9 +349,9 @@ export default function Dashboard({
     setLeaveNotes('');
     setLeaveAttachmentUrl(null);
     setIsGrantLeaveModalOpen(true);
-  };
+  }, []);
 
-  const handleLeaveDateChange = (start: string, end: string) => {
+  const handleLeaveDateChange = useCallback((start: string, end: string) => {
     setLeaveStartDate(start);
     setLeaveEndDate(end);
     if (start && end) {
@@ -242,9 +361,9 @@ export default function Dashboard({
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
       setLeaveDuration(diffDays > 0 ? String(diffDays) : '1');
     }
-  };
+  }, []);
 
-  const handleLeaveAttachmentUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLeaveAttachmentUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -252,13 +371,16 @@ export default function Dashboard({
       setLeaveAttachmentUrl(reader.result as string);
     };
     reader.readAsDataURL(file);
-  };
+  }, []);
 
-  const handleGrantLeaveSubmit = async (e: React.FormEvent) => {
+  /**
+   * Submits leave pass request, posts record to backend API, updates attendance and sends system notification.
+   */
+  const handleGrantLeaveSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     if (!grantLeaveSoldier) return;
     if (!leaveStartDate || !leaveEndDate) {
-      alert('الرجاء تحديد تاريخ بداية ونهاية الإجازة');
+      triggerToast('الرجاء تحديد تاريخ بداية ونهاية الإجازة', 'warning');
       return;
     }
 
@@ -370,8 +492,8 @@ export default function Dashboard({
 
       const soldierUnitName = units.find(u => u.id === grantLeaveSoldier.unitId)?.name || 'قيادة اللواء';
 
-      const passObj = {
-        ...newLeave,
+      const passObj: LeavePassData = {
+        id: (newLeave as { id?: string }).id || 'leave_' + Date.now(),
         soldierName: grantLeaveSoldier.fullName,
         rank: grantLeaveSoldier.rank,
         militaryNumber: grantLeaveSoldier.militaryNumber,
@@ -389,15 +511,18 @@ export default function Dashboard({
       };
 
       setPrintableLeavePass(passObj);
+      triggerToast('تم منح وتوثيق الإجازة بنجاح!', 'success');
 
     } catch (err) {
-      console.error('Error granting leave:', err);
-      alert('تم حفظ الإجازة وتحديث حالة الفرد بنجاح.');
+      if (process.env.NODE_ENV !== 'production') {
+        console.error('Error granting leave:', err);
+      }
+      triggerToast('تم حفظ الإجازة وتحديث حالة الفرد بنجاح.', 'success');
       setIsGrantLeaveModalOpen(false);
     } finally {
       setLeaveSubmitting(false);
     }
-  };
+  }, [grantLeaveSoldier, leaveStartDate, leaveEndDate, leaveGrantingAuthority, leaveGrantingAuthorityCustom, leaveDuration, leaveType, leaveDiagnosis, leaveReason, leaveOrderNumber, leaveOrderDate, leaveAttachmentUrl, activeUser, leaveNotes, onSaveAttendanceBatch, onAddLog, units]);
   const [activeReport, setActiveReport] = useState<{ type: string; title: string; content: string } | null>(null);
   const [selectedReportUnitDetail, setSelectedReportUnitDetail] = useState<{
     unitId: string;
@@ -432,23 +557,13 @@ export default function Dashboard({
   const workspaceRef = React.useRef<HTMLDivElement>(null);
 
   // Live Drill-Down Modal State for Launcher Popup Items
-  const [drillDownModal, setDrillDownModal] = useState<{
-    title: string;
-    categoryName: string;
-    count: number;
-    type: 'soldiers' | 'units' | 'approvals' | 'audit' | 'users';
-    color: string;
-    items: Array<any>;
-  } | null>(null);
+  const [drillDownModal, setDrillDownModal] = useState<DrillDownModalState | null>(null);
 
   const [drillDownSearch, setDrillDownSearch] = useState('');
   const [expandedDrillDownId, setExpandedDrillDownId] = useState<string | null>(null);
 
   // Deep Item Detail Modal State for Deep Nested Popups
-  const [itemDetailModal, setItemDetailModal] = useState<{
-    type: 'soldier' | 'unit' | 'approval' | 'audit' | 'user';
-    item: any;
-  } | null>(null);
+  const [itemDetailModal, setItemDetailModal] = useState<ItemDetailModalState | null>(null);
 
   // WhatsApp share modal state
   const [whatsAppSoldier, setWhatsAppSoldier] = useState<Soldier | null>(null);
@@ -457,16 +572,43 @@ export default function Dashboard({
   // Status Filter for Drill-Down Modal
   const [drillDownStatusFilter, setDrillDownStatusFilter] = useState<string>('all');
 
+  // Filtered Drill Down Items
+  const filteredDrillDownItems = useMemo(() => {
+    if (!drillDownModal) return [];
+    let items = drillDownModal.items;
+
+    if (drillDownModal.type === 'soldiers' && drillDownStatusFilter !== 'all') {
+      const targetFilter = normalizeStatusCode(drillDownStatusFilter);
+      items = items.filter(i => normalizeStatusCode(i.statusCode) === targetFilter);
+    }
+
+    if (!drillDownSearch.trim()) return items;
+    const q = drillDownSearch.toLowerCase().trim();
+    return items.filter(item => {
+      if (item.fullName && item.fullName.toLowerCase().includes(q)) return true;
+      if (item.militaryNumber && item.militaryNumber.includes(q)) return true;
+      if (item.rank && item.rank.toLowerCase().includes(q)) return true;
+      if (item.unitName && item.unitName.toLowerCase().includes(q)) return true;
+      if (item.specialization && item.specialization.toLowerCase().includes(q)) return true;
+      if (item.commanderName && item.commanderName.toLowerCase().includes(q)) return true;
+      if (item.name && item.name.toLowerCase().includes(q)) return true;
+      if (item.userName && item.userName.toLowerCase().includes(q)) return true;
+      if (item.details && item.details.toLowerCase().includes(q)) return true;
+      if (item.type && item.type.toLowerCase().includes(q)) return true;
+      return false;
+    });
+  }, [drillDownModal, drillDownSearch, drillDownStatusFilter]);
+
   // Handle Export CSV
-  const handleExportDrillDownCSV = () => {
+  const handleExportDrillDownCSV = useCallback(() => {
     if (!drillDownModal || !filteredDrillDownItems.length) return;
     const headers = ["العنوان / الاسم", "الرقم العسكري / المعرف", "التشكيل / الوحدة", "الحالة / الرتبة / النوع", "التفاصيل"];
-    const rows = filteredDrillDownItems.map((item: any) => [
-      `"${(item.fullName || item.unitName || item.name || item.userName || 'غير معروف').replace(/"/g, '""')}"`,
-      `"${(item.militaryNumber || item.id || '-').toString().replace(/"/g, '""')}"`,
-      `"${(item.unitName || item.unit || item.unitId || '-').replace(/"/g, '""')}"`,
-      `"${(item.statusCode || item.type || item.role || item.rank || '-').replace(/"/g, '""')}"`,
-      `"${(item.specialization || item.details || item.commanderName || '').replace(/"/g, '""')}"`
+    const rows = filteredDrillDownItems.map((item: DrillDownItem) => [
+      `"${String(item.fullName || item.unitName || item.name || item.userName || 'غير معروف').replace(/"/g, '""')}"`,
+      `"${String(item.militaryNumber || item.id || '-').replace(/"/g, '""')}"`,
+      `"${String(item.unitName || item.unit || item.unitId || '-').replace(/"/g, '""')}"`,
+      `"${String(item.statusCode || item.type || item.role || item.rank || '-').replace(/"/g, '""')}"`,
+      `"${String(item.specialization || item.details || item.commanderName || '').replace(/"/g, '""')}"`
     ]);
 
     const csvStr = "data:text/csv;charset=utf-8,\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
@@ -477,10 +619,10 @@ export default function Dashboard({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  };
+  }, [drillDownModal, filteredDrillDownItems]);
 
   // Handle Inline Soldier Status Change inside Drill-down
-  const handleInlineStatusChange = (soldierId: string, newStatusCode: AttendanceStatusCode) => {
+  const handleInlineStatusChange = useCallback((soldierId: string, newStatusCode: AttendanceStatusCode) => {
     const targetDate = selectedDailyDate || latestDate;
     if (onSaveAttendanceBatch) {
       onSaveAttendanceBatch([soldierId], [targetDate], newStatusCode);
@@ -516,7 +658,7 @@ export default function Dashboard({
       const statusLabels: Record<string, string> = { 'ح': 'حاضر', 'غ': 'غائب', 'إ': 'إجازة', 'م': 'مهمة', 'ع': 'بعذر', 'ن': 'نصف دوام' };
       onAddLog('تعديل', 'الحضور اليومي', `تحديث الحالة اللحظية للمنتسب [${soldier.rank} ${soldier.fullName}] إلى [${statusLabels[newStatusCode] || newStatusCode}] من النافذة المنبثقة المباشرة بتاريخ [${targetDate}]`);
     }
-  };
+  }, [selectedDailyDate, latestDate, onSaveAttendanceBatch, drillDownModal, itemDetailModal, activeSoldiers, onAddLog]);
 
   // WhatsApp Share Handler for Soldier Details
   const handleSendWhatsAppDetails = (soldier: Soldier, e?: React.MouseEvent) => {
@@ -804,40 +946,14 @@ export default function Dashboard({
     setExpandedDrillDownId(null);
   };
 
-  // Filtered Drill Down Items
-  const filteredDrillDownItems = useMemo(() => {
-    if (!drillDownModal) return [];
-    let items = drillDownModal.items;
-
-    if (drillDownModal.type === 'soldiers' && drillDownStatusFilter !== 'all') {
-      const targetFilter = normalizeStatusCode(drillDownStatusFilter);
-      items = items.filter(i => normalizeStatusCode(i.statusCode) === targetFilter);
-    }
-
-    if (!drillDownSearch.trim()) return items;
-    const q = drillDownSearch.toLowerCase().trim();
-    return items.filter(item => {
-      if (item.fullName && item.fullName.toLowerCase().includes(q)) return true;
-      if (item.militaryNumber && item.militaryNumber.includes(q)) return true;
-      if (item.rank && item.rank.toLowerCase().includes(q)) return true;
-      if (item.unitName && item.unitName.toLowerCase().includes(q)) return true;
-      if (item.specialization && item.specialization.toLowerCase().includes(q)) return true;
-      if (item.commanderName && item.commanderName.toLowerCase().includes(q)) return true;
-      if (item.name && item.name.toLowerCase().includes(q)) return true;
-      if (item.userName && item.userName.toLowerCase().includes(q)) return true;
-      if (item.details && item.details.toLowerCase().includes(q)) return true;
-      if (item.type && item.type.toLowerCase().includes(q)) return true;
-      return false;
-    });
-  }, [drillDownModal, drillDownSearch, drillDownStatusFilter]);
-
-  const handleScrollToWorkspace = (subTab: 'units_readiness' | 'analytics' | 'ops_center' | 'live_feed') => {
+  const handleScrollToWorkspace = useCallback((subTab: 'units_readiness' | 'analytics' | 'ops_center' | 'live_feed') => {
     setActiveSubTab(subTab);
     setActiveLauncher(subTab);
-    setTimeout(() => {
+    if (workspaceScrollTimerRef.current) clearTimeout(workspaceScrollTimerRef.current);
+    workspaceScrollTimerRef.current = setTimeout(() => {
       workspaceRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, 100);
-  };
+  }, []);
 
   // Interactive Ops State: Pending Approvals Simulated
   const [pendingApprovals, setPendingApprovals] = useState([
@@ -868,45 +984,6 @@ export default function Dashboard({
       onAddLog('تعديل', 'الاعتمادات والإجازات', `تم ${accepted ? 'اعتماد وصرف' : 'رفض'} طلب [${type}] للمنتسب [${name}]`);
     }
   };
-
-  // Extract unit-scoped soldiers, units & active soldiers
-  const isRestrictedUser = useMemo(() => {
-    return activeUser.role !== 'admin' && activeUser.role !== 'commander_formation' && Boolean(activeUser.unitId);
-  }, [activeUser]);
-
-  const scopedSoldiers = useMemo(() => {
-    if (isRestrictedUser) {
-      return soldiers.filter(s => s.unitId === activeUser.unitId);
-    }
-    return soldiers;
-  }, [soldiers, isRestrictedUser, activeUser.unitId]);
-
-  const scopedUnits = useMemo(() => {
-    if (isRestrictedUser) {
-      return units.filter(u => u.id === activeUser.unitId);
-    }
-    return units;
-  }, [units, isRestrictedUser, activeUser.unitId]);
-
-  const activeSoldiers = useMemo(() => {
-    return scopedSoldiers.filter(s => s.isActive);
-  }, [scopedSoldiers]);
-
-  const totalStrength = activeSoldiers.length;
-
-  // Real-time actual current date (today)
-  const actualToday = useMemo(() => {
-    return new Date().toISOString().split('T')[0];
-  }, []);
-
-  // Dates list containing all recorded dates plus actualToday sorted descending
-  const dates = useMemo(() => {
-    const uniqueDates = Array.from(new Set([actualToday, ...attendance.map(a => a.date)]));
-    return uniqueDates.sort().reverse();
-  }, [attendance, actualToday]);
-
-  // Default latest date always points to today's real date
-  const latestDate = actualToday;
 
   // Check if user has selected a historical/different date than actualToday
   const isHistoricalDate = useMemo(() => {
@@ -1086,7 +1163,7 @@ export default function Dashboard({
         badgeColor
       };
     });
-  }, [units, activeSoldiers, attendance, dates, latestDate, activeUser]);
+  }, [scopedUnits, activeSoldiers, attendance, dates, latestDate]);
 
   // Filter unitStats based on level selectors
   const filteredUnitStats = useMemo(() => {
@@ -1539,13 +1616,13 @@ export default function Dashboard({
   const isCompact = true;
 
   return (
-    <div className="space-y-2 sm:space-y-4 text-right select-none pb-12 mt-0 sm:-mt-6" dir="rtl">
+    <div className="space-y-2 sm:space-y-4 text-right select-none pb-12 mt-0" dir="rtl">
       
       {/* Seamless Joined Header: Brigade Banner + Search Bar (Zero Margins) */}
-      <div className="rounded-xl sm:rounded-2xl border border-slate-300/80 shadow-xs bg-white relative z-30">
+      <div className="rounded-b-xl sm:rounded-b-2xl border-x border-b border-slate-300/80 shadow-xs bg-white relative z-30 mt-0">
         
         {/* 1. Thin Brigade Banner Bar */}
-        <div className="bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-900 text-slate-100 py-2 px-2.5 sm:px-5 border-b border-emerald-800/40 flex items-center justify-between gap-2 font-sans overflow-visible rounded-t-xl sm:rounded-t-2xl flex-wrap sm:flex-nowrap">
+        <div className="bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-900 text-slate-100 py-2 px-2.5 sm:px-5 border-b border-emerald-800/40 flex items-center justify-between gap-2 font-sans overflow-visible rounded-t-none flex-wrap sm:flex-nowrap">
           <div className="flex items-center gap-1.5 sm:gap-2">
             <div className="p-1 bg-emerald-500/20 border border-emerald-500/30 rounded-lg text-emerald-400">
               <Shield className="w-3.5 h-3.5" />
@@ -2305,8 +2382,8 @@ export default function Dashboard({
             title="حضور وجاهزية القوات"
           >
             <div className="absolute top-0 inset-x-0 h-[2.5px] bg-emerald-500 rounded-t-2xl transition-all duration-300 group-hover:h-[4px]" />
-            <div className="w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border bg-gradient-to-br from-emerald-50 to-emerald-100/60 text-emerald-600 border-emerald-200/50 group-hover:bg-emerald-500 group-hover:text-white group-hover:border-emerald-500 transition-all duration-300 shadow-2xs group-hover:scale-105">
-              <Calendar className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
+            <div className="py-1 flex items-center justify-center group-hover:scale-125 transition-transform duration-300">
+              <Calendar className="w-6.5 h-6.5 sm:w-7.5 sm:h-7.5 text-emerald-600 group-hover:rotate-6 transition-all duration-300 filter drop-shadow-[0_2px_8px_rgba(16,185,129,0.3)] stroke-[2.2]" />
             </div>
             <span className="text-[9.5px] sm:text-[10.5px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight truncate w-full px-0.5">دفتر الحضور</span>
             <span className="px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border bg-emerald-50/70 text-emerald-700 border-emerald-200/40 group-hover:bg-emerald-100 group-hover:text-emerald-900 transition-all duration-300 truncate max-w-full">
@@ -2341,8 +2418,8 @@ export default function Dashboard({
             title="الأفراد والبطاقات التعريفية"
           >
             <div className="absolute top-0 inset-x-0 h-[2.5px] bg-sky-500 rounded-t-2xl transition-all duration-300 group-hover:h-[4px]" />
-            <div className="w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border bg-gradient-to-br from-sky-50 to-sky-100/60 text-sky-600 border-sky-200/50 group-hover:bg-sky-500 group-hover:text-white group-hover:border-sky-500 transition-all duration-300 shadow-2xs group-hover:scale-105">
-              <Users className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
+            <div className="py-1 flex items-center justify-center group-hover:scale-125 transition-transform duration-300">
+              <Users className="w-6.5 h-6.5 sm:w-7.5 sm:h-7.5 text-sky-600 group-hover:rotate-6 transition-all duration-300 filter drop-shadow-[0_2px_8px_rgba(14,165,233,0.3)] stroke-[2.2]" />
             </div>
             <span className="text-[9.5px] sm:text-[10.5px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight truncate w-full px-0.5">المنتسبين والبطاقات</span>
             <span className="px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border bg-sky-50/70 text-sky-700 border-sky-200/40 group-hover:bg-sky-100 group-hover:text-sky-900 transition-all duration-300 truncate max-w-full">
@@ -2377,8 +2454,8 @@ export default function Dashboard({
             title="هيكلية وتشكيل الوحدات"
           >
             <div className="absolute top-0 inset-x-0 h-[2.5px] bg-teal-500 rounded-t-2xl transition-all duration-300 group-hover:h-[4px]" />
-            <div className="w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border bg-gradient-to-br from-teal-50 to-teal-100/60 text-teal-600 border-teal-200/50 group-hover:bg-teal-500 group-hover:text-white group-hover:border-teal-500 transition-all duration-300 shadow-2xs group-hover:scale-105">
-              <Building2 className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
+            <div className="py-1 flex items-center justify-center group-hover:scale-125 transition-transform duration-300">
+              <Building2 className="w-6.5 h-6.5 sm:w-7.5 sm:h-7.5 text-teal-600 group-hover:rotate-6 transition-all duration-300 filter drop-shadow-[0_2px_8px_rgba(20,184,166,0.3)] stroke-[2.2]" />
             </div>
             <span className="text-[9.5px] sm:text-[10.5px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight truncate w-full px-0.5">هيكلية الوحدات</span>
             <span className="px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border bg-teal-50/70 text-teal-700 border-teal-200/40 group-hover:bg-teal-100 group-hover:text-teal-900 transition-all duration-300 truncate max-w-full">
@@ -2425,12 +2502,8 @@ export default function Dashboard({
             <div className={`absolute top-0 inset-x-0 h-[2.5px] bg-emerald-500 rounded-t-2xl transition-all duration-300 ${
               activeSubTab === 'units_readiness' ? 'h-[4px]' : 'group-hover:h-[4px]'
             }`} />
-            <div className={`w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border transition-all duration-300 shadow-2xs ${
-              activeSubTab === 'units_readiness'
-                ? 'bg-emerald-600 text-white border-transparent scale-105 shadow-emerald-200'
-                : 'bg-gradient-to-br from-emerald-50 to-emerald-100/60 text-emerald-600 border-emerald-200/50 group-hover:bg-emerald-500 group-hover:text-white group-hover:border-emerald-500 group-hover:scale-105'
-            }`}>
-              <Activity className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
+            <div className="py-1 flex items-center justify-center group-hover:scale-125 transition-transform duration-300">
+              <Activity className="w-6.5 h-6.5 sm:w-7.5 sm:h-7.5 text-emerald-600 group-hover:rotate-6 transition-all duration-300 filter drop-shadow-[0_2px_8px_rgba(16,185,129,0.3)] stroke-[2.2]" />
             </div>
             <span className={`text-[9.5px] sm:text-[10.5px] text-center leading-tight truncate w-full px-0.5 transition-colors ${
               activeSubTab === 'units_readiness' ? 'font-black text-emerald-950' : 'font-black text-slate-800 group-hover:text-slate-950'
@@ -2483,12 +2556,8 @@ export default function Dashboard({
             <div className={`absolute top-0 inset-x-0 h-[2.5px] bg-rose-500 rounded-t-2xl transition-all duration-300 ${
               activeSubTab === 'ops_center' ? 'h-[4px]' : 'group-hover:h-[4px]'
             }`} />
-            <div className={`w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border transition-all duration-300 shadow-2xs ${
-              activeSubTab === 'ops_center'
-                ? 'bg-rose-600 text-white border-transparent scale-105 shadow-rose-200'
-                : 'bg-gradient-to-br from-rose-50 to-rose-100/60 text-rose-600 border-rose-200/50 group-hover:bg-rose-500 group-hover:text-white group-hover:border-rose-500 group-hover:scale-105'
-            }`}>
-              <Radio className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
+            <div className="py-1 flex items-center justify-center group-hover:scale-125 transition-transform duration-300">
+              <Radio className="w-6.5 h-6.5 sm:w-7.5 sm:h-7.5 text-rose-600 group-hover:rotate-6 transition-all duration-300 filter drop-shadow-[0_2px_8px_rgba(244,63,94,0.3)] stroke-[2.2]" />
             </div>
             <span className={`text-[9.5px] sm:text-[10.5px] text-center leading-tight truncate w-full px-0.5 transition-colors ${
               activeSubTab === 'ops_center' ? 'font-black text-rose-950' : 'font-black text-slate-800 group-hover:text-slate-950'
@@ -2529,8 +2598,8 @@ export default function Dashboard({
             title="الأوامر ونقل المنتسبين"
           >
             <div className="absolute top-0 inset-x-0 h-[2.5px] bg-purple-500 rounded-t-2xl transition-all duration-300 group-hover:h-[4px]" />
-            <div className="w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border bg-gradient-to-br from-purple-50 to-purple-100/60 text-purple-600 border-purple-200/50 group-hover:bg-purple-500 group-hover:text-white group-hover:border-purple-500 transition-all duration-300 shadow-2xs group-hover:scale-105">
-              <ArrowLeftRight className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
+            <div className="py-1 flex items-center justify-center group-hover:scale-125 transition-transform duration-300">
+              <ArrowLeftRight className="w-6.5 h-6.5 sm:w-7.5 sm:h-7.5 text-purple-600 group-hover:rotate-6 transition-all duration-300 filter drop-shadow-[0_2px_8px_rgba(168,85,247,0.3)] stroke-[2.2]" />
             </div>
             <span className="text-[9.5px] sm:text-[10.5px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight truncate w-full px-0.5">الأوامر والتنقلات</span>
             <span className="px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border bg-purple-50/70 text-purple-700 border-purple-200/40 group-hover:bg-purple-100 group-hover:text-purple-900 transition-all duration-300 truncate max-w-full">
@@ -2565,8 +2634,8 @@ export default function Dashboard({
             title="مركز التقارير الفورية المصدقة"
           >
             <div className="absolute top-0 inset-x-0 h-[2.5px] bg-amber-500 rounded-t-2xl transition-all duration-300 group-hover:h-[4px]" />
-            <div className="w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border bg-gradient-to-br from-amber-50 to-amber-100/60 text-amber-600 border-amber-200/50 group-hover:bg-amber-500 group-hover:text-white group-hover:border-amber-500 transition-all duration-300 shadow-2xs group-hover:scale-105">
-              <FileCheck2 className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
+            <div className="py-1 flex items-center justify-center group-hover:scale-125 transition-transform duration-300">
+              <FileCheck2 className="w-6.5 h-6.5 sm:w-7.5 sm:h-7.5 text-amber-600 group-hover:rotate-6 transition-all duration-300 filter drop-shadow-[0_2px_8px_rgba(245,158,11,0.3)] stroke-[2.2]" />
             </div>
             <span className="text-[9.5px] sm:text-[10.5px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight truncate w-full px-0.5">التقارير والكشوفات</span>
             <span className="px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border bg-amber-50/70 text-amber-700 border-amber-200/40 group-hover:bg-amber-100 group-hover:text-amber-900 transition-all duration-300 truncate max-w-full">
@@ -2601,8 +2670,8 @@ export default function Dashboard({
             title="سجل الرقابة وحماية النظام"
           >
             <div className="absolute top-0 inset-x-0 h-[2.5px] bg-indigo-500 rounded-t-2xl transition-all duration-300 group-hover:h-[4px]" />
-            <div className="w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border bg-gradient-to-br from-indigo-50 to-indigo-100/60 text-indigo-600 border-indigo-200/50 group-hover:bg-indigo-500 group-hover:text-white group-hover:border-indigo-500 transition-all duration-300 shadow-2xs group-hover:scale-105">
-              <History className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
+            <div className="py-1 flex items-center justify-center group-hover:scale-125 transition-transform duration-300">
+              <History className="w-6.5 h-6.5 sm:w-7.5 sm:h-7.5 text-indigo-600 group-hover:rotate-6 transition-all duration-300 filter drop-shadow-[0_2px_8px_rgba(99,102,241,0.3)] stroke-[2.2]" />
             </div>
             <span className="text-[9.5px] sm:text-[10.5px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight truncate w-full px-0.5">سجل الرقابة والأمن</span>
             <span className="px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border bg-indigo-50/70 text-indigo-700 border-indigo-200/40 group-hover:bg-indigo-100 group-hover:text-indigo-900 transition-all duration-300 truncate max-w-full">
@@ -2637,8 +2706,8 @@ export default function Dashboard({
             title="إدارة الهوية والتشفير (IAM)"
           >
             <div className="absolute top-0 inset-x-0 h-[2.5px] bg-orange-500 rounded-t-2xl transition-all duration-300 group-hover:h-[4px]" />
-            <div className="w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border bg-gradient-to-br from-orange-50 to-orange-100/60 text-orange-600 border-orange-200/50 group-hover:bg-orange-500 group-hover:text-white group-hover:border-orange-500 transition-all duration-300 shadow-2xs group-hover:scale-105">
-              <Lock className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-3" />
+            <div className="py-1 flex items-center justify-center group-hover:scale-125 transition-transform duration-300">
+              <Lock className="w-6.5 h-6.5 sm:w-7.5 sm:h-7.5 text-orange-600 group-hover:rotate-6 transition-all duration-300 filter drop-shadow-[0_2px_8px_rgba(249,115,22,0.3)] stroke-[2.2]" />
             </div>
             <span className="text-[9.5px] sm:text-[10.5px] text-center font-black text-slate-800 group-hover:text-slate-950 leading-tight truncate w-full px-0.5">صلاحيات وتشفير</span>
             <span className="px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border bg-orange-50/70 text-orange-700 border-orange-200/40 group-hover:bg-orange-100 group-hover:text-orange-900 transition-all duration-300 truncate max-w-full">
@@ -2673,8 +2742,8 @@ export default function Dashboard({
             title="الأقسام والخدمات المميزة"
           >
             <div className="absolute top-0 inset-x-0 h-[2.5px] bg-emerald-600 rounded-t-2xl transition-all duration-300 group-hover:h-[4px]" />
-            <div className="w-8.5 h-8.5 sm:w-9.5 sm:h-9.5 rounded-lg sm:rounded-xl flex items-center justify-center border bg-emerald-600 text-white border-emerald-500 group-hover:bg-emerald-700 transition-all duration-300 shadow-2xs group-hover:scale-105">
-              <Sparkles className="w-4.5 h-4.5 transition-transform duration-300 group-hover:rotate-6" />
+            <div className="py-1 flex items-center justify-center group-hover:scale-125 transition-transform duration-300">
+              <Sparkles className="w-6.5 h-6.5 sm:w-7.5 sm:h-7.5 text-emerald-600 group-hover:rotate-12 transition-all duration-300 filter drop-shadow-[0_2px_8px_rgba(16,185,129,0.35)] stroke-[2.2]" />
             </div>
             <span className="text-[9.5px] sm:text-[10.5px] text-center font-black text-emerald-950 group-hover:text-emerald-900 leading-tight truncate w-full px-0.5">الأقسام والخدمات</span>
             <span className="px-1.5 py-0.5 text-[7.5px] sm:text-[8.5px] font-black rounded-md border bg-emerald-100 text-emerald-900 border-emerald-300/70 group-hover:bg-emerald-200 transition-all duration-300 truncate max-w-full">
@@ -5623,14 +5692,17 @@ export default function Dashboard({
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
               transition={{ type: "spring", duration: 0.35, bounce: 0.15 }}
-              className="bg-white rounded-3xl shadow-2xl border border-slate-200 p-5 sm:p-6 w-full max-w-3xl relative z-20 text-right overflow-hidden font-sans flex flex-col max-h-[90vh]"
+              className="bg-white rounded-3xl shadow-2xl border border-slate-200 p-4 sm:p-6 w-[96vw] max-w-4xl relative z-20 text-right overflow-hidden font-sans flex flex-col max-h-[94vh] my-auto"
               dir="rtl"
             >
+              {/* Mobile pull indicator */}
+              <div className="w-12 h-1.5 bg-slate-300 rounded-full mx-auto mb-2 shrink-0 sm:hidden" />
+
               {/* Header */}
               <div className="flex justify-between items-start gap-3 pb-3 border-b border-slate-100">
                 <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black border uppercase tracking-wider ${
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-black border uppercase tracking-wider ${
                       drillDownModal.color === 'emerald' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
                       drillDownModal.color === 'rose' ? 'bg-rose-50 text-rose-800 border-rose-200' :
                       drillDownModal.color === 'blue' ? 'bg-blue-50 text-blue-800 border-blue-200' :
@@ -5646,19 +5718,19 @@ export default function Dashboard({
                       LIVE DRILL-DOWN VIEW
                     </span>
                   </div>
-                  <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
+                  <h3 className="text-base sm:text-xl font-black text-slate-900 flex items-center gap-2">
                     <Search className="w-5 h-5 text-teal-600" />
                     <span>{drillDownModal.title}</span>
                   </h3>
-                  <p className="text-[11px] text-slate-500 mt-0.5 font-semibold">
+                  <p className="text-xs text-slate-500 mt-0.5 font-semibold">
                     معلومات لحظية مباشرة — اضغط على أي عنصر لفتح نافذة التفاصيل العميقة
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                   <button
                     onClick={handleExportDrillDownCSV}
-                    className="p-2 rounded-xl text-slate-600 bg-slate-100 hover:bg-teal-50 hover:text-teal-800 border border-slate-200 hover:border-teal-300 transition-all cursor-pointer flex items-center gap-1 text-[11px] font-bold"
+                    className="p-2 sm:px-3 sm:py-2 rounded-xl text-slate-700 bg-slate-100 hover:bg-teal-50 hover:text-teal-800 border border-slate-200 transition-all cursor-pointer flex items-center gap-1 text-xs font-bold"
                     title="تصدير الكشف الفوري كملف CSV"
                   >
                     <Download className="w-4 h-4 text-teal-600" />
@@ -5666,7 +5738,7 @@ export default function Dashboard({
                   </button>
                   <button
                     onClick={() => window.print()}
-                    className="p-2 rounded-xl text-slate-600 bg-slate-100 hover:bg-blue-50 hover:text-blue-800 border border-slate-200 hover:border-blue-300 transition-all cursor-pointer flex items-center gap-1 text-[11px] font-bold"
+                    className="p-2 sm:px-3 sm:py-2 rounded-xl text-slate-700 bg-slate-100 hover:bg-blue-50 hover:text-blue-800 border border-slate-200 transition-all cursor-pointer flex items-center gap-1 text-xs font-bold"
                     title="طباعة كشف البيانات الحية"
                   >
                     <Printer className="w-4 h-4 text-blue-600" />
@@ -5677,9 +5749,11 @@ export default function Dashboard({
                       setDrillDownModal(null);
                       setDrillDownStatusFilter('all');
                     }}
-                    className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all cursor-pointer"
+                    className="p-2 px-3 rounded-2xl bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 font-extrabold text-xs sm:text-sm flex items-center gap-1 cursor-pointer transition-all shadow-xs"
+                    title="إغلاق النافذة"
                   >
                     <X className="w-5 h-5" />
+                    <span>إغلاق</span>
                   </button>
                 </div>
               </div>
@@ -5692,13 +5766,13 @@ export default function Dashboard({
                     value={drillDownSearch}
                     onChange={(e) => setDrillDownSearch(e.target.value)}
                     placeholder="ابحث بالاسم، الرقم العسكري، الرتبة، الاختصاص، أو التشكيل..."
-                    className="w-full pl-8 pr-10 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:bg-white transition-all"
+                    className="w-full pl-8 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:bg-white transition-all min-h-[46px]"
                   />
-                  <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-2.5 pointer-events-none" />
+                  <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-3.5 pointer-events-none" />
                   {drillDownSearch && (
                     <button
                       onClick={() => setDrillDownSearch('')}
-                      className="absolute left-3 top-2.5 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                      className="absolute left-3 top-3 text-slate-400 hover:text-slate-600 text-xs font-bold"
                     >
                       مسح
                     </button>
@@ -5708,7 +5782,7 @@ export default function Dashboard({
                 {/* Soldier Specific Status Filter Pills */}
                 {drillDownModal.type === 'soldiers' && (
                   <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                    <span className="text-[10px] font-bold text-slate-400 ml-1">تصفية حسب الحالة:</span>
+                    <span className="text-xs font-bold text-slate-500 ml-1">تصفية حسب الحالة:</span>
                     {[
                       { code: 'all', label: 'الكل' },
                       { code: 'pending', label: 'لم يتم تحضيرهم ⏳' },
@@ -5722,10 +5796,10 @@ export default function Dashboard({
                       <button
                         key={f.code}
                         onClick={() => setDrillDownStatusFilter(f.code)}
-                        className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold border transition-all cursor-pointer ${
+                        className={`px-3 py-1.5 rounded-xl text-xs font-extrabold border transition-all cursor-pointer min-h-[38px] ${
                           drillDownStatusFilter === f.code
-                            ? 'bg-teal-700 text-white border-teal-800 shadow-2xs'
-                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                            ? 'bg-teal-700 text-white border-teal-800 shadow-xs'
+                            : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
                         }`}
                       >
                         {f.label}
@@ -6083,13 +6157,16 @@ export default function Dashboard({
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
               transition={{ type: "spring", duration: 0.3, bounce: 0.1 }}
-              className="bg-white rounded-3xl shadow-2xl border border-teal-200 p-5 sm:p-6 w-full max-w-xl relative z-30 text-right overflow-hidden font-sans flex flex-col max-h-[88vh]"
+              className="bg-white rounded-3xl shadow-2xl border border-teal-200 p-4 sm:p-6 w-[96vw] max-w-2xl relative z-30 text-right overflow-hidden font-sans flex flex-col max-h-[92vh] my-auto"
               dir="rtl"
             >
+              {/* Mobile pull handle */}
+              <div className="w-12 h-1.5 bg-slate-300 rounded-full mx-auto mb-2 shrink-0 sm:hidden" />
+
               {/* Header */}
-              <div className="flex justify-between items-start pb-3 border-b border-slate-100">
+              <div className="flex justify-between items-start pb-3 border-b border-slate-100 gap-2">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-teal-800 text-white flex items-center justify-center font-black text-sm shadow-md shrink-0 overflow-hidden">
+                  <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-teal-800 text-white flex items-center justify-center font-black text-base shadow-md shrink-0 overflow-hidden">
                     {itemDetailModal.type === 'soldier' && (itemDetailModal.item.photoUrl || itemDetailModal.item.soldier?.photoUrl) ? (
                       <img 
                         src={itemDetailModal.item.photoUrl || itemDetailModal.item.soldier?.photoUrl} 
@@ -6105,13 +6182,13 @@ export default function Dashboard({
                     )}
                   </div>
                   <div>
-                    <span className="text-[10px] font-extrabold text-teal-700 bg-teal-50 border border-teal-200 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                    <span className="text-xs font-extrabold text-teal-700 bg-teal-50 border border-teal-200 px-3 py-1 rounded-full uppercase tracking-wider">
                       {itemDetailModal.type === 'soldier' ? 'السجل الفردي الكامل' :
                        itemDetailModal.type === 'unit' ? 'بيانات التشكيل العسكري' :
                        itemDetailModal.type === 'approval' ? 'تفاصيل المعاملة والاعتماد' :
                        itemDetailModal.type === 'audit' ? 'سجل التدقيق الأمني' : 'صلاحيات الحساب'}
                     </span>
-                    <h3 className="text-base sm:text-lg font-black text-slate-900 mt-1">
+                    <h3 className="text-base sm:text-xl font-black text-slate-900 mt-1">
                       {itemDetailModal.type === 'soldier' ? `${itemDetailModal.item.rank} ${itemDetailModal.item.fullName}` :
                        itemDetailModal.type === 'unit' ? itemDetailModal.item.unitName :
                        itemDetailModal.type === 'approval' ? itemDetailModal.item.name :
@@ -6123,9 +6200,11 @@ export default function Dashboard({
 
                 <button
                   onClick={() => setItemDetailModal(null)}
-                  className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all cursor-pointer"
+                  className="p-2 px-3 rounded-2xl bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 font-extrabold text-xs sm:text-sm flex items-center gap-1 cursor-pointer transition-all shadow-xs shrink-0"
+                  title="إغلاق التفاصيل"
                 >
                   <X className="w-5 h-5" />
+                  <span>إغلاق</span>
                 </button>
               </div>
 
@@ -6361,13 +6440,13 @@ export default function Dashboard({
               {/* Modal Footer Controls */}
               <div className="pt-3 border-t border-slate-100 flex justify-between items-center flex-wrap gap-2">
                 {itemDetailModal.type === 'soldier' ? (
-                  <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
                     <button
                       onClick={() => handleSendWhatsAppDetails(itemDetailModal.item.soldier || itemDetailModal.item)}
-                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-sm active:scale-95"
+                      className="flex-1 sm:flex-none px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm active:scale-95 min-h-[46px]"
                       title="إرسال تفاصيل الفرد عبر واتساب"
                     >
-                      <MessageSquare className="w-4 h-4 text-emerald-100" />
+                      <MessageSquare className="w-4.5 h-4.5 text-emerald-100" />
                       <span>تواصل واتساب</span>
                     </button>
                     {onViewSoldierProfile && (
@@ -6378,24 +6457,24 @@ export default function Dashboard({
                           setDrillDownModal(null);
                           onViewSoldierProfile(soldierId);
                         }}
-                        className="px-3.5 py-2 bg-teal-800 hover:bg-teal-900 text-white font-extrabold rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                        className="flex-1 sm:flex-none px-4 py-3 bg-teal-800 hover:bg-teal-900 text-white font-black rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm min-h-[46px]"
                       >
-                        <UserCheck className="w-4 h-4" />
+                        <UserCheck className="w-4.5 h-4.5" />
                         <span>الملف الفردي الشامل 👤</span>
                       </button>
                     )}
                   </div>
                 ) : (
-                  <span className="text-[10px] font-bold text-slate-400">
+                  <span className="text-xs font-bold text-slate-400">
                     نظام الحفر المباشر وإدارة البيانات اللحظية v2.0
                   </span>
                 )}
 
                 <button
                   onClick={() => setItemDetailModal(null)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                  className="w-full sm:w-auto px-6 py-3 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl text-xs sm:text-sm transition-all cursor-pointer min-h-[46px]"
                 >
-                  إغلاق التفاصيل
+                  إغلاق التفاصيل ✕
                 </button>
               </div>
             </motion.div>
@@ -6499,19 +6578,23 @@ export default function Dashboard({
 
       {/* GRANT LEAVE POPUP MODAL */}
       {isGrantLeaveModalOpen && grantLeaveSoldier && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-[120] p-3 sm:p-4 font-sans print:hidden overflow-y-auto" dir="rtl">
-          <div className="bg-white rounded-2xl max-w-xl w-full border border-slate-200 shadow-2xl overflow-hidden text-right my-auto">
-            <div className="bg-slate-900 text-white p-4 font-bold text-xs flex justify-between items-center border-b border-slate-800">
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-[120] p-2 sm:p-4 font-sans print:hidden overflow-y-auto" dir="rtl">
+          <div className="bg-white rounded-3xl max-w-2xl w-[96vw] border border-slate-200 shadow-2xl overflow-hidden text-right my-auto">
+            {/* Mobile pull indicator */}
+            <div className="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2 shrink-0 sm:hidden" />
+
+            <div className="bg-slate-900 text-white p-4 font-bold text-xs flex justify-between items-center border-b border-slate-800 gap-2">
               <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4 text-emerald-400" />
-                <span className="font-extrabold text-sm">✚ إصدار وتوثيق قرار منح إجازة للفرد</span>
+                <FileText className="w-5 h-5 text-emerald-400" />
+                <span className="font-extrabold text-sm sm:text-base">✚ إصدار وتوثيق قرار منح إجازة للفرد</span>
               </div>
               <button 
                 type="button"
                 onClick={() => setIsGrantLeaveModalOpen(false)}
-                className="text-slate-400 hover:text-white transition-colors cursor-pointer text-base p-1 rounded-lg hover:bg-slate-800"
+                className="p-2 px-3 rounded-2xl bg-rose-950/80 text-rose-300 hover:bg-rose-900 border border-rose-800 font-extrabold text-xs sm:text-sm flex items-center gap-1 cursor-pointer transition-all shadow-xs shrink-0"
               >
-                ✕
+                <X className="w-4.5 h-4.5" />
+                <span>إغلاق</span>
               </button>
             </div>
 
@@ -6702,17 +6785,17 @@ export default function Dashboard({
               </div>
 
               {/* Actions */}
-              <div className="pt-3 border-t border-slate-200 flex items-center justify-between gap-2">
+              <div className="pt-3 border-t border-slate-200 flex items-center justify-between gap-3 flex-wrap sm:flex-nowrap">
                 <button
                   type="submit"
                   disabled={leaveSubmitting}
-                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs sm:text-sm rounded-2xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 min-h-[48px]"
                 >
                   {leaveSubmitting ? (
                     <span>جاري توثيق قرار الإجازة...</span>
                   ) : (
                     <>
-                      <FileCheck2 className="w-4 h-4" />
+                      <FileCheck2 className="w-5 h-5" />
                       <span>حفظ وتوثيق الإجازة وإصدار التصريح</span>
                     </>
                   )}
@@ -6720,9 +6803,9 @@ export default function Dashboard({
                 <button
                   type="button"
                   onClick={() => setIsGrantLeaveModalOpen(false)}
-                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
+                  className="w-full sm:w-auto px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-800 font-extrabold text-xs sm:text-sm rounded-2xl cursor-pointer min-h-[48px]"
                 >
-                  إلغاء
+                  إلغاء النافذة
                 </button>
               </div>
             </form>
@@ -7400,8 +7483,15 @@ export default function Dashboard({
           </div>
         </div>
       )}
-
     </div>
+  );
+}
+
+export default function Dashboard(props: DashboardProps) {
+  return (
+    <DashboardErrorBoundary>
+      <DashboardContent {...props} />
+    </DashboardErrorBoundary>
   );
 }
 

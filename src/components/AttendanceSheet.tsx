@@ -28,6 +28,7 @@ import {
   Sliders
 } from 'lucide-react';
 import { Unit, Soldier, AttendanceRecord, AttendanceStatusCode, PrintSettings } from '../types';
+import { ATTENDANCE_STATUS_MAP, MONTH_NAMES, normalizeStatusCode } from '../constants/attendance';
 
 interface AttendanceSheetProps {
   units: Unit[];
@@ -149,35 +150,6 @@ export default function AttendanceSheet({
     return selectedUnitId;
   }, [selectedUnitId, isRestrictedUser, currentUser.unitId]);
 
-  // Filtered soldiers list
-  const filteredSoldiers = useMemo(() => {
-    return soldiers.filter(s => {
-      // Must be active
-      if (!s.isActive) return false;
-      // Restricted user check
-      if (isRestrictedUser && currentUser.unitId && s.unitId !== currentUser.unitId) return false;
-      // Unit match
-      if (activeUnitId !== 'all' && s.unitId !== activeUnitId) return false;
-      // Search match
-      if (searchQuery) {
-        const query = searchQuery.trim().toLowerCase();
-        const nameMatch = s.fullName.toLowerCase().includes(query);
-        const numberMatch = s.militaryNumber.includes(query);
-        const rankMatch = s.rank.toLowerCase().includes(query);
-        return nameMatch || numberMatch || rankMatch;
-      }
-      return true;
-    });
-  }, [soldiers, activeUnitId, searchQuery, isRestrictedUser, currentUser.unitId]);
-
-  // Paginated soldiers list
-  const paginatedSoldiers = useMemo(() => {
-    const startIdx = (currentPage - 1) * itemsPerPage;
-    return filteredSoldiers.slice(startIdx, startIdx + itemsPerPage);
-  }, [filteredSoldiers, currentPage, itemsPerPage]);
-
-  const totalPages = Math.ceil(filteredSoldiers.length / itemsPerPage);
-
   // Map attendance for fast lookup: { "soldierId_date": statusCode }
   const attendanceMap = useMemo(() => {
     const map: Record<string, AttendanceStatusCode> = {};
@@ -205,12 +177,34 @@ export default function AttendanceSheet({
     return '';
   };
 
-  // Target date for mobile active view
+  // Target date for mobile & daily status filtering
   const mobileTargetDate = useMemo(() => {
     return `${currentYear}-${currentMonth.toString().padStart(2, '0')}-${mobileActiveDay.toString().padStart(2, '0')}`;
   }, [currentYear, currentMonth, mobileActiveDay]);
 
-  // Mobile Daily Attendance Summary Metrics
+  // Step 1: Base Filtered Soldiers List (Filtered by Unit, Search Query, and User Scope)
+  const unitAndSearchFilteredSoldiers = useMemo(() => {
+    return soldiers.filter(s => {
+      // Must be active
+      if (!s.isActive) return false;
+      // Restricted user check
+      if (isRestrictedUser && currentUser.unitId && s.unitId !== currentUser.unitId) return false;
+      // Unit match
+      if (activeUnitId !== 'all' && s.unitId !== activeUnitId) return false;
+      // Search match
+      if (searchQuery) {
+        const query = searchQuery.trim().toLowerCase();
+        const nameMatch = s.fullName.toLowerCase().includes(query);
+        const numberMatch = s.militaryNumber.includes(query);
+        const rankMatch = s.rank.toLowerCase().includes(query);
+        const unitMatch = (units.find(u => u.id === s.unitId)?.name || '').toLowerCase().includes(query);
+        return nameMatch || numberMatch || rankMatch || unitMatch;
+      }
+      return true;
+    });
+  }, [soldiers, activeUnitId, searchQuery, isRestrictedUser, currentUser.unitId, units]);
+
+  // Step 2: Daily Attendance Summary Metrics computed on the Unit & Search filtered subset
   const mobileDailyMetrics = useMemo(() => {
     let present = 0;
     let absent = 0;
@@ -220,7 +214,7 @@ export default function AttendanceSheet({
     let half = 0;
     let unmarked = 0;
 
-    filteredSoldiers.forEach(s => {
+    unitAndSearchFilteredSoldiers.forEach(s => {
       const st = getCellStatus(s.id, mobileTargetDate);
       if (st === 'ح') present++;
       else if (st === 'غ') absent++;
@@ -232,7 +226,7 @@ export default function AttendanceSheet({
     });
 
     return {
-      total: filteredSoldiers.length,
+      total: unitAndSearchFilteredSoldiers.length,
       present,
       absent,
       leave,
@@ -241,25 +235,40 @@ export default function AttendanceSheet({
       half,
       unmarked
     };
-  }, [filteredSoldiers, attendanceMap, mobileTargetDate]);
+  }, [unitAndSearchFilteredSoldiers, attendanceMap, mobileTargetDate]);
 
-  // Mobile Filtered Soldiers according to mobileStatusFilter
-  const mobileFilteredSoldiers = useMemo(() => {
-    return filteredSoldiers.filter(s => {
+  // Step 3: Final Filtered Soldiers List (applies status filter as well)
+  const filteredSoldiers = useMemo(() => {
+    return unitAndSearchFilteredSoldiers.filter(s => {
       const st = getCellStatus(s.id, mobileTargetDate);
       if (mobileStatusFilter === 'unmarked') return !st;
       if (mobileStatusFilter !== 'all') return st === mobileStatusFilter;
       return true;
     });
-  }, [filteredSoldiers, mobileStatusFilter, mobileTargetDate, attendanceMap]);
+  }, [unitAndSearchFilteredSoldiers, mobileStatusFilter, mobileTargetDate, attendanceMap]);
 
-  // Paginated Mobile Soldiers
-  const mobilePaginatedSoldiers = useMemo(() => {
+  // Backward compatibility alias for mobile view
+  const mobileFilteredSoldiers = filteredSoldiers;
+
+  // Paginated Soldiers List for both Desktop Table View & Mobile Cards View
+  const paginatedSoldiers = useMemo(() => {
     const startIdx = (currentPage - 1) * itemsPerPage;
-    return mobileFilteredSoldiers.slice(startIdx, startIdx + itemsPerPage);
-  }, [mobileFilteredSoldiers, currentPage, itemsPerPage]);
+    return filteredSoldiers.slice(startIdx, startIdx + itemsPerPage);
+  }, [filteredSoldiers, currentPage, itemsPerPage]);
 
-  const mobileTotalPages = Math.ceil(mobileFilteredSoldiers.length / itemsPerPage);
+  const totalPages = Math.ceil(filteredSoldiers.length / itemsPerPage);
+  const mobileTotalPages = totalPages;
+  const mobilePaginatedSoldiers = paginatedSoldiers;
+
+  // Reset all active filters
+  const isFilterActive = selectedUnitId !== 'all' || mobileStatusFilter !== 'all' || searchQuery.trim() !== '';
+
+  const handleResetFilters = () => {
+    setSelectedUnitId('all');
+    setMobileStatusFilter('all');
+    setSearchQuery('');
+    setCurrentPage(1);
+  };
 
   // One-tap Quick Action: Mark all remaining unmarked visible soldiers as Present ('ح')
   const handleMarkAllRemainingPresent = () => {
@@ -390,7 +399,9 @@ export default function AttendanceSheet({
         }
       });
       setOfflineBuffer(newBuffer);
-      alert(`تم الحفظ في مخزن عدم الاتصال: تعديل الحضور لـ (${selectedSoldierIds.length}) عسكري ليوم ${batchDayNum} يوليو.`);
+      const monthNames = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+      const monthLabel = monthNames[currentMonth - 1] || 'يناير';
+      alert(`تم الحفظ في مخزن عدم الاتصال: تعديل الحضور لـ (${selectedSoldierIds.length}) عسكري ليوم ${batchDayNum} ${monthLabel}.`);
     } else {
       onBulkUpdateAttendance(selectedSoldierIds, [targetDate], batchStatus);
       onAddLog(
@@ -500,7 +511,9 @@ export default function AttendanceSheet({
     if (filteredSoldiers.length === 0) return;
 
     const dayNum = parseInt(date.split('-')[2]);
-    const confirmAction = window.confirm(`هل أنت متأكد من تطبيق حالة (${status}) على كافة الجنود المعروضين (${filteredSoldiers.length} عسكري) ليوم ${dayNum} يوليو؟`);
+    const monthNames = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+    const monthLabel = monthNames[currentMonth - 1] || 'يناير';
+    const confirmAction = window.confirm(`هل أنت متأكد من تطبيق حالة (${status}) على كافة الجنود المعروضين (${filteredSoldiers.length} عسكري) ليوم ${dayNum} ${monthLabel}؟`);
     if (!confirmAction) return;
 
     const targetSoldierIds = filteredSoldiers.map(s => s.id);
@@ -522,7 +535,7 @@ export default function AttendanceSheet({
       onAddLog(
         'تعديل', 
         'التحضير اليومي', 
-        `تعديل عمود كامل: تطبيق حالة (${status}) لجميع عسكريي (${unitName}) المعروضين ليوم ${dayNum} يوليو.`
+        `تعديل عمود كامل: تطبيق حالة (${status}) لجميع عسكريي (${unitName}) المعروضين ليوم ${dayNum} ${monthLabel}.`
       );
     }
   };
@@ -542,7 +555,7 @@ export default function AttendanceSheet({
 
     for (let d = 1; d <= daysCount; d++) {
       const dateStr = `${yr}-${mo.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
-      initialGrid[dateStr] = getCellStatus(soldier.id, dateStr) || '';
+      initialGrid[dateStr] = (getCellStatus(soldier.id, dateStr) || 'ح') as AttendanceStatusCode;
     }
 
     setSoldierMonthlyGridState(initialGrid);
@@ -561,7 +574,7 @@ export default function AttendanceSheet({
 
     for (let d = 1; d <= daysCount; d++) {
       const dateStr = `${newYear}-${newMonth.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}`;
-      newGrid[dateStr] = getCellStatus(activeMonthlySoldier.id, dateStr) || '';
+      newGrid[dateStr] = (getCellStatus(activeMonthlySoldier.id, dateStr) || 'ح') as AttendanceStatusCode;
     }
 
     setSoldierMonthlyGridState(newGrid);
@@ -604,7 +617,7 @@ export default function AttendanceSheet({
     setSoldierMonthlyGridState(prev => {
       const updated = { ...prev };
       selectedGridDays.forEach(d => {
-        updated[d] = statusCode;
+        updated[d] = statusCode as AttendanceStatusCode;
       });
       return updated;
     });
@@ -929,48 +942,208 @@ export default function AttendanceSheet({
 
       {/* Unified Contiguous Mobile-Optimized Controls Container */}
       <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs overflow-hidden divide-y divide-slate-200/80">
-        {/* 1. Search and Unit Filter Bar */}
-        <div className="p-2 sm:p-3 bg-white space-y-2">
-          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-2">
-            <div className="flex items-center gap-2 w-full lg:w-auto">
+        {/* 1. Advanced Search & Dual Filter Bar (Unit & Status Filters) */}
+        <div className="p-3 bg-white space-y-3">
+          <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-2.5">
+            <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+              
               {/* Search Input */}
-              <div className="relative flex-1 sm:w-64">
-                <Search className="absolute right-2.5 top-2.5 w-4 h-4 text-slate-400" />
+              <div className="relative flex-1 min-w-[200px] sm:w-72">
+                <Search className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
                 <input 
                   type="text" 
-                  placeholder="ابحث بالاسم أو الرقم..."
+                  placeholder="ابحث بالاسم، الرقم، الرتبة أو الوحدة..."
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pr-8 pl-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:border-teal-500 font-sans"
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="w-full pr-9 pl-8 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-teal-500 font-sans shadow-2xs font-semibold"
                 />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute left-2.5 top-2.5 text-slate-400 hover:text-slate-700 cursor-pointer"
+                    title="مسح نص البحث"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
 
               {/* Unit Filter Dropdown */}
               {currentUser.role !== 'commander_unit' && currentUser.role !== 'data_writer' ? (
-                <div className="relative shrink-0">
+                <div className="relative flex items-center bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold font-sans text-slate-800 shrink-0 shadow-2xs">
+                  <Layers className="w-4 h-4 text-teal-600 ml-1.5 shrink-0" />
+                  <span className="text-[11px] text-slate-500 font-bold ml-1.5 hidden sm:inline">الوحدة:</span>
                   <select
                     value={selectedUnitId}
-                    onChange={(e) => setSelectedUnitId(e.target.value)}
-                    className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold font-sans text-slate-800 max-w-[125px] sm:max-w-none focus:outline-hidden"
+                    onChange={(e) => {
+                      setSelectedUnitId(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                    className="bg-transparent text-xs font-extrabold text-slate-800 focus:outline-none cursor-pointer"
                   >
-                    <option value="all">جميع الوحدات</option>
-                    {allowedUnits.map(u => (
-                      <option key={u.id} value={u.id}>{u.name}</option>
-                    ))}
+                    <option value="all">جميع الوحدات ({soldiers.filter(s => s.isActive).length} فرد)</option>
+                    {allowedUnits.map(u => {
+                      const uCount = soldiers.filter(s => s.isActive && s.unitId === u.id).length;
+                      return (
+                        <option key={u.id} value={u.id}>{u.name} ({uCount} فرد)</option>
+                      );
+                    })}
                   </select>
                 </div>
               ) : (
-                <div className="bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-teal-850 font-sans shrink-0">
-                  {allowedUnits[0]?.name}
+                <div className="bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-teal-850 font-sans shrink-0 flex items-center gap-1.5">
+                  <Layers className="w-4 h-4 text-teal-600" />
+                  <span>{allowedUnits[0]?.name}</span>
                 </div>
               )}
+
+              {/* Status Filter Dropdown */}
+              <div className="relative flex items-center bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold font-sans text-slate-800 shrink-0 shadow-2xs">
+                <Sliders className="w-4 h-4 text-blue-600 ml-1.5 shrink-0" />
+                <span className="text-[11px] text-slate-500 font-bold ml-1.5 hidden sm:inline">الحالة:</span>
+                <select
+                  value={mobileStatusFilter}
+                  onChange={(e) => {
+                    setMobileStatusFilter(e.target.value as any);
+                    setCurrentPage(1);
+                  }}
+                  className="bg-transparent text-xs font-extrabold text-slate-800 focus:outline-none cursor-pointer"
+                >
+                  <option value="all">كافة الحالات ({unitAndSearchFilteredSoldiers.length})</option>
+                  <option value="unmarked">⏳ لم يتم تحضيرهم ({mobileDailyMetrics.unmarked})</option>
+                  <option value="ح">🟢 حاضر ({mobileDailyMetrics.present})</option>
+                  <option value="غ">🔴 غائب ({mobileDailyMetrics.absent})</option>
+                  <option value="إ">🔵 إجازة ({mobileDailyMetrics.leave})</option>
+                  <option value="م">🟣 مهمة عسكرية ({mobileDailyMetrics.mission})</option>
+                  <option value="ع">🟡 بعذر مقبول ({mobileDailyMetrics.excuse})</option>
+                  <option value="ن">⚪ نصف يوم ({mobileDailyMetrics.half})</option>
+                </select>
+              </div>
+
+              {/* Reset All Filters Button */}
+              {isFilterActive && (
+                <button
+                  type="button"
+                  onClick={handleResetFilters}
+                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1 shrink-0 shadow-2xs"
+                  title="إلغاء وتصفير كافة محددات البحث والتصفية"
+                >
+                  <X className="w-3.5 h-3.5 text-rose-600" />
+                  <span>إعادة تعيين التصفيات</span>
+                </button>
+              )}
+
             </div>
 
-            {/* Helper info on larger screens */}
-            <div className="hidden md:flex items-center gap-1.5 text-xs text-slate-500 bg-teal-50/50 text-teal-800 p-2 rounded-lg border border-teal-100">
-              <Info className="w-4 h-4" />
-              <span className="font-sans">اضغط على اسم العسكري لتسجيل حالته لكامل أيام الشهر، أو على رقم اليوم لتسجيل حالة الوحدة كاملة.</span>
+            {/* Active Filters Summary Badge */}
+            <div className="flex items-center gap-2 text-xs font-sans text-slate-600 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200/80 justify-between lg:justify-end">
+              <span className="font-bold text-slate-500">النتائج:</span>
+              <span className="font-mono font-black text-emerald-700 text-sm bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200">
+                {filteredSoldiers.length} من أصل {unitAndSearchFilteredSoldiers.length}
+              </span>
             </div>
+          </div>
+
+          {/* Quick Filter Status Pills Bar */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-xs font-bold pt-1 border-t border-slate-100">
+            <span className="text-[11px] text-slate-400 font-bold shrink-0 flex items-center gap-1">
+              <Filter className="w-3.5 h-3.5 text-amber-500" />
+              تصفية سريعة:
+            </span>
+
+            <button
+              type="button"
+              onClick={() => { setMobileStatusFilter('all'); setCurrentPage(1); }}
+              className={`px-2.5 py-1 rounded-xl text-xs font-extrabold transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
+                mobileStatusFilter === 'all'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+              }`}
+            >
+              <span>الكل</span>
+              <span className="font-mono text-[11px] opacity-80">({mobileDailyMetrics.total})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setMobileStatusFilter('unmarked'); setCurrentPage(1); }}
+              className={`px-2.5 py-1 rounded-xl text-xs font-extrabold transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
+                mobileStatusFilter === 'unmarked'
+                  ? 'bg-amber-500 text-slate-950 shadow-xs'
+                  : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
+              }`}
+            >
+              <span>لم يحضر ⏳</span>
+              <span className="font-mono text-[11px] opacity-90">({mobileDailyMetrics.unmarked})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setMobileStatusFilter('ح'); setCurrentPage(1); }}
+              className={`px-2.5 py-1 rounded-xl text-xs font-extrabold transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
+                mobileStatusFilter === 'ح'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200'
+              }`}
+            >
+              <span>حاضر 🟢</span>
+              <span className="font-mono text-[11px] opacity-90">({mobileDailyMetrics.present})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setMobileStatusFilter('غ'); setCurrentPage(1); }}
+              className={`px-2.5 py-1 rounded-xl text-xs font-extrabold transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
+                mobileStatusFilter === 'غ'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200'
+              }`}
+            >
+              <span>غائب 🔴</span>
+              <span className="font-mono text-[11px] opacity-90">({mobileDailyMetrics.absent})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setMobileStatusFilter('إ'); setCurrentPage(1); }}
+              className={`px-2.5 py-1 rounded-xl text-xs font-extrabold transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
+                mobileStatusFilter === 'إ'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200'
+              }`}
+            >
+              <span>إجازة 🔵</span>
+              <span className="font-mono text-[11px] opacity-90">({mobileDailyMetrics.leave})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setMobileStatusFilter('م'); setCurrentPage(1); }}
+              className={`px-2.5 py-1 rounded-xl text-xs font-extrabold transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
+                mobileStatusFilter === 'م'
+                  ? 'bg-purple-600 text-white shadow-xs'
+                  : 'bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200'
+              }`}
+            >
+              <span>مهمة 🟣</span>
+              <span className="font-mono text-[11px] opacity-90">({mobileDailyMetrics.mission})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setMobileStatusFilter('ع'); setCurrentPage(1); }}
+              className={`px-2.5 py-1 rounded-xl text-xs font-extrabold transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
+                mobileStatusFilter === 'ع'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
+              }`}
+            >
+              <span>بعذر 🟡</span>
+              <span className="font-mono text-[11px] opacity-90">({mobileDailyMetrics.excuse})</span>
+            </button>
           </div>
 
           {/* Batch Operations Bar (Desktop Only) */}
@@ -988,9 +1161,13 @@ export default function AttendanceSheet({
                   onChange={(e) => setBatchDayNum(Number(e.target.value))}
                   className="bg-white border border-slate-200 rounded-lg p-1 text-xs font-mono"
                 >
-                  {Array.from({ length: daysInMonth }, (_, i) => (
-                    <option key={i+1} value={i+1}>{i+1} يوليو</option>
-                  ))}
+                  {Array.from({ length: daysInMonth }, (_, i) => {
+                    const monthNames = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+                    const monthLabel = monthNames[currentMonth - 1] || 'يناير';
+                    return (
+                      <option key={i+1} value={i+1}>{i+1} {monthLabel}</option>
+                    );
+                  })}
                 </select>
 
                 <select 
@@ -1440,11 +1617,21 @@ export default function AttendanceSheet({
 
           {/* 5. Mobile Cards List */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-            {mobileFilteredSoldiers.length === 0 ? (
-              <div className="col-span-full bg-white p-10 text-center text-slate-400 rounded-2xl border border-slate-200 font-sans text-sm space-y-2">
-                <Users className="w-8 h-8 text-slate-300 mx-auto" />
-                <p className="font-bold text-slate-700">لا يوجد أفراد مطابقين لهذا التصفية.</p>
-                <p className="text-xs text-slate-400">حاول تغيير خيار التصفية أو اختيار يوم آخر.</p>
+            {filteredSoldiers.length === 0 ? (
+              <div className="col-span-full bg-white p-8 text-center text-slate-500 rounded-2xl border border-slate-200 font-sans text-sm space-y-3">
+                <Users className="w-10 h-10 text-slate-300 mx-auto" />
+                <p className="font-extrabold text-slate-800 text-base">لا يوجد أفراد مطابقين لمعايير التصفية والبحث الحالية</p>
+                <p className="text-xs text-slate-500">جرب تغيير خيار التصفية حسب الوحدة أو الحالة أو إعادة تعيين محددات البحث.</p>
+                {isFilterActive && (
+                  <button
+                    type="button"
+                    onClick={handleResetFilters}
+                    className="mt-2 inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl transition-all cursor-pointer shadow-xs"
+                  >
+                    <X className="w-4 h-4" />
+                    <span>إعادة تعيين كافة التصفيات</span>
+                  </button>
+                )}
               </div>
             ) : (
               mobilePaginatedSoldiers.map(soldier => {
@@ -1647,8 +1834,22 @@ export default function AttendanceSheet({
               <tbody className="divide-y divide-slate-150 font-sans">
                 {filteredSoldiers.length === 0 ? (
                   <tr>
-                    <td colSpan={daysInMonth + 4} className="p-8 text-center text-slate-400 font-sans text-sm">
-                      لا يوجد جنود أو عساكر مطابقين لمعايير البحث في هذه الوحدة.
+                    <td colSpan={daysInMonth + 4} className="p-12 text-center text-slate-500 font-sans text-sm bg-slate-50/50">
+                      <div className="flex flex-col items-center justify-center gap-2 max-w-md mx-auto">
+                        <Users className="w-10 h-10 text-slate-300" />
+                        <p className="font-extrabold text-slate-800 text-base">لا يوجد أفراد مطابقين لمعايير البحث والتصفية المحددة</p>
+                        <p className="text-xs text-slate-500">قد تكون التصفية الحالية (الوحدة أو الحالة) لا تحتوي على أفراد في هذا اليوم.</p>
+                        {isFilterActive && (
+                          <button
+                            type="button"
+                            onClick={handleResetFilters}
+                            className="mt-2 inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl transition-all cursor-pointer shadow-xs"
+                          >
+                            <X className="w-4 h-4" />
+                            <span>إعادة تعيين كافة التصفيات</span>
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ) : (

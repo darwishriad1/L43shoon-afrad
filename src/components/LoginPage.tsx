@@ -246,7 +246,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <div className="space-y-2 animate-fadeIn pt-1">
                 <div className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[10px] p-2 rounded-lg flex items-center gap-1.5">
                   <Info className="w-3.5 h-3.5 shrink-0" />
-                  <span>رمز التحقق التجريبي المعتمد للدخول: <strong className="font-mono text-xs underline">482910</strong></span>
+                  <span>يرجى إدخال رمز التحقق الثنائي (OTP) المكون من 6 أرقام</span>
                 </div>
                 <div className="relative">
                   <input

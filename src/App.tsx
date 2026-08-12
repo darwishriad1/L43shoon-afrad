@@ -4,32 +4,23 @@ import {
   Table, 
   Users, 
   FilePieChart, 
-  History, 
-  Database, 
   Settings, 
-  Bell, 
   User, 
   Calendar, 
   ShieldCheck, 
   Clock,
-  LogIn,
   LogOut,
   Loader2,
   Menu,
-  X,
-  Eye,
-  EyeOff,
-  Lock,
   ShieldAlert,
-  KeyRound,
-  Activity,
   Info,
-  RefreshCw,
-  CheckCircle2,
-  Wifi,
-  Smartphone,
   Sparkles,
-  LockKeyhole
+  X,
+  ChevronLeft,
+  Search,
+  Sun,
+  Moon,
+  ChevronDown
 } from 'lucide-react';
 
 import { 
@@ -40,19 +31,32 @@ import {
   AuditLog, 
   Notification, 
   SystemSettings, 
-  AttendanceStatusCode,
-  SoldierActionRequest
+  AttendanceStatusCode
 } from './types';
 
 import { motion, AnimatePresence } from 'motion/react';
+
+// Hooks & Services
+import { useAuth } from './hooks/useAuth';
+import { useAppData } from './hooks/useAppData';
+import { 
+  unitsService, 
+  soldiersService, 
+  usersService, 
+  attendanceService, 
+  notificationsService, 
+  backupService, 
+  soldierRequestsService, 
+  settingsService, 
+  auditLogsService,
+  apiClient 
+} from './services';
 
 // Component Imports
 import Dashboard from './components/Dashboard';
 import AttendanceSheet from './components/AttendanceSheet';
 import OrgManager from './components/OrgManager';
 import Reports from './components/Reports';
-import AuditLogView from './components/AuditLogView';
-import BackupRestore from './components/BackupRestore';
 import SettingsView from './components/SettingsView';
 import UsersPermissionsManager from './components/UsersPermissionsManager';
 import AboutApp from './components/AboutApp';
@@ -64,70 +68,88 @@ import NotificationCenter from './components/NotificationCenter';
 import SoldierProfile from './components/SoldierProfile';
 import SoldierPortal from './components/SoldierPortal';
 import SoldierRequestsReviewModal from './components/SoldierRequestsReviewModal';
+import BottomSheetNavigation from './components/BottomSheetNavigation';
 import { triggerToast } from './components/ToastContainer';
 
-// Firebase Client Imports
-import { auth, googleAuthProvider } from './lib/firebase.ts';
-import { signInWithPopup, signOut, onAuthStateChanged, GoogleAuthProvider } from 'firebase/auth';
-
-// Resilient API Fetch Import
-import { fetchWithRetry, safeJson } from './lib/api';
-
 export default function App() {
-  // --- STATE MANAGERS ---
-  const [users, setUsers] = useState<UserType[]>([]);
-  const [units, setUnits] = useState<Unit[]>([]);
-  const [soldiers, setSoldiers] = useState<Soldier[]>([]);
-  const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [settings, setSettings] = useState<SystemSettings>({
-    warningThreshold: 70,
-    dailyReminderEnabled: true,
-    dailyReminderTime: '08:30',
-    autoBackupEnabled: true,
-    hijriSupport: true,
-    highContrastMode: false
-  });
+  // Authentication Custom Hook
+  const {
+    authUser,
+    dbUser,
+    token,
+    loadingAuth,
+    loginError,
+    setLoginError,
+    loginWithPassword,
+    loginWithGoogle,
+    logout
+  } = useAuth();
 
-  // High Contrast Theme side effect
-  useEffect(() => {
-    if (settings?.highContrastMode) {
-      document.documentElement.classList.add('high-contrast-mode');
-      document.body.classList.add('high-contrast-mode');
-    } else {
-      document.documentElement.classList.remove('high-contrast-mode');
-      document.body.classList.remove('high-contrast-mode');
-    }
-  }, [settings?.highContrastMode]);
+  // Application Data Custom Hook
+  const {
+    users,
+    setUsers,
+    units,
+    setUnits,
+    soldiers,
+    setSoldiers,
+    attendance,
+    setAttendance,
+    auditLogs,
+    setAuditLogs,
+    notifications,
+    setNotifications,
+    settings,
+    setSettings,
+    soldierRequests,
+    loadAllData,
+    refreshSoldiers,
+    refreshAttendance,
+    refreshSoldierRequests,
+  } = useAppData();
 
-  // Auth States
-  const [authUser, setAuthUser] = useState<any>(null);
-  const [token, setToken] = useState<string | null>(null);
-  const [dbUser, setDbUser] = useState<UserType | null>(null);
-  const [loadingAuth, setLoadingAuth] = useState(true);
-  const [loadingData, setLoadingData] = useState(false);
-  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
+  // Login UI local states
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
-  const [loginError, setLoginError] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  
-  // Advanced Login Features States
-  const [capsLockActive, setCapsLockActive] = useState(false);
-  const [showForgotHelp, setShowForgotHelp] = useState(false);
   const [otpEnabled, setOtpEnabled] = useState(false);
   const [otpValue, setOtpValue] = useState('');
-  const [securityStatus, setSecurityStatus] = useState<'idle' | 'checking' | 'secure'>('secure');
-  const [securityDetails, setSecurityDetails] = useState({
-    ssl: true,
-    firewalled: true,
-    dbConnected: true,
-    integrityCheck: true
+  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
+
+  // App Navigation & Modals
+  const [showSplashScreen, setShowSplashScreen] = useState<boolean>(true);
+  const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [selectedSoldierIdForProfile, setSelectedSoldierIdForProfile] = useState<string | null>(null);
+  const [isMoreBottomSheetOpen, setIsMoreBottomSheetOpen] = useState(false);
+  const [isRequestsModalOpen, setIsRequestsModalOpen] = useState(false);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
+  const [isUserAccountPopoverOpen, setIsUserAccountPopoverOpen] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('isDarkMode');
+      return saved !== null ? JSON.parse(saved) : false;
+    } catch {
+      return false;
+    }
   });
-  // Active logged-in database user ID
-  const [currentUserId, setCurrentUserId] = useState<string>('');
-  
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('isDarkMode', JSON.stringify(isDarkMode));
+    } catch {}
+
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+      document.documentElement.classList.remove('light-mode');
+      document.body.classList.add('dark');
+      document.body.classList.remove('light-mode');
+    } else {
+      document.documentElement.classList.remove('dark');
+      document.documentElement.classList.add('light-mode');
+      document.body.classList.remove('dark');
+      document.body.classList.add('light-mode');
+    }
+  }, [isDarkMode]);
+
   // Real-time ticking clock
   const [timeStr, setTimeStr] = useState<string>('');
 
@@ -144,6 +166,24 @@ export default function App() {
     const interval = setInterval(updateTime, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // Fetch initial app data when authenticated
+  useEffect(() => {
+    if (authUser || token) {
+      loadAllData();
+    }
+  }, [authUser, token, loadAllData]);
+
+  // High Contrast Theme side effect
+  useEffect(() => {
+    if (settings?.highContrastMode) {
+      document.documentElement.classList.add('high-contrast-mode');
+      document.body.classList.add('high-contrast-mode');
+    } else {
+      document.documentElement.classList.remove('high-contrast-mode');
+      document.body.classList.remove('high-contrast-mode');
+    }
+  }, [settings?.highContrastMode]);
 
   // --- AUTOMATIC UPDATE CHECK ON STARTUP ---
   useEffect(() => {
@@ -164,414 +204,26 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, []);
-  
-  // Navigation
-  const [showSplashScreen, setShowSplashScreen] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<string>('dashboard');
-  const [selectedSoldierIdForProfile, setSelectedSoldierIdForProfile] = useState<string | null>(null);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isMoreBottomSheetOpen, setIsMoreBottomSheetOpen] = useState(false);
 
-  // Notifications dropdown open status
-  const [isNotifOpen, setIsNotifOpen] = useState(false);
-
-  // Soldier Requests & Review Modal State
-  const [soldierRequests, setSoldierRequests] = useState<SoldierActionRequest[]>([]);
-  const [isRequestsModalOpen, setIsRequestsModalOpen] = useState(false);
-
-  // Logout confirmation modal state
-  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
-
-  // --- AUTHENTICATION LISTENER ---
-  useEffect(() => {
-    let active = true;
-    
-    const checkLocalAndFirebase = async () => {
-      const localToken = localStorage.getItem('military_auth_token');
-      if (localToken) {
-        try {
-          // Get user profile
-          const res = await fetchWithRetry('/api/users/me', {
-            headers: {
-              'Authorization': `Bearer ${localToken}`
-            }
-          });
-          if (!res.ok) {
-            if (res.status === 401 || res.status === 403) {
-              const authErr = new Error('Local session invalid');
-              (authErr as any).isAuthError = true;
-              throw authErr;
-            }
-            throw new Error(`Server returned status ${res.status}`);
-          }
-          const profile = await safeJson(res);
-          if (!active) return;
-          
-          setToken(localToken);
-          setAuthUser({ uid: profile.id, email: profile.email || 'user@local.com', displayName: profile.name || 'مستخدم' });
-          setDbUser(profile);
-          setCurrentUserId(profile.id);
-
-          // Now fetch entire initial state from Postgres
-          setLoadingData(true);
-          const headers = { 'Authorization': `Bearer ${localToken}` };
-          
-          const [usersRes, unitsRes, soldiersRes, attendanceRes, logsRes, notificationsRes, settingsRes, reqsRes] = await Promise.all([
-            fetchWithRetry('/api/users', { headers }),
-            fetchWithRetry('/api/units', { headers }),
-            fetchWithRetry('/api/soldiers', { headers }),
-            fetchWithRetry('/api/attendance', { headers }),
-            fetchWithRetry('/api/journal-records', { headers }),
-            fetchWithRetry('/api/notifications', { headers }),
-            fetchWithRetry('/api/settings', { headers }),
-            fetchWithRetry('/api/soldier-requests', { headers }),
-          ]);
-          
-          const [usersData, unitsData, soldiersData, attendanceData, logsData, notificationsData, settingsData, reqsData] = await Promise.all([
-            safeJson(usersRes, []),
-            safeJson(unitsRes, []),
-            safeJson(soldiersRes, []),
-            safeJson(attendanceRes, []),
-            safeJson(logsRes, []),
-            safeJson(notificationsRes, []),
-            safeJson(settingsRes, null),
-            safeJson(reqsRes, []),
-          ]);
-          
-          if (!active) return;
-          setUsers(Array.isArray(usersData) ? usersData : []);
-          setUnits(Array.isArray(unitsData) ? unitsData : []);
-          setSoldiers(Array.isArray(soldiersData) ? soldiersData : []);
-          setAttendance(Array.isArray(attendanceData) ? attendanceData : []);
-          setAuditLogs(Array.isArray(logsData) ? logsData : []);
-          setNotifications(Array.isArray(notificationsData) ? notificationsData : []);
-          if (settingsData && typeof settingsData === 'object' && !settingsData.error) {
-            setSettings(prev => ({
-              warningThreshold: 70,
-              dailyReminderEnabled: true,
-              dailyReminderTime: '08:30',
-              autoBackupEnabled: true,
-              hijriSupport: true,
-              highContrastMode: false,
-              ...prev,
-              ...settingsData
-            }));
-          }
-          setSoldierRequests(Array.isArray(reqsData) ? reqsData : []);
-          setLoadingAuth(false);
-          return; // Skip Firebase subscribe if we successfully restored local session
-        } catch (err: any) {
-          console.error("Local session restore error:", err);
-          if (err?.isAuthError) {
-            console.warn("Session token expired or invalid, clearing stored token");
-            localStorage.removeItem('military_auth_token');
-          } else {
-            console.warn("Transient network/server error during session restore, keeping stored token");
-          }
-        }
-      }
-
-      // If no local session (or restoration failed), listen to Firebase
-      const unsubscribe = onAuthStateChanged(auth, async (user) => {
-        if (!active) return;
-        if (user) {
-          setAuthUser(user);
-          try {
-            const idToken = await user.getIdToken();
-            setToken(idToken);
-            
-            // Get or Register user in Postgres
-            const res = await fetchWithRetry('/api/users/me', {
-              headers: {
-                'Authorization': `Bearer ${idToken}`
-              }
-            });
-            const profile = await safeJson(res);
-            if (!active) return;
-            setDbUser(profile);
-
-            // Seed state with the logged-in user if not already present
-            setUsers(prev => {
-              const safePrev = Array.isArray(prev) ? prev : [];
-              const exists = safePrev.some(u => u.id === profile?.id || (u as any).uid === profile?.uid);
-              if (!exists && profile?.id) {
-                return [...safePrev, profile];
-              }
-              return safePrev;
-            });
-            if (profile?.id) {
-              setCurrentUserId(profile.id);
-            }
-
-            // Now fetch entire initial state from Postgres
-            setLoadingData(true);
-            const headers = { 'Authorization': `Bearer ${idToken}` };
-            
-            const [usersRes, unitsRes, soldiersRes, attendanceRes, logsRes, notificationsRes, settingsRes, reqsRes] = await Promise.all([
-              fetchWithRetry('/api/users', { headers }),
-              fetchWithRetry('/api/units', { headers }),
-              fetchWithRetry('/api/soldiers', { headers }),
-              fetchWithRetry('/api/attendance', { headers }),
-              fetchWithRetry('/api/journal-records', { headers }),
-              fetchWithRetry('/api/notifications', { headers }),
-              fetchWithRetry('/api/settings', { headers }),
-              fetchWithRetry('/api/soldier-requests', { headers }),
-            ]);
-            
-            const [usersData, unitsData, soldiersData, attendanceData, logsData, notificationsData, settingsData, reqsData] = await Promise.all([
-              safeJson(usersRes, []),
-              safeJson(unitsRes, []),
-              safeJson(soldiersRes, []),
-              safeJson(attendanceRes, []),
-              safeJson(logsRes, []),
-              safeJson(notificationsRes, []),
-              safeJson(settingsRes, null),
-              safeJson(reqsRes, []),
-            ]);
-            
-            if (!active) return;
-            setUsers(Array.isArray(usersData) ? usersData : []);
-            setUnits(Array.isArray(unitsData) ? unitsData : []);
-            setSoldiers(Array.isArray(soldiersData) ? soldiersData : []);
-            setAttendance(Array.isArray(attendanceData) ? attendanceData : []);
-            setAuditLogs(Array.isArray(logsData) ? logsData : []);
-            setNotifications(Array.isArray(notificationsData) ? notificationsData : []);
-            if (settingsData && typeof settingsData === 'object' && !settingsData.error) {
-              setSettings(prev => ({
-                warningThreshold: 70,
-                dailyReminderEnabled: true,
-                dailyReminderTime: '08:30',
-                autoBackupEnabled: true,
-                hijriSupport: true,
-                highContrastMode: false,
-                ...prev,
-                ...settingsData
-              }));
-            }
-            setSoldierRequests(Array.isArray(reqsData) ? reqsData : []);
-          } catch (err) {
-            console.error("Error loading data from server:", err);
-          } finally {
-            if (active) setLoadingData(false);
-          }
-        } else {
-          setAuthUser(null);
-          setToken(null);
-          setDbUser(null);
-          setCurrentUserId('');
-          setGoogleAccessToken(null);
-        }
-        if (active) setLoadingAuth(false);
-      });
-
-      return unsubscribe;
-    };
-
-    // Safety timeout to prevent infinite auth loading screen
-    const safetyTimeout = setTimeout(() => {
-      if (active) {
-        setLoadingAuth(false);
-      }
-    }, 4000);
-
-    const unsubscribePromise = checkLocalAndFirebase();
-
-    return () => {
-      active = false;
-      clearTimeout(safetyTimeout);
-      unsubscribePromise.then(unsub => {
-        if (unsub) unsub();
-      });
-    };
-  }, []);
-
-  // Current User Object (Simulation or Authenticated)
+  // Current User Object
   const currentUser = useMemo(() => {
-    const safeUsers = Array.isArray(users) ? users : [];
-    return safeUsers.find(u => u.id === currentUserId) || dbUser || {
+    return dbUser || {
       id: 'guest',
       name: 'زائر',
       email: '',
       role: 'data_writer' as const,
       unitId: null
     };
-  }, [users, currentUserId, dbUser]);
+  }, [dbUser]);
 
-  // Review & Approve/Reject Soldier Action Requests
-  const handleReviewSoldierRequest = async (requestId: string, status: 'approved' | 'rejected', rejectionReason?: string) => {
-    const res = await fetch(`/api/soldier-requests/${requestId}/review`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        status,
-        rejectionReason,
-        reviewedBy: currentUser.name || 'المدير'
-      })
-    });
-    if (!res.ok) throw new Error('فشل تقييم ومراجعة الطلب');
-
-    triggerToast(
-      status === 'approved' ? 'تمت الموافقة على الطلب وتحديث البيانات تلقائياً' : 'تم رفض الطلب وإبلاغ الفرد',
-      status === 'approved' ? 'success' : 'info'
-    );
-
-    // Refresh requests, soldiers, & attendance list
-    const reqRes = await fetch('/api/soldier-requests');
-    if (reqRes.ok) setSoldierRequests(await reqRes.json());
-
-    const soldRes = await fetch('/api/soldiers');
-    if (soldRes.ok) setSoldiers(await soldRes.json());
-
-    const attRes = await fetch('/api/attendance');
-    if (attRes.ok) setAttendance(await attRes.json());
-  };
-
-  // Login handler (Google Sign-in)
-  const handleLogin = async () => {
-    try {
-      setLoadingAuth(true);
-      const result = await signInWithPopup(auth, googleAuthProvider);
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      if (credential?.accessToken) {
-        setGoogleAccessToken(credential.accessToken);
-      }
-    } catch (err) {
-      console.error("Login failed:", err);
-      setLoadingAuth(false);
-    }
-  };
-
-  // Local login handler (Username/Password with OTP validation if enabled)
-  const handleLocalLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoginError('');
-    
-    if (!loginUsername || !loginPassword) {
-      setLoginError('الرجاء إدخال اسم المستخدم وكلمة المرور');
-      return;
-    }
-
-    if (otpEnabled && otpValue !== '482910') {
-      setLoginError('رمز التحقق الثنائي (OTP) غير صحيح. يرجى إدخال الرمز المعتمد الصالح (482910) لإكمال متطلبات الدخول العسكري.');
-      return;
-    }
-
-    setLoadingAuth(true);
-    try {
-      const res = await fetchWithRetry('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: loginUsername, password: loginPassword })
-      });
-      
-      if (!res.ok) {
-        const data = await safeJson<any>(res, {});
-        throw new Error(data.error || 'فشل تسجيل الدخول: اسم المستخدم أو كلمة المرور خاطئة');
-      }
-
-      const { token: localToken, user } = await safeJson(res);
-      
-      // Save in localStorage for persistence
-      localStorage.setItem('military_auth_token', localToken);
-      
-      setToken(localToken);
-      setAuthUser({ uid: user.id, email: user.email, displayName: user.name });
-      setDbUser(user);
-      setCurrentUserId(user.id);
-
-      // Add audit log
-      const newLog: AuditLog = {
-        id: `log_login_${Date.now()}`,
-        userId: user.id,
-        userName: user.name,
-        userRole: user.role,
-        actionType: 'تعديل',
-        tableName: 'جلسات الدخول',
-        details: `تم تسجيل دخول المستخدم ${user.name} بنجاح ${otpEnabled ? 'مع تفعيل التحقق الثنائي (OTP)' : ''}.`,
-        timestamp: new Date().toISOString()
-      };
-      setAuditLogs(prev => [newLog, ...prev]);
-
-      // Trigger load of data
-      setLoadingData(true);
-      const headers = { 'Authorization': `Bearer ${localToken}` };
-      const [usersRes, unitsRes, soldiersRes, attendanceRes, logsRes, notificationsRes, settingsRes] = await Promise.all([
-        fetchWithRetry('/api/users', { headers }),
-        fetchWithRetry('/api/units', { headers }),
-        fetchWithRetry('/api/soldiers', { headers }),
-        fetchWithRetry('/api/attendance', { headers }),
-        fetchWithRetry('/api/journal-records', { headers }),
-        fetchWithRetry('/api/notifications', { headers }),
-        fetchWithRetry('/api/settings', { headers }),
-      ]);
-      
-      const [usersData, unitsData, soldiersData, attendanceData, logsData, notificationsData, settingsData] = await Promise.all([
-        safeJson(usersRes, []),
-        safeJson(unitsRes, []),
-        safeJson(soldiersRes, []),
-        safeJson(attendanceRes, []),
-        safeJson(logsRes, []),
-        safeJson(notificationsRes, []),
-        safeJson(settingsRes, null),
-      ]);
-      
-      setUsers(usersData);
-      setUnits(unitsData);
-      setSoldiers(soldiersData);
-      setAttendance(attendanceData);
-      setAuditLogs(logsData);
-      setNotifications(notificationsData);
-      if (settingsData && typeof settingsData === 'object' && !settingsData.error) {
-        setSettings(prev => ({
-          warningThreshold: 70,
-          dailyReminderEnabled: true,
-          dailyReminderTime: '08:30',
-          autoBackupEnabled: true,
-          hijriSupport: true,
-          highContrastMode: false,
-          ...prev,
-          ...settingsData
-        }));
-      }
-    } catch (err: any) {
-      setLoginError(err.message || 'خطأ غير متوقع أثناء تسجيل الدخول');
-    } finally {
-      setLoadingAuth(false);
-    }
-  };
-
-  // Logout handler
-  const handleLogout = async () => {
-    try {
-      localStorage.removeItem('military_auth_token');
-      if (auth && auth.currentUser) {
-        await signOut(auth);
-      }
-    } catch (err) {
-      console.error("Logout failed:", err);
-    } finally {
-      localStorage.removeItem('military_auth_token');
-      setAuthUser(null);
-      setToken(null);
-      setDbUser(null);
-      setCurrentUserId('');
-      setLoginUsername('');
-      setLoginPassword('');
-      setIsLogoutModalOpen(false);
-      triggerToast('تم تسجيل الخروج بنجاح', 'info');
-    }
-  };
-
-  // --- ACTIONS & HANDLERS ---
-  
-  // Custom Audit Log Adder
+  // Audit Log Adder
   const handleAddLog = useCallback(async (
     actionType: 'إضافة' | 'تعديل' | 'حذف' | 'استيراد' | 'استعادة', 
     tableName: string, 
     details: string
   ) => {
     const newLog: AuditLog = {
-      id: `log_${Date.now()}`,
+      id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       userId: currentUser.id,
       userName: currentUser.name,
       userRole: currentUser.role === 'admin' ? 'مدير النظام' : 
@@ -587,49 +239,48 @@ export default function App() {
     setAuditLogs(prev => [newLog, ...prev]);
 
     try {
-      await fetchWithRetry('/api/journal-records', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify(newLog)
-      });
+      await auditLogsService.addLog(newLog);
     } catch (e) {
       console.error("Error saving audit log:", e);
     }
-  }, [currentUser, token]);
+  }, [currentUser, setAuditLogs]);
 
-  const refreshSoldierRequests = useCallback(async () => {
-    try {
-      const res = await fetchWithRetry('/api/soldier-requests', {
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-      });
-      if (res.ok) {
-        const data = await safeJson(res, []);
-        setSoldierRequests(data);
-      }
-    } catch (e) {
-      console.error("Error refreshing soldier requests:", e);
+  // Login handler
+  const handleLocalLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (otpEnabled && !otpValue) {
+      setLoginError('الرجاء إدخال رمز التحقق الثنائي (OTP)');
+      return;
     }
-  }, [token]);
 
-  // Refresh global attendance list
-  const refreshAttendance = useCallback(async () => {
-    try {
-      const res = await fetchWithRetry('/api/attendance', {
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-      });
-      if (res.ok) {
-        const data = await safeJson(res, []);
-        setAttendance(data);
-      }
-    } catch (e) {
-      console.error("Error refreshing attendance:", e);
+    const ok = await loginWithPassword(loginUsername, loginPassword, otpEnabled ? otpValue : undefined);
+    if (ok) {
+      handleAddLog('تعديل', 'جلسات الدخول', `تم تسجيل دخول المستخدم ${loginUsername} بنجاح.`);
+      triggerToast('تم تسجيل الدخول بنجاح', 'success');
     }
-  }, [token]);
+  };
 
-  // Update single attendance record
+  const handleLogout = async () => {
+    await logout();
+    setIsLogoutModalOpen(false);
+    triggerToast('تم تسجيل الخروج بنجاح', 'info');
+  };
+
+  // Review & Approve/Reject Soldier Action Requests
+  const handleReviewSoldierRequest = async (requestId: string, status: 'approved' | 'rejected', rejectionReason?: string) => {
+    try {
+      await soldierRequestsService.reviewRequest(requestId, status, rejectionReason, currentUser.name || 'المدير');
+      triggerToast(
+        status === 'approved' ? 'تمت الموافقة على الطلب وتحديث البيانات تلقائياً' : 'تم رفض الطلب وإبلاغ الفرد',
+        status === 'approved' ? 'success' : 'info'
+      );
+      await Promise.all([refreshSoldierRequests(), refreshSoldiers(), refreshAttendance()]);
+    } catch {
+      triggerToast('فشل تقييم ومراجعة الطلب', 'error');
+    }
+  };
+
+  // Single Attendance update
   const handleUpdateAttendance = useCallback(async (soldierId: string, date: string, status: AttendanceStatusCode) => {
     const record: AttendanceRecord = {
       id: `att_${soldierId}_${date}_${Date.now()}`,
@@ -640,7 +291,6 @@ export default function App() {
       updatedAt: new Date().toISOString()
     };
 
-    // Update soldier military status in local state to guarantee system-wide consistency
     const statusMap: Record<string, string> = {
       'ح': 'على رأس العمل',
       'غ': 'غياب',
@@ -663,19 +313,12 @@ export default function App() {
     triggerToast('تم تحديث حالة الحضور اليومي بنجاح', 'success');
 
     try {
-      await fetchWithRetry('/api/attendance', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify(record)
-      });
+      await attendanceService.saveAttendanceRecord(soldierId, date, status);
       await refreshAttendance();
     } catch (e) {
       console.error("Error saving attendance:", e);
     }
-  }, [currentUser, token, soldiers, handleAddLog, refreshAttendance]);
+  }, [currentUser, soldiers, setSoldiers, setAttendance, handleAddLog, refreshAttendance]);
 
   // Bulk update attendance records
   const handleBulkUpdateAttendance = useCallback(async (soldierIds: string[], dates: string[], status: AttendanceStatusCode) => {
@@ -693,7 +336,6 @@ export default function App() {
       });
     });
 
-    // Update soldiers military status in local state to guarantee system-wide consistency
     const statusMap: Record<string, string> = {
       'ح': 'على رأس العمل',
       'غ': 'غياب',
@@ -708,7 +350,7 @@ export default function App() {
     }
 
     setAttendance(prev => {
-      let filtered = prev.filter(r => !(soldierIds.includes(r.soldierId) && dates.includes(r.date)));
+      const filtered = prev.filter(r => !(soldierIds.includes(r.soldierId) && dates.includes(r.date)));
       return [...filtered, ...newRecords];
     });
 
@@ -716,19 +358,12 @@ export default function App() {
     triggerToast('تم تطبيق التحضير الجماعي بنجاح', 'success');
 
     try {
-      await fetchWithRetry('/api/attendance/bulk', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({ records: newRecords })
-      });
+      await attendanceService.bulkSaveAttendance(newRecords);
       await refreshAttendance();
     } catch (e) {
       console.error("Error saving bulk attendance:", e);
     }
-  }, [currentUser, token, handleAddLog, refreshAttendance]);
+  }, [currentUser, setSoldiers, setAttendance, handleAddLog, refreshAttendance]);
 
   // Restore whole state (Backups)
   const handleRestoreState = useCallback(async (importedData: {
@@ -737,27 +372,100 @@ export default function App() {
     attendance: AttendanceRecord[];
     auditLogs: AuditLog[];
   }) => {
-    setUnits(importedData.units);
-    setSoldiers(importedData.soldiers);
-    setAttendance(importedData.attendance);
-    if (importedData.auditLogs && importedData.auditLogs.length > 0) {
-      setAuditLogs(importedData.auditLogs);
-    }
-    triggerToast('تم استعادة بيانات المنظومة بنجاح', 'success');
-
     try {
-      await fetchWithRetry('/api/attendance/bulk', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({ records: importedData.attendance })
-      });
-    } catch (e) {
+      await backupService.restoreBackup(importedData);
+
+      setUnits(importedData.units);
+      setSoldiers(importedData.soldiers);
+      setAttendance(importedData.attendance);
+      if (importedData.auditLogs && importedData.auditLogs.length > 0) {
+        setAuditLogs(importedData.auditLogs);
+      }
+      triggerToast('تم استعادة بيانات المنظومة بنجاح وحفظها في قاعدة البيانات', 'success');
+    } catch (e: any) {
       console.error("Error restoring database backup:", e);
+      triggerToast(e.message || 'فشلت عملية استعادة النسخة الاحتياطية على السيرفر', 'error');
     }
-  }, [token]);
+  }, [setUnits, setSoldiers, setAttendance, setAuditLogs]);
+
+  // Handle Reset Database (5-Second Hold Factory Reset with Auto Backup)
+  const handleResetDatabase = useCallback(async () => {
+    try {
+      // 1. AUTOMATIC BACKUP CREATION BEFORE RESET
+      const backupPayload = {
+        version: '1.0.0',
+        timestamp: new Date().toISOString(),
+        type: 'AUTO_RESET_BACKUP',
+        description: 'نسخة احتياطية تلقائية تم إنشاؤها فوراً قبل تنفيذ عملية تهيئة وتصفية المنظومة',
+        data: {
+          units,
+          soldiers,
+          attendance,
+          auditLogs
+        }
+      };
+
+      const jsonString = JSON.stringify(backupPayload, null, 2);
+
+      // Save to localStorage as safety net
+      try {
+        localStorage.setItem('auto_backup_before_reset', jsonString);
+        localStorage.setItem('auto_backup_before_reset_date', new Date().toLocaleDateString('ar-YE'));
+      } catch (err) {
+        console.warn('Could not save auto backup to localStorage:', err);
+      }
+
+      // Trigger automatic file download
+      try {
+        const dateStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 16);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `نسخة_احتياطية_تلقائية_قبل_التهيئة_${dateStr}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        triggerToast('تم إنشاء وتنزيل نسخة احتياطية تلقائية للبيانات للحفاظ على سجلاتك قبل التهيئة.', 'success');
+      } catch (err) {
+        console.error('Auto download failed:', err);
+      }
+
+      // 2. CALL RESET API ON SERVER
+      await apiClient.post('/api/system/reset-database');
+
+      // Clear local React state
+      setUnits([]);
+      setSoldiers([]);
+      setAttendance([]);
+      setAuditLogs([]);
+      if (currentUser && currentUser.id !== 'guest') {
+        setUsers([{ ...currentUser, role: 'admin' as const }]);
+      } else {
+        setUsers([]);
+      }
+      
+      handleAddLog('حذف', 'قاعدة البيانات', 'تمت تهيئة قاعدة البيانات وتصفية كافة السجلات والمستخدمين باستثناء مدير النظام.');
+      
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
+    } catch (e: any) {
+      console.error("Error resetting database:", e);
+      // Fallback local reset if backend request fails
+      setUnits([]);
+      setSoldiers([]);
+      setAttendance([]);
+      setAuditLogs([]);
+      if (currentUser && currentUser.id !== 'guest') {
+        setUsers([{ ...currentUser, role: 'admin' as const }]);
+      } else {
+        setUsers([]);
+      }
+      throw e;
+    }
+  }, [units, soldiers, attendance, auditLogs, currentUser, setUsers, setUnits, setSoldiers, setAttendance, setAuditLogs, handleAddLog]);
 
   // Handle Import Completed from Excel
   const handleImportCompleted = useCallback((importedData: {
@@ -769,7 +477,7 @@ export default function App() {
     setSoldiers(importedData.soldiers);
     setAttendance(importedData.attendance);
     triggerToast('تم استيراد الملف وسجلات القوة العسكرية بنجاح', 'success');
-  }, []);
+  }, [setUnits, setSoldiers, setAttendance]);
 
   // Update Settings
   const handleUpdateSettings = useCallback(async (newSettings: SystemSettings) => {
@@ -778,18 +486,11 @@ export default function App() {
     triggerToast('تم حفظ إعدادات المنظومة القيادية بنجاح', 'success');
 
     try {
-      await fetchWithRetry('/api/settings', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify(newSettings)
-      });
+      await settingsService.updateSettings(newSettings);
     } catch (e) {
       console.error("Error saving settings:", e);
     }
-  }, [handleAddLog, token]);
+  }, [setSettings, handleAddLog]);
 
   // Org units CRUD
   const handleAddUnit = useCallback(async (
@@ -819,18 +520,11 @@ export default function App() {
     triggerToast('تم إضافة التشكيل العسكري الجديد بنجاح', 'success');
 
     try {
-      await fetchWithRetry('/api/units', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify(newUnit)
-      });
+      await unitsService.createUnit(newUnit);
     } catch (e) {
       console.error("Error creating unit:", e);
     }
-  }, [token, handleAddLog]);
+  }, [setUnits, handleAddLog]);
 
   const handleEditUnit = useCallback(async (
     id: string, 
@@ -858,48 +552,26 @@ export default function App() {
     triggerToast('تم تحديث بيانات التشكيل العسكري بنجاح', 'success');
 
     try {
-      await fetchWithRetry(`/api/units/${id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({ 
-          name, 
-          parentId, 
-          commanderName,
-          type,
-          location,
-          approvedStrength,
-          status,
-          code
-        })
-      });
+      await unitsService.updateUnit(id, { name, parentId, commanderName, type, location, approvedStrength, status, code });
     } catch (e) {
       console.error("Error updating unit:", e);
     }
-  }, [token, handleAddLog]);
+  }, [setUnits, handleAddLog]);
 
   const handleDeleteUnit = useCallback(async (id: string) => {
     const unitToDelete = units.find(u => u.id === id);
     const unitName = unitToDelete ? unitToDelete.name : 'تشكيل غير معروف';
     setUnits(prev => prev.filter(u => u.id !== id));
-    // Automatically transfer any soldiers belonging to this unit to unassigned
     setSoldiers(prev => prev.map(s => s.unitId === id ? { ...s, unitId: '' } : s));
     handleAddLog('حذف', 'الهيكل التنظيمي', `حذف التشكيل العسكري (${unitName}) ونقل الجنود التابعين له لغير معين`);
     triggerToast('تم حذف التشكيل العسكري بنجاح', 'info');
 
     try {
-      await fetchWithRetry(`/api/units/${id}/delete`, {
-        method: 'POST',
-        headers: {
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        }
-      });
+      await unitsService.deleteUnit(id);
     } catch (e) {
       console.error("Error deleting unit:", e);
     }
-  }, [token, units, handleAddLog]);
+  }, [units, setUnits, setSoldiers, handleAddLog]);
 
   // Soldiers CRUD
   const handleAddSoldier = useCallback(async (militaryNumber: string, fullName: string, rank: string, unitId: string) => {
@@ -917,18 +589,11 @@ export default function App() {
     triggerToast('تم إضافة بطاقة الفرد العسكري بنجاح', 'success');
 
     try {
-      await fetchWithRetry('/api/soldiers', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify(newSoldier)
-      });
+      await soldiersService.createSoldier(newSoldier);
     } catch (e) {
       console.error("Error creating soldier:", e);
     }
-  }, [token, units, handleAddLog]);
+  }, [units, setSoldiers, handleAddLog]);
 
   const handleEditSoldier = useCallback(async (id: string, militaryNumber: string, fullName: string, rank: string, unitId: string, isActive: boolean) => {
     setSoldiers(prev => prev.map(s => s.id === id ? { ...s, militaryNumber, fullName, rank, unitId, isActive } : s));
@@ -937,18 +602,11 @@ export default function App() {
     triggerToast('تم تعديل بيانات الفرد العسكري بنجاح', 'success');
 
     try {
-      await fetchWithRetry(`/api/soldiers/${id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({ militaryNumber, fullName, rank, unitId, isActive })
-      });
+      await soldiersService.updateSoldier(id, { militaryNumber, fullName, rank, unitId, isActive });
     } catch (e) {
       console.error("Error updating soldier:", e);
     }
-  }, [token, units, handleAddLog]);
+  }, [units, setSoldiers, handleAddLog]);
 
   const handleDeleteSoldier = useCallback(async (id: string) => {
     const soldierToDelete = soldiers.find(s => s.id === id);
@@ -958,16 +616,11 @@ export default function App() {
     triggerToast('تم حذف بطاقة العسكري بنجاح', 'info');
 
     try {
-      await fetchWithRetry(`/api/soldiers/${id}/delete`, {
-        method: 'POST',
-        headers: {
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        }
-      });
+      await soldiersService.deleteSoldier(id);
     } catch (e) {
       console.error("Error deleting soldier:", e);
     }
-  }, [token, soldiers, handleAddLog]);
+  }, [soldiers, setSoldiers, handleAddLog]);
 
   // Users CRUD
   const handleAddUser = useCallback(async (newUserPayload: Omit<UserType, 'id'> & { id?: string }) => {
@@ -981,18 +634,11 @@ export default function App() {
     triggerToast('تم إنشاء الحساب العسكري الجديد بنجاح', 'success');
 
     try {
-      await fetchWithRetry('/api/users', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify(newUser)
-      });
+      await usersService.createUser(newUser);
     } catch (e) {
       console.error("Error creating user:", e);
     }
-  }, [token, handleAddLog]);
+  }, [setUsers, handleAddLog]);
 
   const handleEditUser = useCallback(async (id: string, updatedPayload: Partial<UserType>) => {
     setUsers(prev => prev.map(u => u.id === id ? { ...u, ...updatedPayload } : u));
@@ -1002,18 +648,11 @@ export default function App() {
     triggerToast('تم حفظ تعديلات حساب المستخدم والصلاحيات بنجاح', 'success');
 
     try {
-      await fetchWithRetry(`/api/users/${id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify(updatedPayload)
-      });
+      await usersService.updateUser(id, updatedPayload);
     } catch (e) {
       console.error("Error updating user:", e);
     }
-  }, [token, users, handleAddLog]);
+  }, [users, setUsers, handleAddLog]);
 
   const handleDeleteUser = useCallback(async (id: string) => {
     const targetUser = users.find(u => u.id === id);
@@ -1023,18 +662,13 @@ export default function App() {
     triggerToast('تم إغلاق وحذف حساب المستخدم بنجاح', 'info');
 
     try {
-      await fetchWithRetry(`/api/users/${id}/delete`, {
-        method: 'POST',
-        headers: {
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        }
-      });
+      await usersService.deleteUser(id);
     } catch (e) {
       console.error("Error deleting user:", e);
     }
-  }, [token, users, handleAddLog]);
+  }, [users, setUsers, handleAddLog]);
 
-  // Transfer soldier (Move)
+  // Transfer soldier
   const handleTransferSoldier = useCallback(async (
     soldierId: string, 
     targetUnitId: string,
@@ -1046,14 +680,13 @@ export default function App() {
     const oldUnitName = units.find(u => u.id === soldier.unitId)?.name || 'غير معروف';
     const newUnitName = units.find(u => u.id === targetUnitId)?.name || 'غير معروف';
 
-    // Parse and append to assignmentsHistory
     let historyList: any[] = [];
     try {
       if (soldier.assignmentsHistory) {
         historyList = JSON.parse(soldier.assignmentsHistory);
         if (!Array.isArray(historyList)) historyList = [];
       }
-    } catch (e) {
+    } catch {
       historyList = [];
     }
 
@@ -1079,18 +712,11 @@ export default function App() {
     triggerToast('تم تنفيذ وإصدار أمر نقل العسكري بنجاح', 'success');
 
     try {
-      await fetchWithRetry(`/api/soldiers/${soldierId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({ ...soldier, unitId: targetUnitId, assignmentsHistory: updatedHistory })
-      });
+      await soldiersService.updateSoldier(soldierId, { unitId: targetUnitId, assignmentsHistory: updatedHistory });
     } catch (e) {
       console.error("Error transferring soldier:", e);
     }
-  }, [soldiers, units, token, currentUser, handleAddLog]);
+  }, [soldiers, units, currentUser, setSoldiers, handleAddLog]);
 
   // Notification clear or toggle read
   const handleToggleReadNotif = async (id: string) => {
@@ -1100,14 +726,7 @@ export default function App() {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: !n.isRead } : n));
 
     try {
-      await fetchWithRetry(`/api/notifications/${id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({ isRead: !notif.isRead })
-      });
+      await notificationsService.markAsRead(id);
     } catch (e) {
       console.error("Error updating notification status:", e);
     }
@@ -1119,18 +738,13 @@ export default function App() {
     triggerToast('تم تصفير وأرشفة سجل التعديلات بالكامل', 'info');
 
     try {
-      await fetchWithRetry('/api/journal-records/clear', {
-        method: 'POST',
-        headers: {
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        }
-      });
+      await auditLogsService.clearLogs();
     } catch (e) {
       console.error("Error clearing logs:", e);
     }
   };
 
-  // --- Real-time Attendance Alerts Sync ---
+  // Real-time Attendance Alerts Sync
   useEffect(() => {
     const safeSoldiers = Array.isArray(soldiers) ? soldiers : [];
     const safeUnits = Array.isArray(units) ? units : [];
@@ -1140,7 +754,8 @@ export default function App() {
     if (safeSoldiers.length === 0 || safeUnits.length === 0) return;
 
     const activeSoldiers = safeSoldiers.filter(s => s.isActive);
-    const recordsToday = safeAttendance.filter(a => a.date === '2026-07-16');
+    const today = new Date().toISOString().split('T')[0];
+    const recordsToday = safeAttendance.filter(a => a.date === today);
 
     safeUnits.forEach(unit => {
       const unitSoldierIds = new Set(activeSoldiers.filter(s => s.unitId === unit.id).map(s => s.id));
@@ -1159,34 +774,27 @@ export default function App() {
       const warningThreshold = settings?.warningThreshold ?? 70;
       if (todayRate < warningThreshold && todayRate > 0) {
         const notifTitle = `تدني نسبة الجاهزية - ${unit.name}`;
-        const hasNotif = safeNotifications.some(n => n.title === notifTitle && !n.isRead);
+        const hasNotif = safeNotifications.some(notif => notif.title === notifTitle && !notif.isRead);
         
         if (!hasNotif) {
           const newNotif: Notification = {
-            id: `notif_rate_${unit.id}_${Date.now()}`,
+            id: `notif_rate_${unit.id}_${today}`,
             title: notifTitle,
-            message: `انخفض معدل الجاهزية اليومي في (${unit.name}) ليوم 16 يوليو إلى ${todayRate}% وهو أقل من الحد المسموح به (${warningThreshold}%). يرجى المتابعة الفورية.`,
+            message: `انخفض معدل الجاهزية اليومي في (${unit.name}) ليوم ${today} إلى ${todayRate}% وهو أقل من الحد المسموح به (${warningThreshold}%). يرجى المتابعة الفورية.`,
             isRead: false,
             type: 'warning',
             createdAt: new Date().toISOString()
           };
-          setNotifications(prev => [newNotif, ...prev]);
+          setNotifications(prev => {
+            if (prev.some(p => p.title === notifTitle && !p.isRead)) return prev;
+            return [newNotif, ...prev];
+          });
 
-          // Save to backend database too
-          fetchWithRetry('/api/notifications', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-            },
-            body: JSON.stringify(newNotif)
-          }).catch(console.error);
+          notificationsService.createNotification(newNotif).catch(console.error);
         }
       }
     });
-  }, [attendance, soldiers, units, settings?.warningThreshold, notifications, token]);
-
-  const unreadCount = (Array.isArray(notifications) ? notifications : []).filter(n => !n.isRead).length;
+  }, [attendance, soldiers, units, settings?.warningThreshold, notifications, setNotifications]);
 
   const NAV_ITEMS = [
     { id: 'dashboard', label: 'لوحة القيادة والمؤشرات', icon: LayoutDashboard },
@@ -1198,7 +806,7 @@ export default function App() {
     { id: 'about', label: 'حول التطبيق', icon: Info },
   ];
 
-  // --- 1. AUTH LOADING STATE ---
+  // 1. AUTH LOADING STATE
   if (loadingAuth) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-100" dir="rtl">
@@ -1208,7 +816,7 @@ export default function App() {
     );
   }
 
-  // --- 2. AUTHENTICATION GATE (New Modern Design) ---
+  // 2. AUTHENTICATION GATE
   if (!authUser) {
     return (
       <LoginPage
@@ -1219,7 +827,7 @@ export default function App() {
         loginError={loginError}
         loadingAuth={loadingAuth}
         handleLocalLogin={handleLocalLogin}
-        handleGoogleLogin={handleLogin}
+        handleGoogleLogin={loginWithGoogle}
         otpEnabled={otpEnabled}
         setOtpEnabled={setOtpEnabled}
         otpValue={otpValue}
@@ -1228,7 +836,7 @@ export default function App() {
     );
   }
 
-  // --- 2.5. SOLDIER PORTAL (Dedicated Standalone Page for Soldier Role) ---
+  // 2.5. SOLDIER PORTAL
   if (currentUser.role === 'soldier') {
     const soldier = soldiers.find(s => 
       (s.accountUsername && currentUser.username && s.accountUsername === currentUser.username) || 
@@ -1270,15 +878,12 @@ export default function App() {
         units={units}
         printSettings={settings?.printSettings}
         onLogout={handleLogout}
-        onSoldierUpdated={async () => {
-          const res = await fetch('/api/soldiers');
-          if (res.ok) setSoldiers(await res.json());
-        }}
+        onSoldierUpdated={refreshSoldiers}
       />
     );
   }
 
-  // --- 3. SYSTEM MAIN APP (Authenticated Admin/Staff & Connected to PostgreSQL) ---
+  // 3. SYSTEM MAIN APP
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans select-none antialiased text-right" dir="rtl">
       
@@ -1294,56 +899,42 @@ export default function App() {
       </AnimatePresence>
 
       {/* Top Bar: Official Status, Title & Clock */}
-      <div className="bg-slate-950 text-slate-100 py-1 px-2.5 sm:px-4 border-b border-slate-800 flex flex-row justify-between items-center gap-2 text-xs sticky top-0 z-40 shadow-sm backdrop-blur-md">
-        <div className="flex items-center gap-3">
-          {/* Elegant Account Information */}
-          <div className="flex items-center gap-2 bg-slate-900 px-2.5 py-0.5 rounded-md border border-slate-800/60 text-[10px] xs:text-[11px]">
-            <div className="w-4 h-4 rounded bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
-              <User className="w-2.5 h-2.5 text-amber-400" />
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="font-bold text-slate-200">{currentUser.name}</span>
-              <span className="text-slate-700 text-[9px]">•</span>
-              <span className="text-amber-400 font-bold">
-                {
-                  currentUser.role === 'admin' ? 'مدير النظام (كامل الصلاحيات)' :
-                  currentUser.role === 'commander_formation' ? 'قائد التشكيل' :
-                  currentUser.role === 'commander_unit' ? 'قائد كتيبة' :
-                  currentUser.role === 'operations' ? 'ركن عمليات' :
-                  (currentUser.role as string) === 'soldier' ? 'بوابة الفرد (عسكري)' : 'كاتب بيانات'
-                }
-              </span>
-              {currentUser.email && (
-                <>
-                  <span className="text-slate-700 text-[9px] hidden sm:inline">•</span>
-                  <span className="text-slate-400 hidden sm:inline">{currentUser.email}</span>
-                </>
-              )}
-            </div>
+      <div className="bg-slate-950 text-slate-100 py-1 px-2 sm:px-3 border-b border-slate-800 flex flex-row justify-between items-center gap-1.5 sm:gap-2 text-xs sticky top-0 z-40 shadow-sm backdrop-blur-md whitespace-nowrap overflow-x-auto no-scrollbar">
+        {/* Compact Account Button */}
+        <button
+          type="button"
+          onClick={() => setIsUserAccountPopoverOpen(true)}
+          className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 active:scale-95 text-amber-400 px-2.5 py-1 rounded-lg border border-slate-800 transition-all cursor-pointer text-[11px] font-bold shrink-0 shadow-xs"
+          title="انقر لعرض بيانات وتفاصيل الحساب والصلاحيات"
+        >
+          <div className="w-4 h-4 rounded-full bg-amber-500/20 flex items-center justify-center border border-amber-500/30 text-amber-400 shrink-0">
+            <User className="w-2.5 h-2.5" />
           </div>
-        </div>
+          <span className="font-bold text-slate-200 text-[11px] max-w-[120px] truncate">{currentUser.name}</span>
+          <ChevronDown className="w-3 h-3 text-slate-400" />
+        </button>
 
-        <div className="flex items-center gap-2 text-slate-400 font-sans text-[10px] sm:text-[11px]">
-          {/* Gregorian Date Only */}
-          <div className="flex items-center gap-1 bg-slate-900 px-2 py-0.5 rounded-md border border-slate-800/60 text-[10px] xs:text-[11px]">
-            <Calendar className="w-3 h-3 text-slate-400" />
-            <span className="text-slate-300 font-medium">{formattedGregorianDate} م</span>
+        {/* Right Tools & Time Display */}
+        <div className="flex items-center gap-1.5 sm:gap-2 text-slate-400 font-sans text-[10px] sm:text-[11px] shrink-0">
+          <div className="flex items-center gap-1 bg-slate-900 px-2 py-0.5 rounded-md border border-slate-800/60 text-[10px] xs:text-[11px] whitespace-nowrap shrink-0">
+            <Calendar className="w-3 h-3 text-slate-400 shrink-0" />
+            <span className="text-slate-300 font-medium whitespace-nowrap">{formattedGregorianDate} م</span>
           </div>
 
-          <div className="flex items-center gap-1 font-mono bg-slate-900 px-2 py-0.5 rounded-md border border-slate-800/60 text-[10px] xs:text-[11px] text-slate-200">
-            <Clock className="w-3 h-3 text-slate-400" />
-            <span className="font-bold">{timeStr || '12:00:00 ص'}</span>
+          <div className="flex items-center gap-1 font-mono bg-slate-900 px-2 py-0.5 rounded-md border border-slate-800/60 text-[10px] xs:text-[11px] text-slate-200 whitespace-nowrap shrink-0">
+            <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+            <span className="font-bold whitespace-nowrap">{timeStr || '12:00:00 ص'}</span>
           </div>
 
-          {/* Soldier Requests Review Button (For Managers) */}
+          {/* Soldier Requests Review Button */}
           {(currentUser.role as string) !== 'soldier' && (
             <button
               onClick={() => setIsRequestsModalOpen(true)}
-              className="relative p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors border border-slate-700 text-amber-400 cursor-pointer flex items-center gap-1.5 text-[11px] font-bold"
+              className="relative p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors border border-slate-700 text-amber-400 cursor-pointer flex items-center gap-1.5 text-[11px] font-bold shrink-0"
               title="مركز مراجعة وإعتماد طلبات وإجراءات الأفراد"
             >
-              <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
-              <span className="hidden sm:inline">طلبات الأفراد</span>
+              <ShieldCheck className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span className="hidden sm:inline whitespace-nowrap">طلبات الأفراد</span>
               {soldierRequests.filter(r => r.status === 'pending').length > 0 && (
                 <span className="px-1.5 py-0.2 bg-amber-500 text-slate-950 rounded-full text-[10px] font-black animate-pulse">
                   {soldierRequests.filter(r => r.status === 'pending').length}
@@ -1352,7 +943,7 @@ export default function App() {
             </button>
           )}
 
-          {/* Advanced Tactical Notification Center */}
+          {/* Tactical Notification Center */}
           <NotificationCenter
             notifications={notifications}
             setNotifications={setNotifications}
@@ -1363,23 +954,42 @@ export default function App() {
             attendance={attendance}
           />
 
+          {/* Global Dark / Light Mode Toggle Button */}
+          <button
+            type="button"
+            onClick={() => setIsDarkMode(prev => !prev)}
+            className={`p-1.5 px-2.5 rounded-lg border transition-all cursor-pointer flex items-center gap-1.5 text-[11px] font-bold shrink-0 shadow-xs active:scale-95 ${
+              isDarkMode
+                ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border-amber-500/40 ring-1 ring-amber-500/20'
+                : 'bg-slate-900 hover:bg-slate-800 text-amber-400 border-slate-700 ring-1 ring-slate-800'
+            }`}
+            title={isDarkMode ? "التحويل إلى الوضع النهاري المضيء" : "التحويل إلى الوضع الليلي الداكن"}
+          >
+            {isDarkMode ? (
+              <Sun className="w-3.5 h-3.5 text-amber-400 animate-in spin-in-180 duration-300 shrink-0 drop-shadow-xs" />
+            ) : (
+              <Moon className="w-3.5 h-3.5 text-amber-400 shrink-0 drop-shadow-xs" />
+            )}
+            <span className="hidden sm:inline whitespace-nowrap">
+              {isDarkMode ? 'الوضع النهاري' : 'الوضع الليلي'}
+            </span>
+          </button>
+
           {/* Logout Action Button */}
           <button
             onClick={() => setIsLogoutModalOpen(true)}
-            className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/40 hover:text-rose-400 hover:border-rose-900 transition-colors border border-slate-700 text-amber-400 cursor-pointer flex items-center gap-1 text-[11px]"
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/40 hover:text-rose-400 hover:border-rose-900 transition-colors border border-slate-700 text-amber-400 cursor-pointer flex items-center gap-1 text-[11px] shrink-0"
             title="تسجيل الخروج من المنظومة"
           >
-            <LogOut className="w-3.5 h-3.5" />
-            <span className="hidden lg:inline font-bold">تسجيل الخروج</span>
+            <LogOut className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden lg:inline font-bold whitespace-nowrap">تسجيل الخروج</span>
           </button>
         </div>
       </div>
 
-      {/* Ultra-Professional Futuristic Glassmorphic Mobile Bottom Navigation Dock */}
+      {/* Mobile Bottom Navigation Dock */}
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-45 bg-slate-950/95 backdrop-blur-2xl border-t border-slate-800/90 shadow-[0_-10px_36px_rgba(0,0,0,0.7),0_1px_0_rgba(255,255,255,0.08)_inset] px-2 pt-2 pb-[max(0.6rem,env(safe-area-inset-bottom))] transition-all duration-300">
         <div className="max-w-lg mx-auto grid grid-cols-5 gap-1 text-center items-center relative">
-          
-          {/* Tab 1: المؤشرات (Dashboard) */}
           <motion.button
             whileTap={{ scale: 0.88 }}
             onClick={() => { setActiveTab('dashboard'); setIsMoreBottomSheetOpen(false); }}
@@ -1387,21 +997,10 @@ export default function App() {
               activeTab === 'dashboard' ? 'text-emerald-400 font-black' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            {activeTab === 'dashboard' && (
-              <motion.div
-                layoutId="bottomNavPill"
-                className="absolute inset-0 bg-gradient-to-b from-emerald-500/20 via-teal-500/10 to-transparent border border-emerald-500/40 rounded-2xl shadow-[inset_0_1px_2px_rgba(255,255,255,0.15)]"
-                transition={{ type: 'spring', stiffness: 450, damping: 32 }}
-              />
-            )}
             <LayoutDashboard className={`w-5 h-5 relative z-10 transition-transform duration-200 ${activeTab === 'dashboard' ? 'scale-110 text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.8)]' : 'text-slate-400'}`} />
             <span className="text-[10px] font-sans relative z-10 mt-1 font-extrabold tracking-tight">المؤشرات</span>
-            {activeTab === 'dashboard' && (
-              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full absolute bottom-0.5 shadow-[0_0_8px_#34d399]" />
-            )}
           </motion.button>
 
-          {/* Tab 2: التحضير (Attendance) */}
           <motion.button
             whileTap={{ scale: 0.88 }}
             onClick={() => { setActiveTab('attendance'); setIsMoreBottomSheetOpen(false); }}
@@ -1409,21 +1008,10 @@ export default function App() {
               activeTab === 'attendance' ? 'text-emerald-400 font-black' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            {activeTab === 'attendance' && (
-              <motion.div
-                layoutId="bottomNavPill"
-                className="absolute inset-0 bg-gradient-to-b from-emerald-500/20 via-teal-500/10 to-transparent border border-emerald-500/40 rounded-2xl shadow-[inset_0_1px_2px_rgba(255,255,255,0.15)]"
-                transition={{ type: 'spring', stiffness: 450, damping: 32 }}
-              />
-            )}
             <Table className={`w-5 h-5 relative z-10 transition-transform duration-200 ${activeTab === 'attendance' ? 'scale-110 text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.8)]' : 'text-slate-400'}`} />
             <span className="text-[10px] font-sans relative z-10 mt-1 font-extrabold tracking-tight">التحضير</span>
-            {activeTab === 'attendance' && (
-              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full absolute bottom-0.5 shadow-[0_0_8px_#34d399]" />
-            )}
           </motion.button>
 
-          {/* Tab 3: التقارير (Reports - Featured Elevated Action Button) */}
           <motion.button
             whileTap={{ scale: 0.88 }}
             onClick={() => { setActiveTab('reports'); setIsMoreBottomSheetOpen(false); }}
@@ -1431,29 +1019,10 @@ export default function App() {
               activeTab === 'reports' ? 'text-amber-300 font-black' : 'text-slate-300 hover:text-white'
             }`}
           >
-            {activeTab === 'reports' ? (
-              <motion.div
-                layoutId="bottomNavPill"
-                className="absolute inset-0 bg-gradient-to-b from-amber-500/25 via-emerald-500/15 to-transparent border border-amber-500/50 rounded-2xl shadow-[inset_0_1px_2px_rgba(255,255,255,0.2)]"
-                transition={{ type: 'spring', stiffness: 450, damping: 32 }}
-              />
-            ) : (
-              <div className="absolute inset-x-1 inset-y-1 bg-slate-900/80 border border-slate-700/60 rounded-xl" />
-            )}
-            <div className="relative z-10 flex items-center justify-center">
-              <FilePieChart className={`w-5 h-5 transition-transform duration-200 ${activeTab === 'reports' ? 'scale-110 text-amber-300 drop-shadow-[0_0_10px_rgba(252,211,77,0.8)]' : 'text-amber-400'}`} />
-              <span className="absolute -top-1 -right-1.5 flex h-2.5 w-2.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400 shadow-[0_0_6px_#34d399]"></span>
-              </span>
-            </div>
+            <FilePieChart className={`w-5 h-5 relative z-10 transition-transform duration-200 ${activeTab === 'reports' ? 'scale-110 text-amber-300 drop-shadow-[0_0_10px_rgba(252,211,77,0.8)]' : 'text-amber-400'}`} />
             <span className="text-[10px] font-sans relative z-10 mt-1 font-black text-amber-300 tracking-tight">التقارير</span>
-            {activeTab === 'reports' && (
-              <span className="w-1.5 h-1.5 bg-amber-400 rounded-full absolute bottom-0.5 shadow-[0_0_8px_#f59e0b]" />
-            )}
           </motion.button>
 
-          {/* Tab 4: إدارة القوة (Org Manager) */}
           <motion.button
             whileTap={{ scale: 0.88 }}
             onClick={() => { setActiveTab('org_manager'); setIsMoreBottomSheetOpen(false); }}
@@ -1461,284 +1030,132 @@ export default function App() {
               activeTab === 'org_manager' ? 'text-emerald-400 font-black' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            {activeTab === 'org_manager' && (
-              <motion.div
-                layoutId="bottomNavPill"
-                className="absolute inset-0 bg-gradient-to-b from-emerald-500/20 via-teal-500/10 to-transparent border border-emerald-500/40 rounded-2xl shadow-[inset_0_1px_2px_rgba(255,255,255,0.15)]"
-                transition={{ type: 'spring', stiffness: 450, damping: 32 }}
-              />
-            )}
             <Users className={`w-5 h-5 relative z-10 transition-transform duration-200 ${activeTab === 'org_manager' ? 'scale-110 text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.8)]' : 'text-slate-400'}`} />
             <span className="text-[10px] font-sans relative z-10 mt-1 font-extrabold tracking-tight">القوة</span>
-            {activeTab === 'org_manager' && (
-              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full absolute bottom-0.5 shadow-[0_0_8px_#34d399]" />
-            )}
           </motion.button>
 
-          {/* Tab 5: المزيد (More Bottom Sheet Trigger) */}
           <motion.button
             whileTap={{ scale: 0.88 }}
             onClick={() => setIsMoreBottomSheetOpen(!isMoreBottomSheetOpen)}
             className={`relative flex flex-col items-center justify-center py-2 px-1 rounded-2xl transition-all cursor-pointer ${
-              isMoreBottomSheetOpen ? 'text-emerald-400 font-black' : 'text-slate-400 hover:text-slate-200'
+              isMoreBottomSheetOpen || ['special_sections', 'settings', 'users_permissions', 'about'].includes(activeTab) ? 'text-amber-400 font-black' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            {isMoreBottomSheetOpen && (
-              <motion.div
-                layoutId="bottomNavPill"
-                className="absolute inset-0 bg-gradient-to-b from-emerald-500/20 via-teal-500/10 to-transparent border border-emerald-500/40 rounded-2xl shadow-[inset_0_1px_2px_rgba(255,255,255,0.15)]"
-                transition={{ type: 'spring', stiffness: 450, damping: 32 }}
-              />
-            )}
-            <Menu className={`w-5 h-5 relative z-10 transition-transform duration-200 ${isMoreBottomSheetOpen ? 'scale-110 text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.8)]' : 'text-slate-400'}`} />
+            <Menu className="w-5 h-5 relative z-10 transition-transform duration-200" />
             <span className="text-[10px] font-sans relative z-10 mt-1 font-extrabold tracking-tight">المزيد</span>
-            {isMoreBottomSheetOpen && (
-              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full absolute bottom-0.5 shadow-[0_0_8px_#34d399]" />
-            )}
           </motion.button>
-
         </div>
       </nav>
 
-      {/* Animated Bottom Sheet */}
-      <AnimatePresence>
-        {isMoreBottomSheetOpen && (
-          <div className="lg:hidden fixed inset-0 z-50 overflow-hidden">
-            {/* Backdrop */}
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
-              onClick={() => setIsMoreBottomSheetOpen(false)}
-            />
-            
-            {/* Sliding Bottom Sheet */}
-            <motion.div 
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 220 }}
-              className="absolute bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-700/80 rounded-t-[32px] shadow-2xl p-6 pb-10 space-y-4 text-white font-sans select-none max-w-lg mx-auto"
-            >
-              <div className="w-12 h-1.5 bg-slate-700 rounded-full mx-auto mb-2 opacity-80" />
-              
-              <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-                <div className="flex items-center gap-2">
-                  <div className="p-2 bg-emerald-500/20 border border-emerald-500/30 rounded-xl text-emerald-400">
-                    <Sparkles className="w-4 h-4" />
-                  </div>
-                  <h3 className="text-sm font-black text-slate-100">لوحة التحكم السريعة والخيارات الإضافية</h3>
-                </div>
-                <button 
-                  onClick={() => setIsMoreBottomSheetOpen(false)}
-                  className="p-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-400 hover:text-white"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              
-              <div className="grid grid-cols-1 gap-2 pt-1">
-                <button
-                  onClick={() => {
-                    setActiveTab('special_sections');
-                    setIsMoreBottomSheetOpen(false);
-                  }}
-                  className={`flex items-center gap-3 w-full p-3.5 rounded-2xl text-xs font-bold transition-all text-right cursor-pointer ${
-                    activeTab === 'special_sections' 
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
-                      : 'bg-slate-800/60 hover:bg-slate-800 text-slate-200 border border-slate-700/50'
-                  }`}
-                >
-                  <Sparkles className="w-5 h-5 text-amber-400 shrink-0" />
-                  <div className="flex-1">
-                    <p className="font-sans font-black text-slate-100">الأقسام والخدمات المميزة</p>
-                    <p className="text-[10px] text-slate-400 font-normal mt-0.5">الإجازات والتصاريح، الترقيات، رعاية الشهداء والجرحى، والعهد العسكرية</p>
-                  </div>
-                </button>
+      {/* Mobile "More" Sections Drawer / Bottom Sheet */}
+      <BottomSheetNavigation
+        isOpen={isMoreBottomSheetOpen}
+        onClose={() => setIsMoreBottomSheetOpen(false)}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        currentUser={currentUser}
+        onOpenRequestsModal={() => setIsRequestsModalOpen(true)}
+        unreadRequestsCount={soldierRequests ? soldierRequests.filter(r => r.status === 'pending').length : 0}
+        onLogout={logout}
+      />
 
-                <button
-                  onClick={() => {
-                    setActiveTab('reports');
-                    setIsMoreBottomSheetOpen(false);
-                  }}
-                  className={`flex items-center gap-3 w-full p-3.5 rounded-2xl text-xs font-bold transition-all text-right cursor-pointer ${
-                    activeTab === 'reports' 
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
-                      : 'bg-slate-800/60 hover:bg-slate-800 text-slate-200 border border-slate-700/50'
-                  }`}
-                >
-                  <FilePieChart className="w-5 h-5 text-emerald-400 shrink-0" />
-                  <div className="flex-1">
-                    <p className="font-sans font-black text-slate-100">مركز التقارير والمستخرجات القيادية</p>
-                    <p className="text-[10px] text-slate-400 font-normal mt-0.5">تقارير الجاهزية، كشوفات التحضير، وإحصائيات القوة</p>
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setActiveTab('settings');
-                    setIsMoreBottomSheetOpen(false);
-                  }}
-                  className={`flex items-center gap-3 w-full p-3.5 rounded-2xl text-xs font-bold transition-all text-right cursor-pointer ${
-                    activeTab === 'settings' 
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
-                      : 'bg-slate-800/60 hover:bg-slate-800 text-slate-200 border border-slate-700/50'
-                  }`}
-                >
-                  <Settings className="w-5 h-5 text-teal-400 shrink-0" />
-                  <div className="flex-1">
-                    <p className="font-sans font-black text-slate-100">الاعدادات العامة للجاهزية</p>
-                    <p className="text-[10px] text-slate-400 font-normal mt-0.5">الرقابة التعديلية، النسخ الاحتياطي، إدارة الصلاحيات والجاهزية</p>
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setActiveTab('about');
-                    setIsMoreBottomSheetOpen(false);
-                  }}
-                  className={`flex items-center gap-3 w-full p-3.5 rounded-2xl text-xs font-bold transition-all text-right cursor-pointer ${
-                    activeTab === 'about' 
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' 
-                      : 'bg-slate-800/60 hover:bg-slate-800 text-slate-200 border border-slate-700/50'
-                  }`}
-                >
-                  <Info className="w-5 h-5 text-sky-400 shrink-0" />
-                  <div className="flex-1">
-                    <p className="font-sans font-black text-slate-100">حول التطبيق والجهة المطورة</p>
-                    <p className="text-[10px] text-slate-400 font-normal mt-0.5">شركة الصرم للتقنية والبرمجيات والمصمم درويش رياض</p>
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setShowSplashScreen(true);
-                    setIsMoreBottomSheetOpen(false);
-                  }}
-                  className="flex items-center gap-3 w-full p-3.5 rounded-2xl text-xs font-bold transition-all text-right cursor-pointer bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-500/30"
-                >
-                  <Sparkles className="w-5 h-5 text-amber-400 shrink-0" />
-                  <div className="flex-1">
-                    <p className="font-sans font-black text-emerald-200">عرض شاشة الترحيب والتهيئة العسكرية</p>
-                    <p className="text-[10px] text-emerald-400/80 font-normal mt-0.5">إعادة عرض الشاشة الترحيبية وفحص الجاهزية اللحظي</p>
-                  </div>
-                </button>
-
-                <div className="h-px bg-slate-800 my-1" />
-
-                {/* Active Account Info and Logout */}
-                <div className="flex items-center justify-between p-3.5 bg-slate-800/80 rounded-2xl border border-slate-700/60">
-                  <div className="text-right">
-                    <span className="text-[9px] text-emerald-400 font-sans block font-black">المستخدم النشط:</span>
-                    <span className="text-xs font-black text-white">{(currentUser as any)?.displayName || currentUser?.name || currentUser?.username}</span>
-                    <span className="text-[10px] text-slate-400 block mt-0.5 font-mono">{(currentUser?.role as string) === 'SUPER_ADMIN' ? 'مدير نظام الفرد العام' : currentUser?.role}</span>
-                  </div>
-
-                  <button
-                    onClick={() => {
-                      setIsMoreBottomSheetOpen(false);
-                      setIsLogoutModalOpen(true);
-                    }}
-                    className="px-3.5 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>خروج</span>
-                  </button>
-                </div>
-              </div>
-            </motion.div>
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col lg:flex-row pb-16 lg:pb-0">
+        
+        {/* Desktop Sidebar Navigation */}
+        <aside className="hidden lg:flex w-64 bg-slate-900 border-l border-slate-800 text-slate-300 flex-col shrink-0 min-h-[calc(100vh-33px)] shadow-xl z-20">
+          <div className="p-4 border-b border-slate-800/80 bg-slate-950/40">
+            <h2 className="text-xs font-black text-slate-100 tracking-wide uppercase">قائمة الملاحة والسيطرة</h2>
+            <p className="text-[10px] text-slate-400 mt-0.5">منظومة القوة والجاهزية العسكرية</p>
           </div>
-        )}
-      </AnimatePresence>
 
-      {/* Main Navigation Tabs - Desktop Only (Hidden for Soldier Role) */}
-      {(currentUser.role as string) !== 'soldier' && (
-        <nav className="bg-white border-b border-slate-200 hidden lg:block">
-          <div className="max-w-7xl mx-auto px-6 flex overflow-x-auto gap-1">
+          <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
             {NAV_ITEMS.map((item) => {
-              const IconComponent = item.icon;
+              const Icon = item.icon;
               const isActive = activeTab === item.id;
               return (
                 <button
                   key={item.id}
-                  onClick={() => {
-                    setActiveTab(item.id);
-                    setIsNotifOpen(false);
-                  }}
-                  className={`flex items-center gap-2 px-5 py-4 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                  onClick={() => setActiveTab(item.id)}
+                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
                     isActive 
-                      ? 'border-emerald-800 text-emerald-850' 
-                      : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+                      ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-sm' 
+                      : 'hover:bg-slate-800/60 text-slate-300 hover:text-white'
                   }`}
                 >
-                  <IconComponent className={`w-4 h-4 ${isActive ? 'text-emerald-800' : 'text-slate-400'}`} />
-                  {item.label}
+                  <Icon className={`w-4 h-4 ${isActive ? 'text-amber-400' : 'text-slate-400'}`} />
+                  <span>{item.label}</span>
                 </button>
               );
             })}
-          </div>
-        </nav>
-      )}
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-1.5 sm:px-6 pt-0 sm:pt-6 pb-20 lg:pb-6 overflow-hidden">
-        
-        {/* PWA Install & Network Status Bar */}
-        <div className="mb-1 sm:mb-5 empty:hidden">
-          <PWAInstallBanner />
-        </div>
-        
-        {/* Active Tab Content */}
-        <>
-          {activeTab === 'dashboard' && (
-              <Dashboard 
-                units={units}
-                soldiers={soldiers}
-                attendance={attendance}
-                users={users}
-                auditLogs={auditLogs}
-                printSettings={settings?.printSettings}
-                onNavigate={(tab) => {
-                  setActiveTab(tab);
-                  setIsMoreBottomSheetOpen(false);
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-                onViewSoldierProfile={(id) => {
-                  setSelectedSoldierIdForProfile(id);
-                  setActiveTab('org_manager');
-                  setIsMoreBottomSheetOpen(false);
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-                currentUser={currentUser}
-                onAddLog={handleAddLog}
-                onSaveAttendanceBatch={handleBulkUpdateAttendance}
-              />
+            {/* Users and Permissions tab for admins */}
+            {currentUser.role === 'admin' && (
+              <button
+                onClick={() => setActiveTab('users_permissions')}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+                  activeTab === 'users_permissions' 
+                    ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-sm' 
+                    : 'hover:bg-slate-800/60 text-slate-300 hover:text-white'
+                }`}
+              >
+                <Users className={`w-4 h-4 ${activeTab === 'users_permissions' ? 'text-amber-400' : 'text-slate-400'}`} />
+                <span>إدارة الحسابات والصلاحيات</span>
+              </button>
             )}
+          </nav>
 
-            {activeTab === 'attendance' && (
+          <div className="p-3 border-t border-slate-800 bg-slate-950/30 text-[11px] text-slate-400 text-center">
+            تطور تقني - شركة الصرم v4.2.0
+          </div>
+        </aside>
+
+        {/* Dynamic Page Views Container */}
+        <main className="flex-1 px-2.5 sm:px-6 pb-6 pt-0 overflow-y-auto max-w-7xl mx-auto w-full">
+          {activeTab === 'dashboard' && (
+            <Dashboard 
+              units={units} 
+              soldiers={soldiers} 
+              attendance={attendance} 
+              users={users}
+              auditLogs={auditLogs}
+              onNavigate={(tab) => setActiveTab(tab)}
+              onViewSoldierProfile={(id) => setSelectedSoldierIdForProfile(id)}
+              currentUser={currentUser}
+              printSettings={settings?.printSettings}
+              onAddLog={handleAddLog}
+            />
+          )}
+
+          {activeTab === 'attendance' && (
+            <div className="pt-3 sm:pt-4">
               <AttendanceSheet 
-                units={units}
-                soldiers={soldiers}
-                attendance={attendance}
+                units={units} 
+                soldiers={soldiers} 
+                attendance={attendance} 
                 currentUser={currentUser}
                 printSettings={settings?.printSettings}
                 onUpdateAttendance={handleUpdateAttendance}
                 onBulkUpdateAttendance={handleBulkUpdateAttendance}
                 onAddLog={handleAddLog}
               />
-            )}
+            </div>
+          )}
 
-            {activeTab === 'org_manager' && (
+          {activeTab === 'org_manager' && (
+            <div className="pt-3 sm:pt-4">
               <OrgManager 
-                units={units}
-                soldiers={soldiers}
+                units={units} 
+                soldiers={soldiers} 
                 attendance={attendance}
                 currentUser={currentUser}
                 auditLogs={auditLogs}
                 printSettings={settings?.printSettings}
                 selectedSoldierId={selectedSoldierIdForProfile}
-                onSelectSoldierId={setSelectedSoldierIdForProfile}
+                isDarkMode={isDarkMode}
+                onSelectSoldierId={(id) => setSelectedSoldierIdForProfile(id)}
+                onImportCompleted={handleImportCompleted}
+                onAddLog={handleAddLog}
                 onAddUnit={handleAddUnit}
                 onEditUnit={handleEditUnit}
                 onDeleteUnit={handleDeleteUnit}
@@ -1746,13 +1163,12 @@ export default function App() {
                 onEditSoldier={handleEditSoldier}
                 onDeleteSoldier={handleDeleteSoldier}
                 onTransferSoldier={handleTransferSoldier}
-                onAddLog={handleAddLog}
-                onAttendanceUpdated={refreshAttendance}
-                onImportCompleted={handleImportCompleted}
               />
-            )}
+            </div>
+          )}
 
-            {activeTab === 'special_sections' && (
+          {activeTab === 'special_sections' && (
+            <div className="pt-3 sm:pt-4">
               <SpecialSections 
                 soldiers={soldiers}
                 units={units}
@@ -1760,159 +1176,130 @@ export default function App() {
                 printSettings={settings?.printSettings}
                 soldierRequests={soldierRequests}
                 onRefreshRequests={refreshSoldierRequests}
-                onAddLog={(log) => { handleAddLog('إضافة', 'الأقسام الخاصة', typeof log === 'string' ? log : JSON.stringify(log)); }}
-                onNavigateToSoldier={(soldierId) => {
-                  setSelectedSoldierIdForProfile(soldierId);
-                  setActiveTab('org_manager');
-                }}
+                onAddLog={(log: any) => handleAddLog(log.actionType || 'تعديل', log.tableName || 'سجل', log.details || '')}
               />
-            )}
+            </div>
+          )}
 
-        {activeTab === 'reports' && (
-          <Reports 
-            units={units}
-            soldiers={soldiers}
-            attendance={attendance}
-            currentUser={currentUser}
-            printSettings={settings?.printSettings}
-            googleAccessToken={googleAccessToken}
-            onSetGoogleAccessToken={setGoogleAccessToken}
-          />
-        )}
+          {activeTab === 'reports' && (
+            <div className="pt-3 sm:pt-4">
+              <Reports 
+                units={units} 
+                soldiers={soldiers} 
+                attendance={attendance} 
+                currentUser={currentUser}
+                printSettings={settings?.printSettings}
+                googleAccessToken={googleAccessToken}
+                onSetGoogleAccessToken={setGoogleAccessToken}
+              />
+            </div>
+          )}
 
-        {activeTab === 'settings' && (
-          <SettingsView 
-            settings={settings}
-            onUpdateSettings={handleUpdateSettings}
-            currentUserRole={currentUser.role}
-            units={units}
-            soldiers={soldiers}
-            attendance={attendance}
-            currentUser={currentUser}
-            onImportCompleted={handleImportCompleted}
-            onAddLog={handleAddLog}
-            users={users}
-            currentUserId={currentUserId}
-            onSetCurrentUserId={setCurrentUserId}
-            onAddUser={handleAddUser}
-            onEditUser={handleEditUser}
-            onDeleteUser={handleDeleteUser}
-            auditLogs={auditLogs}
-            onClearLogs={handleClearAllLogs}
-            googleAccessToken={googleAccessToken}
-            onSetGoogleAccessToken={setGoogleAccessToken}
-            onRestoreState={handleRestoreState}
-          />
-        )}
+          {activeTab === 'settings' && (
+            <div className="pt-3 sm:pt-4">
+              <SettingsView 
+                settings={settings || {
+                  warningThreshold: 70,
+                  dailyReminderEnabled: true,
+                  dailyReminderTime: '08:30',
+                  autoBackupEnabled: true,
+                  hijriSupport: true,
+                  highContrastMode: false,
+                }} 
+                onUpdateSettings={handleUpdateSettings} 
+                currentUserRole={currentUser.role}
+                units={units}
+                soldiers={soldiers}
+                attendance={attendance}
+                currentUser={currentUser}
+                onImportCompleted={handleImportCompleted}
+                onAddLog={handleAddLog}
+                users={users}
+                currentUserId={currentUser.id}
+                onAddUser={handleAddUser}
+                onEditUser={handleEditUser}
+                onDeleteUser={handleDeleteUser}
+                auditLogs={auditLogs}
+                onClearLogs={handleClearAllLogs}
+                googleAccessToken={googleAccessToken}
+                onSetGoogleAccessToken={setGoogleAccessToken}
+                onRestoreState={handleRestoreState}
+                onResetDatabase={handleResetDatabase}
+              />
+            </div>
+          )}
 
-        {activeTab === 'about' && (
-          <AboutApp />
-        )}
-        </>
+          {activeTab === 'users_permissions' && currentUser.role === 'admin' && (
+            <div className="pt-3 sm:pt-4">
+              <UsersPermissionsManager 
+                users={users}
+                units={units}
+                currentUser={currentUser}
+                onAddUser={handleAddUser}
+                onEditUser={handleEditUser}
+                onDeleteUser={handleDeleteUser}
+                onAddLog={handleAddLog}
+              />
+            </div>
+          )}
 
-      </main>
+          {activeTab === 'about' && (
+            <div className="pt-3 sm:pt-4">
+              <AboutApp />
+            </div>
+          )}
+        </main>
+      </div>
 
-      {/* Soldier Requests Review Modal */}
+      {/* Soldier Profile Drawer Modal */}
+      {selectedSoldierIdForProfile && (
+        <SoldierProfile
+          soldierId={selectedSoldierIdForProfile}
+          currentUser={currentUser}
+          units={units}
+          printSettings={settings?.printSettings}
+          onClose={() => setSelectedSoldierIdForProfile(null)}
+          onSoldierUpdated={refreshSoldiers}
+        />
+      )}
+
+      {/* Soldier Action Requests Review Modal */}
       <SoldierRequestsReviewModal
         isOpen={isRequestsModalOpen}
         onClose={() => setIsRequestsModalOpen(false)}
         requests={soldierRequests}
-        soldiers={soldiers}
-        units={units}
         onReviewRequest={handleReviewSoldierRequest}
+        units={units}
+        soldiers={soldiers}
       />
-
-      {/* General Footer */}
-      <footer className="bg-slate-100 text-slate-500 py-4 px-6 text-center text-[10px] border-t border-slate-200 mt-auto">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-2">
-          <p className="font-sans font-bold">
-            نظام إدارة الجاهزية والتحضير اليومي للقوة (اللواء 43 عمالقة) © ٢٠٢٦
-          </p>
-          <div className="flex items-center gap-3 font-sans text-slate-600">
-            <button
-              onClick={() => { setActiveTab('about'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-              className="text-emerald-800 font-black hover:underline cursor-pointer"
-            >
-              تطوير شركة الصرم للتقنية والبرمجيات | درويش رياض
-            </button>
-            <span className="text-slate-300">|</span>
-            <span className="text-emerald-800 font-bold flex items-center gap-1">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              حماية وتوثيق رقمي
-            </span>
-          </div>
-        </div>
-      </footer>
 
       {/* Logout Confirmation Modal */}
       <AnimatePresence>
         {isLogoutModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            {/* Backdrop overlay */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
-              onClick={() => setIsLogoutModalOpen(false)}
-            />
-            
-            {/* Modal Panel */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              transition={{ type: "spring", duration: 0.35, bounce: 0.15 }}
-              className="bg-white rounded-2xl shadow-2xl border border-slate-150 p-6 w-full max-w-sm relative z-10 text-right overflow-hidden"
-              dir="rtl"
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl"
             >
-              {/* Header */}
-              <div className="flex items-start gap-4 mb-4">
-                <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-100/50 flex-shrink-0">
-                  <LogOut className="w-6 h-6" />
-                </div>
-                <div className="flex-1">
-                  <h3 className="text-base font-extrabold text-slate-900 font-sans leading-tight">تأكيد تسجيل الخروج</h3>
-                  <p className="text-xs text-slate-500 font-sans mt-1">هل أنت متأكد من رغبتك في تسجيل الخروج وإنهاء جلستك الحالية في المنظومة؟</p>
-                </div>
+              <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
+                <LogOut className="w-6 h-6" />
               </div>
-
-              {/* User Info Card inside Modal */}
-              <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 mb-6 text-xs flex flex-row items-center gap-3">
-                <div className="w-8 h-8 rounded bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
-                  <User className="w-4 h-4 text-amber-500" />
-                </div>
-                <div className="flex-1">
-                  <p className="font-extrabold text-slate-800">{currentUser.name}</p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">
-                    {
-                      currentUser.role === 'admin' ? 'مدير النظام (كامل الصلاحيات)' :
-                      currentUser.role === 'commander_formation' ? 'قائد التشكيل' :
-                      currentUser.role === 'commander_unit' ? 'قائد كتيبة' :
-                      currentUser.role === 'operations' ? 'ركن عمليات' :
-                      (currentUser.role as string) === 'soldier' ? 'بوابة الفرد (عسكري)' : 'كاتب بيانات'
-                    }
-                  </p>
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center justify-end gap-3">
+              <h3 className="text-white font-bold text-lg">تأكيد تسجيل الخروج</h3>
+              <p className="text-slate-400 text-xs">هل أنت تأكد من رغبتك في الخروج من منظومة الجاهزية العسكرية؟</p>
+              <div className="flex gap-3 pt-2">
                 <button
-                  onClick={() => setIsLogoutModalOpen(false)}
-                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 hover:bg-slate-50 rounded-xl transition-colors cursor-pointer border border-transparent"
+                  onClick={handleLogout}
+                  className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-bold text-xs transition-all cursor-pointer shadow-lg shadow-rose-950/50"
                 >
-                  تراجع وإلغاء
+                  تسجيل الخروج
                 </button>
                 <button
-                  onClick={() => {
-                    setIsLogoutModalOpen(false);
-                    handleLogout();
-                  }}
-                  className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 active:bg-rose-800 rounded-xl shadow-md shadow-rose-100/50 hover:shadow-lg transition-all cursor-pointer border border-transparent"
+                  onClick={() => setIsLogoutModalOpen(false)}
+                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold text-xs transition-all cursor-pointer"
                 >
-                  نعم، تسجيل الخروج
+                  إلغاء
                 </button>
               </div>
             </motion.div>
@@ -1920,6 +1307,127 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* User Account Details Modal */}
+      <AnimatePresence>
+        {isUserAccountPopoverOpen && (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setIsUserAccountPopoverOpen(false)}>
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: -10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: -10 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-slate-900 border border-slate-700/80 rounded-3xl p-5 sm:p-6 max-w-md w-full text-slate-100 font-sans shadow-2xl relative overflow-hidden"
+            >
+              {/* Accent Top Bar */}
+              <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-amber-500 via-emerald-500 to-amber-500" />
+
+              {/* Header with Close Button */}
+              <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center shrink-0 shadow-inner">
+                    <User className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-base text-white">{currentUser.name}</h3>
+                    <p className="text-xs text-amber-400 font-bold mt-0.5">
+                      {
+                        currentUser.role === 'admin' ? 'مدير النظام (كامل الصلاحيات)' :
+                        currentUser.role === 'commander_formation' ? 'قائد التشكيل' :
+                        currentUser.role === 'commander_unit' ? 'قائد كتيبة' :
+                        currentUser.role === 'operations' ? 'ركن عمليات' :
+                        (currentUser.role as string) === 'soldier' ? 'بوابة الفرد (عسكري)' : 'كاتب بيانات'
+                      }
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsUserAccountPopoverOpen(false)}
+                  className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Info Fields List */}
+              <div className="py-4 space-y-2.5 text-xs">
+                <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
+                  <span className="text-slate-400 font-medium">اسم صاحب الحساب:</span>
+                  <span className="font-bold text-slate-100">{currentUser.name}</span>
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
+                  <span className="text-slate-400 font-medium">المستوى القيادي:</span>
+                  <span className="font-bold text-amber-400">
+                    {
+                      currentUser.role === 'admin' ? 'إدارة عليا (Super Admin)' :
+                      currentUser.role === 'commander_formation' ? 'قيادة تشكيل رئيسي' :
+                      currentUser.role === 'commander_unit' ? 'قيادة وحدة فرعية' :
+                      currentUser.role === 'operations' ? 'هيئة عمليات وتخطيط' :
+                      (currentUser.role as string) === 'soldier' ? 'فرد / عسكري' : 'مدخل بيانات'
+                    }
+                  </span>
+                </div>
+
+                {currentUser.email && (
+                  <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="text-slate-400 font-medium">البريد الإلكتروني:</span>
+                    <span className="font-mono text-slate-200 font-bold dir-ltr">{currentUser.email}</span>
+                  </div>
+                )}
+
+                {currentUser.unitId && (
+                  <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
+                    <span className="text-slate-400 font-medium">التشكيل / الوحدة التابعة:</span>
+                    <span className="font-bold text-sky-400">
+                      {units.find(u => u.id === currentUser.unitId)?.name || 'القيادة العامة'}
+                    </span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
+                  <span className="text-slate-400 font-medium">صلاحيات المنظومة:</span>
+                  <span className="font-bold text-emerald-400">
+                    {currentUser.role === 'admin' ? 'كامل الصلاحيات (عرض، تعديل، إدارة)' : 'صلاحيات محددة حسب التكليف'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
+                  <span className="text-slate-400 font-medium">حالة الاتصال والجلسة:</span>
+                  <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    نشطة وآمنة (مشفرة)
+                  </span>
+                </div>
+              </div>
+
+              {/* Actions Footer */}
+              <div className="pt-3 border-t border-slate-800 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsUserAccountPopoverOpen(false);
+                    setIsLogoutModalOpen(true);
+                  }}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-2 shadow-sm"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>تسجيل الخروج</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsUserAccountPopoverOpen(false)}
+                  className="py-2.5 px-5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs transition-all cursor-pointer"
+                >
+                  إغلاق
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <PWAInstallBanner />
     </div>
   );
 }

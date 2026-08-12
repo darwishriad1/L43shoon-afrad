@@ -103,24 +103,27 @@ export default function SoldierRequestsReviewModal({
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-[9999] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-5 font-sans dir-rtl" dir="rtl">
+      <div className="fixed inset-0 z-[9999] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-5 font-sans dir-rtl" dir="rtl">
         <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 15 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 15 }}
-          className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden"
+          className="bg-slate-900 border border-slate-800 rounded-3xl w-[96vw] max-w-5xl max-h-[95vh] flex flex-col shadow-2xl overflow-hidden my-auto"
         >
+          {/* Mobile pull indicator */}
+          <div className="w-12 h-1.5 bg-slate-700 rounded-full mx-auto my-2 shrink-0 sm:hidden" />
+
           {/* Header */}
-          <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+          <div className="px-4 sm:px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60 gap-3">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-2xl">
+              <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-2xl shrink-0">
                 <ShieldCheck className="w-6 h-6" />
               </div>
               <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-black text-white">مركز مراجعة وإعتماد طلبات وإجراءات الأفراد</h2>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-base sm:text-xl font-black text-white">مركز مراجعة وإعتماد طلبات وإجراءات الأفراد</h2>
                   {pendingCount > 0 && (
-                    <span className="px-2 py-0.5 bg-amber-500 text-slate-950 text-xs font-black rounded-full animate-pulse">
+                    <span className="px-2.5 py-0.5 bg-amber-500 text-slate-950 text-xs font-black rounded-full animate-pulse">
                       {pendingCount} معلق
                     </span>
                   )}
@@ -133,9 +136,11 @@ export default function SoldierRequestsReviewModal({
 
             <button
               onClick={onClose}
-              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              className="p-2 px-3 rounded-2xl bg-rose-950/80 text-rose-300 hover:bg-rose-900 border border-rose-800/80 font-extrabold text-xs sm:text-sm flex items-center gap-1 cursor-pointer transition-all shadow-xs shrink-0"
+              title="إغلاق النافذة"
             >
               <X className="w-5 h-5" />
+              <span>إغلاق</span>
             </button>
           </div>
 

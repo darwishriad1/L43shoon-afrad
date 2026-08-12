@@ -267,9 +267,12 @@ export const WhatsAppShareModal: React.FC<WhatsAppShareModalProps> = ({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.94, y: 20 }}
           transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-          className="bg-slate-900 border border-slate-700/80 text-slate-100 rounded-3xl shadow-[0_30px_90px_rgba(0,0,0,0.9)] max-w-3xl w-full overflow-hidden my-auto"
+          className="bg-slate-900 border border-slate-700/80 text-slate-100 rounded-3xl shadow-[0_30px_90px_rgba(0,0,0,0.9)] max-w-4xl w-[96vw] overflow-hidden my-auto"
           dir="rtl"
         >
+          {/* Mobile pull handle */}
+          <div className="w-12 h-1.5 bg-slate-700 rounded-full mx-auto my-2 shrink-0 sm:hidden" />
+
           {/* Top Tactical Header */}
           <div className="relative p-4 sm:p-6 bg-gradient-to-r from-emerald-950 via-slate-900 to-slate-950 border-b border-emerald-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-4 overflow-hidden">
             {/* Subtle glow background */}
@@ -282,7 +285,7 @@ export const WhatsAppShareModal: React.FC<WhatsAppShareModalProps> = ({
 
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="font-black text-base sm:text-lg text-white tracking-wide">
+                  <h3 className="font-black text-base sm:text-xl text-white tracking-wide">
                     منصة مشاركة التقارير الميدانية (واتساب)
                   </h3>
                   <span className="inline-flex items-center gap-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] px-2.5 py-0.5 rounded-full font-black tracking-wider">
@@ -298,9 +301,11 @@ export const WhatsAppShareModal: React.FC<WhatsAppShareModalProps> = ({
 
             <button
               onClick={onClose}
-              className="self-end sm:self-center p-2.5 rounded-2xl bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-700 border border-slate-700/60 transition-all cursor-pointer hover:rotate-90 transform duration-200"
+              className="p-2.5 px-4 rounded-2xl bg-rose-950/80 text-rose-300 hover:bg-rose-900 border border-rose-800/80 font-extrabold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer transition-all shadow-md shrink-0 self-start sm:self-center"
+              title="إغلاق النافذة"
             >
               <X className="w-5 h-5" />
+              <span>إغلاق النافذة</span>
             </button>
           </div>
 
@@ -602,20 +607,20 @@ export const WhatsAppShareModal: React.FC<WhatsAppShareModalProps> = ({
           </div>
 
           {/* Modal Bottom Controls */}
-          <div className="p-4 sm:p-5 bg-slate-950 border-t border-slate-800/80 flex items-center justify-between gap-3">
+          <div className="p-4 sm:p-5 bg-slate-950 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-3">
             <button
-              onClick={onClose}
-              className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-extrabold transition-colors cursor-pointer"
+              onClick={handleSendWhatsApp}
+              className="w-full sm:flex-1 py-3.5 px-7 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-2xl text-xs sm:text-base font-black transition-all shadow-[0_0_25px_rgba(16,185,129,0.35)] flex items-center justify-center gap-2.5 cursor-pointer active:scale-95 min-h-[50px]"
             >
-              إلغاء الأمر
+              <Send className="w-5 h-5 text-emerald-100" />
+              <span>إرسال التقرير عبر الواتساب الآن</span>
             </button>
 
             <button
-              onClick={handleSendWhatsApp}
-              className="flex-1 sm:flex-none px-7 py-3 bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs sm:text-sm font-black transition-all shadow-[0_0_25px_rgba(16,185,129,0.35)] flex items-center justify-center gap-2.5 cursor-pointer active:scale-95"
+              onClick={onClose}
+              className="w-full sm:w-auto px-6 py-3.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-2xl text-xs sm:text-sm font-extrabold transition-colors cursor-pointer min-h-[48px]"
             >
-              <Send className="w-4.5 h-4.5 text-emerald-100" />
-              <span>إرسال التقرير عبر الواتساب الآن</span>
+              إلغاء وإغلاق ✕
             </button>
           </div>
         </motion.div>

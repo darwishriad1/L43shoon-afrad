@@ -46,9 +46,9 @@ interface UsersPermissionsManagerProps {
   users: User[];
   units: Unit[];
   soldiers?: Soldier[];
-  currentUser: any;
-  onAddUser: (user: any) => Promise<void>;
-  onEditUser: (id: string, updatedPayload: any) => Promise<void>;
+  currentUser: User | null;
+  onAddUser: (user: Partial<User> & { password?: string }) => Promise<void>;
+  onEditUser: (id: string, updatedPayload: Partial<User> & { password?: string }) => Promise<void>;
   onDeleteUser: (id: string) => Promise<void>;
   onAddLog: (actionType: 'إضافة' | 'تعديل' | 'حذف' | 'استيراد' | 'استعادة', tableName: string, details: string) => void;
 }
@@ -2631,14 +2631,24 @@ export default function UsersPermissionsManager({
               <div className="flex gap-2.5 pt-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    if (twoFactorInputCode === twoFactorCurrentCode) {
-                      setPolicies(p => ({ ...p, twoFactorAuth: true }));
-                      onAddLog('تعديل', 'سياسات الأمان', 'تم تفعيل وربط المصادقة الثنائية (2FA) بنجاح عبر محاكي التحقق.');
-                      alert('تم تفعيل وتوثيق المصادقة الثنائية (2FA) بنجاح على حسابك بنجاح عملياتي تام!');
-                      setIsTwoFactorModalOpen(false);
-                    } else {
-                      alert('رمز التحقق غير صحيح! يرجى إدخال الرمز الدقيق الموضح في تطبيق المحاكي.');
+                  onClick={async () => {
+                    try {
+                      const res = await fetch('/api/auth/verify-2fa', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ code: twoFactorInputCode })
+                      });
+                      const data = await res.json();
+                      if (res.ok && data.success) {
+                        setPolicies(p => ({ ...p, twoFactorAuth: true }));
+                        onAddLog('تعديل', 'سياسات الأمان', 'تم تفعيل وربط المصادقة الثنائية (2FA) بنجاح عبر السيرفر.');
+                        alert('تم تفعيل وتوثيق المصادقة الثنائية (2FA) بنجاح على حسابك!');
+                        setIsTwoFactorModalOpen(false);
+                      } else {
+                        alert(data.error || 'رمز التحقق غير صحيح! يرجى إدخال رمز مكون من 6 أرقام.');
+                      }
+                    } catch (err: any) {
+                      alert('حدث خطأ أثناء الاتصال بالسيرفر للتحقق من الرمز.');
                     }
                   }}
                   className="flex-1 py-2.5 bg-emerald-800 hover:bg-emerald-900 text-white font-extrabold rounded-xl transition-all cursor-pointer text-center"

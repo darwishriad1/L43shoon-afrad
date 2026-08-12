@@ -16,6 +16,7 @@ import { auth, googleAuthProvider } from '../lib/firebase';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { createBackupSpreadsheet, updateBackupData, readBackupSpreadsheet } from '../lib/sheets';
 import { triggerToast } from './ToastContainer';
+import DatabaseResetControl from './DatabaseResetControl';
 
 interface BackupRestoreProps {
   units: Unit[];
@@ -31,6 +32,7 @@ interface BackupRestoreProps {
     auditLogs: AuditLog[];
   }) => void;
   onAddLog: (actionType: 'إضافة' | 'تعديل' | 'حذف' | 'استيراد' | 'استعادة', tableName: string, details: string) => void;
+  onResetDatabase?: () => Promise<void> | void;
 }
 
 export default function BackupRestore({
@@ -41,7 +43,8 @@ export default function BackupRestore({
   googleAccessToken,
   onSetGoogleAccessToken,
   onRestoreState,
-  onAddLog
+  onAddLog,
+  onResetDatabase
 }: BackupRestoreProps) {
   const [backupProvider, setBackupProvider] = useState<'aws' | 'azure'>('azure');
   const [awsRegion, setAwsRegion] = useState('me-central-1'); // Middle East
@@ -526,6 +529,13 @@ export default function BackupRestore({
           </div>
         )}
       </div>
+
+      {/* Database Reset Section */}
+      {onResetDatabase && (
+        <div className="pt-4 border-t border-slate-200/80">
+          <DatabaseResetControl onResetDatabase={onResetDatabase} />
+        </div>
+      )}
 
     </div>
   );

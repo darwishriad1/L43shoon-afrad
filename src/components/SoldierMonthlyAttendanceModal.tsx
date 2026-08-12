@@ -153,11 +153,14 @@ export const SoldierMonthlyAttendanceModal: React.FC<SoldierMonthlyAttendanceMod
   const selectedMonthName = MONTHS_LIST.find(m => m.value === selectedMonth)?.name || `شهر ${selectedMonth}`;
 
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center p-3 sm:p-5 bg-slate-950/85 backdrop-blur-md animate-fadeIn" dir="rtl">
-      <div className="w-full max-w-4xl bg-slate-900 border border-slate-800 rounded-3xl relative text-slate-100 shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-2 sm:p-5 bg-slate-950/85 backdrop-blur-md animate-fadeIn" dir="rtl">
+      <div className="w-[96vw] max-w-5xl bg-slate-900 border border-slate-800 rounded-3xl relative text-slate-100 shadow-2xl overflow-hidden flex flex-col max-h-[95vh] my-auto">
         
+        {/* Mobile pull indicator */}
+        <div className="w-12 h-1.5 bg-slate-700 rounded-full mx-auto my-2 shrink-0 sm:hidden" />
+
         {/* Modal Header */}
-        <div className="p-5 sm:p-6 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 border-b border-slate-800 flex items-center justify-between shrink-0">
+        <div className="p-4 sm:p-6 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 border-b border-slate-800 flex items-center justify-between shrink-0 gap-3">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0 shadow-inner">
               <Calendar className="w-6 h-6" />
@@ -167,7 +170,7 @@ export const SoldierMonthlyAttendanceModal: React.FC<SoldierMonthlyAttendanceMod
                 <span className="text-xs bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2.5 py-0.5 rounded-md font-bold">
                   {soldier.rank}
                 </span>
-                <h3 className="text-base sm:text-lg font-black text-white tracking-tight">
+                <h3 className="text-base sm:text-xl font-black text-white tracking-tight">
                   {soldier.fullName}
                 </h3>
               </div>
@@ -182,10 +185,11 @@ export const SoldierMonthlyAttendanceModal: React.FC<SoldierMonthlyAttendanceMod
           <button
             type="button"
             onClick={onClose}
-            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-all cursor-pointer"
+            className="p-2.5 px-4 rounded-2xl bg-rose-950/80 text-rose-300 hover:bg-rose-900 border border-rose-800/80 font-extrabold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer transition-all shadow-md shrink-0"
             title="إغلاق النافذة"
           >
-            <X className="w-6 h-6" />
+            <X className="w-5 h-5" />
+            <span>إغلاق النافذة</span>
           </button>
         </div>
 
@@ -511,18 +515,18 @@ export const SoldierMonthlyAttendanceModal: React.FC<SoldierMonthlyAttendanceMod
         </div>
 
         {/* Modal Footer */}
-        <div className="p-4 bg-slate-950 border-t border-slate-800/80 flex items-center justify-between shrink-0">
-          <div className="text-[11px] text-slate-400 font-semibold flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+        <div className="p-4 bg-slate-950 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+          <div className="text-xs text-slate-400 font-semibold flex items-center gap-1.5">
+            <Sparkles className="w-4 h-4 text-amber-400" />
             <span>نظام التدقيق الفوري لحضور جاهزية القوة الموحدة</span>
           </div>
 
           <button
             type="button"
             onClick={onClose}
-            className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs transition-all cursor-pointer border border-slate-700"
+            className="w-full sm:w-auto px-7 py-3.5 bg-slate-800 hover:bg-slate-700 text-white font-extrabold rounded-2xl text-xs sm:text-sm transition-all cursor-pointer border border-slate-700 min-h-[48px]"
           >
-            إغلاق الكشف
+            إغلاق الكشف ✕
           </button>
         </div>
 

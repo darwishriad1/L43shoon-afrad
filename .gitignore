@@ -1,16 +1,8 @@
-# Ignore firebase client config (optional)
-firebase-applet-config.json
-
-# Node modules and build artifacts
 node_modules/
+build/
 dist/
-.env
-.env.local
-
-# Jest cache
-.jest/
-
-# logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example

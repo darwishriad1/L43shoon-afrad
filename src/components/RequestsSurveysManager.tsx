@@ -44,7 +44,7 @@ interface RequestsSurveysManagerProps {
   currentUser: { id: string; name: string; role: string; unitId?: string | null };
   requests: SoldierActionRequest[];
   onRefreshRequests?: () => void;
-  onAddLog?: (log: any) => void;
+  onAddLog?: (log: { actionType?: 'إضافة' | 'تعديل' | 'حذف' | 'استيراد' | 'استعادة'; tableName?: string; details?: string; userId?: string; userName?: string; userRole?: string }) => void;
 }
 
 export default function RequestsSurveysManager({
