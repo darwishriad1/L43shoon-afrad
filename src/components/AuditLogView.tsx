@@ -7,7 +7,8 @@ import {
   User, 
   Database,
   Trash2,
-  Tag
+  Tag,
+  Download
 } from 'lucide-react';
 import { AuditLog } from '../types';
 
@@ -37,6 +38,22 @@ export default function AuditLogView({ logs, onClearLogs, currentUserRole }: Aud
       return true;
     }).sort((a, b) => b.timestamp.localeCompare(a.timestamp)); // Latest logs first
   }, [logs, actionFilter, searchQuery]);
+
+  const exportFilteredLogs = () => {
+    const escapeCsv = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const rows = [
+      ['نوع العملية', 'المستخدم', 'الدور', 'الجدول', 'التفاصيل', 'التاريخ'],
+      ...filteredLogs.map(log => [log.actionType, log.userName, log.userRole, log.tableName, log.details, formatTimestamp(log.timestamp)]),
+    ];
+    const csv = '\\ufeff' + rows.map(row => row.map(escapeCsv).join(',')).join('\\r\\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `سجل-التدقيق-${new Date().toISOString().slice(0, 10)}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
 
   const getActionColor = (action: string) => {
     switch (action) {
@@ -77,7 +94,16 @@ export default function AuditLogView({ logs, onClearLogs, currentUserRole }: Aud
           </p>
         </div>
 
-        {currentUserRole === 'admin' && onClearLogs && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={exportFilteredLogs}
+            disabled={filteredLogs.length === 0}
+            className="flex items-center gap-1 bg-slate-50 hover:bg-slate-100 disabled:opacity-50 text-slate-700 px-4 py-2 rounded-xl text-xs font-bold border border-slate-200 cursor-pointer"
+          >
+            <Download className="w-4 h-4" />
+            تصدير السجل المفلتر
+          </button>
+          {currentUserRole === 'admin' && onClearLogs && (
           <button
             onClick={() => {
               if (window.confirm('هل أنت متأكد من رغبتك في تصفير وأرشفة سجل التعديلات بالكامل؟ لا يمكن التراجع عن هذا الإجراء.')) {
@@ -89,7 +115,8 @@ export default function AuditLogView({ logs, onClearLogs, currentUserRole }: Aud
             <Trash2 className="w-4 h-4" />
             تصفير السجل وتصفية الرقابة
           </button>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Filter Controls */}

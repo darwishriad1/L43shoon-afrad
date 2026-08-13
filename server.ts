@@ -669,9 +669,12 @@ async function startServer() {
   });
 
   // --- Soldier Account & Requests API ---
-  app.get(["/api/soldier-requests", "/api/action-requests"], async (req, res) => {
+  app.get(["/api/soldier-requests", "/api/action-requests"], requireAuth, async (req: AuthRequest, res) => {
     try {
       const { soldierId } = req.query;
+      if (req.dbUser?.role === 'soldier' && soldierId && String(req.dbUser.soldierId || '') !== String(soldierId)) {
+        return res.status(403).json({ error: 'غير مصرح بعرض طلبات فرد آخر' });
+      }
       let allRequests;
       if (soldierId) {
         const solStr = String(soldierId);
@@ -767,7 +770,7 @@ async function startServer() {
     }
   });
 
-  app.post(["/api/soldier-requests", "/api/action-requests"], async (req, res) => {
+  app.post(["/api/soldier-requests", "/api/action-requests"], requireAuth, async (req: AuthRequest, res) => {
     try {
       const {
         id,
@@ -995,7 +998,7 @@ async function startServer() {
     }
   });
 
-  app.put(["/api/soldier-requests/:id", "/api/action-requests/:id"], async (req, res) => {
+  app.put(["/api/soldier-requests/:id", "/api/action-requests/:id"], requireAuth, async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
       const { proposedData, attachments, status = 'submitted', description } = req.body;
@@ -1046,10 +1049,17 @@ async function startServer() {
     }
   });
 
-  app.put(["/api/soldier-requests/:id/review", "/api/action-requests/:id/review"], async (req, res) => {
+  app.put(["/api/soldier-requests/:id/review", "/api/action-requests/:id/review"], requireAuth, requireRole(['commander_formation', 'commander_unit', 'operations']), async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
-      const { status, rejectionReason, reviewNotes, reviewedBy } = req.body; // 'approved' | 'rejected' | 'needs_amendment'
+      const { status, rejectionReason, reviewNotes } = req.body; // 'approved' | 'rejected' | 'needs_amendment' | 'under_review'
+      const allowedStatuses = new Set(['under_review', 'approved', 'rejected', 'needs_amendment']);
+      if (typeof status !== 'string' || !allowedStatuses.has(status)) {
+        return res.status(400).json({ error: 'حالة اعتماد غير صالحة' });
+      }
+      if (status === 'rejected' && !String(rejectionReason || '').trim()) {
+        return res.status(400).json({ error: 'يجب إدخال سبب الرفض قبل اعتماد الحالة' });
+      }
 
       const existing = await db.select().from(soldierRequests).where(eq(soldierRequests.id, id)).limit(1);
       if (existing.length === 0) {
@@ -1057,7 +1067,12 @@ async function startServer() {
       }
 
       const reqObj = existing[0];
+      const terminalStatuses = new Set(['approved', 'rejected']);
+      if (terminalStatuses.has(String(reqObj.status)) && reqObj.status !== status) {
+        return res.status(409).json({ error: 'لا يمكن تغيير طلب مغلق؛ افتح طلب تعديل جديد بدلاً من ذلك' });
+      }
       const reviewedAt = new Date().toISOString();
+      const actorName = req.dbUser?.name || req.dbUser?.username || 'مسؤول معتمد';
 
       let history = [];
       try {
@@ -1072,7 +1087,7 @@ async function startServer() {
       history.push({
         timestamp: reviewedAt,
         action: actionText,
-        actor: reviewedBy || 'مسؤول شؤون الأفراد',
+        actor: actorName,
         notes: reviewNotes || rejectionReason || 'تم اتخاذ إجراء بشأن الطلب'
       });
 
@@ -1083,7 +1098,7 @@ async function startServer() {
           reviewNotes: reviewNotes || null,
           historyLogs: JSON.stringify(history),
           reviewedAt,
-          reviewedBy: reviewedBy || 'مسؤول شؤون الأفراد'
+          reviewedBy: actorName
         })
         .where(eq(soldierRequests.id, id));
 
@@ -1956,37 +1971,23 @@ async function startServer() {
     }
   });
 
-  const handleCreateAuditLog = async (req: Request, res: Response) => {
+  const handleCreateAuditLog = async (req: AuthRequest, res: Response) => {
     try {
-      let dbUser: any = null;
-      const authHeader = req.headers?.authorization;
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const token = authHeader.split('Bearer ')[1];
-        if (token.startsWith('local_')) {
-          const userId = token.replace('local_', '');
-          const [foundUser] = await db.select().from(users).where(eq(users.id, userId));
-          if (foundUser) dbUser = foundUser;
-        } else {
-          try {
-            const decodedToken = await adminAuth.verifyIdToken(token);
-            const [foundUser] = await db.select().from(users).where(or(eq(users.uid, decodedToken.uid), eq(users.id, decodedToken.uid)));
-            if (foundUser) dbUser = foundUser;
-          } catch {
-            // Ignore token verification errors for non-blocking audit log creation
-          }
-        }
+      const { actionType, tableName, details } = req.body || {};
+      const allowedActions = new Set(['إضافة', 'تعديل', 'حذف', 'استيراد', 'استعادة']);
+      if (!allowedActions.has(String(actionType || 'تعديل'))) {
+        return res.status(400).json({ error: 'نوع عملية التدقيق غير صالح' });
       }
-
-      const { id, userId, userName, userRole, actionType, tableName, details, timestamp } = req.body || {};
+      const actor = req.dbUser;
       const log = {
-        id: id || `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        userId: userId || dbUser?.id || 'admin',
-        userName: userName || dbUser?.name || 'مستخدم',
-        userRole: userRole || dbUser?.role || 'مدير النظام',
-        actionType: actionType || 'تعديل',
-        tableName: tableName || 'سجل',
-        details: details || '',
-        timestamp: timestamp || new Date().toISOString()
+        id: `log_${Date.now()}_${randomUUID().slice(0, 8)}`,
+        userId: actor?.id || 'unknown',
+        userName: actor?.name || actor?.username || 'مستخدم موثق',
+        userRole: actor?.role || 'pending',
+        actionType: String(actionType || 'تعديل'),
+        tableName: String(tableName || 'سجل').slice(0, 120),
+        details: String(details || '').slice(0, 4000),
+        timestamp: new Date().toISOString()
       };
 
       try {
@@ -2004,8 +2005,8 @@ async function startServer() {
     }
   };
 
-  app.post("/api/audit-logs", handleCreateAuditLog);
-  app.post("/api/journal-records", handleCreateAuditLog);
+  app.post("/api/audit-logs", requireAuth, handleCreateAuditLog);
+  app.post("/api/journal-records", requireAuth, handleCreateAuditLog);
 
   app.delete(["/api/audit-logs", "/api/journal-records"], requireAuth, requireRole('admin'), async (req: AuthRequest, res) => {
     try {
