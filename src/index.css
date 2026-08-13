@@ -1091,3 +1091,152 @@ button:not(:disabled):active {
     transform: none;
   }
 }
+
+
+/* --- New login experience: secure operations gateway --- */
+.login-shell {
+  background:
+    linear-gradient(120deg, rgba(16, 35, 63, 0.97) 0%, rgba(18, 53, 79, 0.92) 45%, rgba(15, 157, 138, 0.84) 100%),
+    radial-gradient(circle at 14% 18%, rgba(214, 155, 39, 0.26), transparent 22rem) !important;
+}
+
+.login-shell::before {
+  content: "";
+  position: absolute;
+  inset: 1.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 2rem;
+  pointer-events: none;
+}
+
+.login-shell .login-card {
+  max-width: 520px !important;
+  padding: 2.25rem !important;
+  background: rgba(255, 255, 255, 0.97) !important;
+  border: 1px solid rgba(255, 255, 255, 0.78) !important;
+  border-radius: 1.75rem !important;
+  box-shadow: 0 32px 90px rgba(2, 18, 36, 0.32), 0 0 0 10px rgba(255, 255, 255, 0.06) !important;
+  color: var(--command-ink) !important;
+}
+
+.login-shell .login-card > div:first-child {
+  opacity: 0.3;
+  background: linear-gradient(90deg, var(--command-teal), #72d9c8, var(--command-gold)) !important;
+}
+
+.login-shell .login-card h1 {
+  color: var(--command-ink) !important;
+  font-size: clamp(1.55rem, 4vw, 2rem) !important;
+}
+
+.login-shell .login-card p {
+  color: var(--command-muted) !important;
+}
+
+.login-shell .login-card input:not([type="checkbox"]) {
+  min-height: 52px;
+  background: #f5f8fb !important;
+  border: 1px solid #d9e4ee !important;
+  border-radius: 0.85rem !important;
+  color: var(--command-ink) !important;
+  box-shadow: none !important;
+}
+
+.login-shell .login-card input:not([type="checkbox"]):focus {
+  background: #ffffff !important;
+  border-color: var(--command-teal) !important;
+  box-shadow: 0 0 0 4px rgba(15, 157, 138, 0.12) !important;
+}
+
+.login-shell .login-card input:not([type="checkbox"])::placeholder {
+  color: #91a2b5 !important;
+}
+
+.login-shell .login-card .login-form > div:nth-child(3) {
+  background: #f2f8f8 !important;
+  border-color: #d5ebe8 !important;
+  border-radius: 0.95rem !important;
+}
+
+.login-shell .login-card button[type="submit"] {
+  min-height: 54px;
+  border-radius: 0.9rem !important;
+  background: linear-gradient(135deg, #0f9d8a, #087565) !important;
+  color: #ffffff !important;
+  box-shadow: 0 12px 24px rgba(15, 157, 138, 0.24) !important;
+  letter-spacing: 0.01em;
+}
+
+.login-shell .login-card button[type="submit"]:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+.login-shell .login-card .text-amber-400,
+.login-shell .login-card .text-amber-500,
+.login-shell .login-card .text-amber-600 {
+  color: var(--command-teal-dark) !important;
+}
+
+.login-shell .login-card .bg-amber-500 {
+  background-color: var(--command-teal) !important;
+}
+
+.login-shell .login-card .text-slate-100,
+.login-shell .login-card .text-slate-200,
+.login-shell .login-card .text-slate-300 {
+  color: var(--command-ink) !important;
+}
+
+.login-shell .login-card .bg-slate-900\/30 {
+  background: #f4f8fb !important;
+}
+
+.login-shell .login-card .border-slate-800,
+.login-shell .login-card .border-slate-700 {
+  border-color: #dbe5ef !important;
+}
+
+@media (min-width: 900px) {
+  .login-shell::after {
+    content: "بوابة مركز القيادة\A إدارة الفرد والجاهزية\A\A دخول آمن ومركزي\A متابعة الجاهزية • الحضور • الطلبات";
+    white-space: pre;
+    position: absolute;
+    right: 9vw;
+    top: 50%;
+    transform: translateY(-50%);
+    width: min(26vw, 320px);
+    color: rgba(255, 255, 255, 0.92);
+    font-weight: 800;
+    font-size: clamp(1.15rem, 2vw, 1.8rem);
+    line-height: 1.75;
+    letter-spacing: 0.02em;
+    text-align: right;
+    padding-right: 1.5rem;
+    border-right: 3px solid rgba(114, 217, 200, 0.8);
+    pointer-events: none;
+  }
+
+  .login-shell .login-card {
+    margin-left: 9vw !important;
+    margin-right: auto !important;
+  }
+}
+
+@media (max-width: 899px) {
+  .login-shell::before {
+    inset: 0.65rem;
+    border-radius: 1.25rem;
+  }
+
+  .login-shell .login-card {
+    padding: 1.35rem !important;
+    border-radius: 1.35rem !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-shell .login-card button[type="submit"]:hover {
+    transform: none;
+  }
+}

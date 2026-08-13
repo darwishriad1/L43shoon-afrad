@@ -74,7 +74,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   };
 
   return (
-    <div className="min-h-screen min-h-[100dvh] w-full flex items-center justify-center p-4 relative overflow-x-hidden bg-[var(--bg)] transition-colors duration-500 font-sans select-none dir-rtl" dir="rtl">
+    <div className="login-shell min-h-screen min-h-[100dvh] w-full flex items-center justify-center p-4 relative overflow-x-hidden bg-[var(--bg)] transition-colors duration-500 font-sans select-none dir-rtl" dir="rtl">
       
       {/* Floating Theme Toggle Button */}
       <button
@@ -140,7 +140,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       </div>
 
       {/* Main Glassmorphic Login Card */}
-      <div className="relative z-10 w-full max-w-[440px] p-6 sm:p-9 bg-[var(--card-bg)] backdrop-blur-xl border border-[var(--card-border)] rounded-[2.5rem] sm:rounded-[3rem] shadow-2xl transition-all duration-500 my-auto">
+      <div className="login-card relative z-10 w-full max-w-[440px] p-6 sm:p-9 bg-[var(--card-bg)] backdrop-blur-xl border border-[var(--card-border)] rounded-[2.5rem] sm:rounded-[3rem] shadow-2xl transition-all duration-500 my-auto">
         
         {/* Card Conic Glow Border Accent */}
         <div className="absolute inset-0 rounded-[inherit] pointer-events-none p-[1.5px] bg-gradient-to-br from-amber-500/20 via-purple-500/20 to-teal-500/20 -z-10 opacity-70" />
@@ -168,7 +168,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleLocalLogin} className="flex flex-col gap-4">
+        <form onSubmit={handleLocalLogin} className="login-form flex flex-col gap-4">
           
           {/* Email / Username Input Group */}
           <div className="relative">
