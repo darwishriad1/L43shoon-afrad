@@ -15,6 +15,10 @@ services:
         fromDatabase:
           name: l43shoon-afrad-db
           property: host
+      - key: SQL_PORT
+        fromDatabase:
+          name: l43shoon-afrad-db
+          property: port
       - key: SQL_DB_NAME
         fromDatabase:
           name: l43shoon-afrad-db
