@@ -22,6 +22,7 @@ const MONTHS_LIST = [
 ];
 
 import { Unit, Soldier, AttendanceRecord, AttendanceStatusCode, AuditLog, User as UserType, PrintSettings } from '../types';
+import { normalizeStatusCode } from '../utils/attendanceStatus';
 import { motion, AnimatePresence } from 'framer-motion';
 import WhatsAppShareModal from './WhatsAppShareModal';
 import SoldierMonthlyAttendanceModal from './SoldierMonthlyAttendanceModal';
@@ -85,22 +86,6 @@ export interface ItemDetailModalState {
   item: any;
 }
 
-/**
- * Normalizes military attendance status code to standard character codes:
- * 'ح': Present, 'غ': Absent, 'إ': Leave, 'م': Mission, 'ع': Excused, 'ن': Half-day, 'pending': Unrecorded
- */
-export const normalizeStatusCode = (code: string | null | undefined): string => {
-  if (!code) return 'pending';
-  const c = String(code).trim();
-  if (c === 'ح' || c === 'حاضر' || c.startsWith('حاضر')) return 'ح';
-  if (c === 'غ' || c === 'غائب' || c.startsWith('غائب')) return 'غ';
-  if (c === 'إ' || c === 'إجازة' || c.startsWith('إجاز')) return 'إ';
-  if (c === 'م' || c === 'مهمة' || c.startsWith('مهم')) return 'م';
-  if (c === 'ع' || c === 'بعذر' || c === 'عذر' || c.includes('عذر')) return 'ع';
-  if (c === 'ن' || c === 'نصف يوم' || c === 'نصف دوام' || c.includes('نصف')) return 'ن';
-  if (c === 'pending') return 'pending';
-  return c;
-};
 
 interface DashboardProps {
   units: Unit[];

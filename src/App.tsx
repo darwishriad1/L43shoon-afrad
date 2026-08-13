@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
 import { 
   LayoutDashboard, 
   Table, 
@@ -53,14 +53,14 @@ import {
 } from './services';
 
 // Component Imports
-import Dashboard from './components/Dashboard';
-import AttendanceSheet from './components/AttendanceSheet';
-import OrgManager from './components/OrgManager';
-import Reports from './components/Reports';
-import SettingsView from './components/SettingsView';
-import UsersPermissionsManager from './components/UsersPermissionsManager';
-import AboutApp from './components/AboutApp';
-import SpecialSections from './components/SpecialSections';
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const AttendanceSheet = lazy(() => import('./components/AttendanceSheet'));
+const OrgManager = lazy(() => import('./components/OrgManager'));
+const Reports = lazy(() => import('./components/Reports'));
+const SettingsView = lazy(() => import('./components/SettingsView'));
+const UsersPermissionsManager = lazy(() => import('./components/UsersPermissionsManager'));
+const AboutApp = lazy(() => import('./components/AboutApp'));
+const SpecialSections = lazy(() => import('./components/SpecialSections'));
 import SplashScreen from './components/SplashScreen';
 import LoginPage from './components/LoginPage';
 import PWAInstallBanner from './components/PWAInstallBanner';
@@ -70,6 +70,15 @@ import SoldierPortal from './components/SoldierPortal';
 import SoldierRequestsReviewModal from './components/SoldierRequestsReviewModal';
 import BottomSheetNavigation from './components/BottomSheetNavigation';
 import { triggerToast } from './components/ToastContainer';
+
+const PageLoading = () => (
+  <div className="min-h-[45vh] flex items-center justify-center" dir="rtl" aria-live="polite">
+    <div className="flex items-center gap-3 rounded-2xl bg-white/90 px-5 py-4 text-sm font-bold text-slate-600 shadow-lg ring-1 ring-slate-200/80 backdrop-blur-sm">
+      <Loader2 className="h-5 w-5 animate-spin text-emerald-600" />
+      جارٍ تجهيز القسم...
+    </div>
+  </div>
+);
 
 export default function App() {
   // Authentication Custom Hook
@@ -1163,6 +1172,7 @@ export default function App() {
 
         {/* Dynamic Page Views Container */}
         <main className="flex-1 px-2.5 sm:px-6 pb-6 pt-0 overflow-y-auto max-w-7xl mx-auto w-full">
+          <Suspense fallback={<PageLoading />}>
           {activeTab === 'dashboard' && (
             <Dashboard 
               units={units} 
@@ -1299,6 +1309,7 @@ export default function App() {
               <AboutApp />
             </div>
           )}
+          </Suspense>
         </main>
       </div>
 

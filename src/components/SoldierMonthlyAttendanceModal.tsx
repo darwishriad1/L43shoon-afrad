@@ -17,7 +17,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { Soldier, Unit, AttendanceRecord, AttendanceStatusCode } from '../types';
-import { normalizeStatusCode } from './Dashboard';
+import { normalizeStatusCode } from '../utils/attendanceStatus';
 
 interface SoldierMonthlyAttendanceModalProps {
   soldier: Soldier;

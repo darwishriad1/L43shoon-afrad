@@ -638,3 +638,205 @@ body, main, aside, header, nav, section, article, table, th, td, input, select, 
 
 
 
+
+
+/* --- Professional responsive polish --- */
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html {
+  scroll-behavior: smooth;
+  scrollbar-gutter: stable;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-width: 320px;
+  overscroll-behavior-y: none;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+a {
+  touch-action: manipulation;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(245, 166, 35, 0.75);
+  outline-offset: 2px;
+}
+
+button:not(:disabled),
+a {
+  transition: transform 160ms var(--ease-out), background-color 180ms ease,
+    border-color 180ms ease, box-shadow 180ms ease, color 160ms ease;
+}
+
+button:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+.safe-bottom {
+  padding-bottom: max(0.75rem, var(--safe-bottom));
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea,
+  button {
+    min-height: 42px;
+  }
+
+  table {
+    min-width: 680px;
+  }
+
+  .mobile-card-stack > * + * {
+    margin-top: 0.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media print {
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  .no-print,
+  nav,
+  aside {
+    display: none !important;
+  }
+}
+
+/* Lightweight loading shimmer for future data boundaries. */
+.loading-shimmer {
+  background: linear-gradient(90deg, rgba(148, 163, 184, 0.12), rgba(148, 163, 184, 0.28), rgba(148, 163, 184, 0.12));
+  background-size: 200% 100%;
+  animation: loadingShimmer 1.4s linear infinite;
+}
+
+@keyframes loadingShimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-shimmer {
+    animation: none;
+  }
+}
+
+.dark .loading-shimmer {
+  background: linear-gradient(90deg, rgba(71, 85, 105, 0.16), rgba(100, 116, 139, 0.34), rgba(71, 85, 105, 0.16));
+  background-size: 200% 100%;
+}
+
+@supports (content-visibility: auto) {
+  .defer-paint {
+    content-visibility: auto;
+    contain-intrinsic-size: 480px;
+  }
+}
+
+@supports (backdrop-filter: blur(12px)) {
+  .glass-panel {
+    background: color-mix(in srgb, white 78%, transparent);
+    backdrop-filter: blur(12px) saturate(120%);
+  }
+}
+
+.dark .glass-panel {
+  background: rgba(15, 23, 42, 0.78);
+}
+
+@media (max-width: 640px) {
+  .safe-bottom {
+    padding-bottom: max(1rem, var(--safe-bottom));
+  }
+}
+
+/* Keep the application responsive when a long Arabic label is rendered. */
+[dir="rtl"] {
+  overflow-wrap: anywhere;
+}
+
+[dir="rtl"] .truncate {
+  overflow-wrap: normal;
+}
+
+/* Prevent accidental text selection during operational touch gestures. */
+.select-none button,
+.select-none nav {
+  user-select: none;
+}
+
+@media (hover: none) {
+  button:hover,
+  a:hover {
+    transform: none;
+  }
+}
+
+/* Ensure the fixed mobile navigation never overlaps the home indicator. */
+.fixed.bottom-0 {
+  padding-bottom: max(0.25rem, var(--safe-bottom));
+}
+
+/* Respect older browsers without color-mix while retaining the base colors. */
+@supports not (background: color-mix(in srgb, white 78%, transparent)) {
+  .glass-panel {
+    background: rgba(255, 255, 255, 0.9);
+  }
+  .dark .glass-panel {
+    background: rgba(15, 23, 42, 0.92);
+  }
+}
+
+/* Performance: avoid expensive blur on constrained mobile devices. */
+@media (max-width: 640px) and (prefers-reduced-motion: reduce) {
+  .backdrop-blur-sm,
+  .backdrop-blur-md,
+  .backdrop-blur-lg,
+  .backdrop-blur-xl {
+    backdrop-filter: none !important;
+  }
+}
