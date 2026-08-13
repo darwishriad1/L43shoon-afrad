@@ -1,6 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { onAuthStateChanged, onIdTokenChanged, signOut, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { auth } from '../lib/firebase';
 import { authService } from '../services/auth';
 import { User, AuthUser } from '../types';
 import { setUnauthorizedListener, setApiAuthToken } from '../services/api';
@@ -38,11 +36,6 @@ export function useAuth() {
     setToken(null);
     setAuthUser(null);
     setDbUser(null);
-    try {
-      await signOut(auth);
-    } catch {
-      // Ignore firebase signout error if offline
-    }
   }, []);
 
   useEffect(() => {
@@ -54,78 +47,33 @@ export function useAuth() {
 
   useEffect(() => {
     let active = true;
+    const localToken = localStorage.getItem('military_auth_token') || localStorage.getItem('authToken');
+    if (!localToken) {
+      setLoadingAuth(false);
+      return () => { active = false; };
+    }
 
-    const initAuth = async () => {
-      const localToken = localStorage.getItem('military_auth_token') || localStorage.getItem('authToken');
-      if (localToken) {
-        try {
-          const profile = await authService.getMe(localToken);
-          if (!active) return;
-          setToken(localToken);
-          setAuthUser({
-            uid: profile.id,
-            email: profile.email || `${profile.id}@local.com`,
-            displayName: profile.name || 'مستخدم',
-          });
-          setDbUser(profile);
-          setLoadingAuth(false);
-          return;
-        } catch (err: unknown) {
-          const apiErr = err as { status?: number; message?: string };
-          console.warn('Session token invalid or expired, clearing token:', err);
-          if (apiErr?.status === 401 || apiErr?.status === 403) {
-            localStorage.removeItem('military_auth_token');
-            localStorage.removeItem('authToken');
-          }
-        }
-      }
-
-      const unsubscribeIdToken = onIdTokenChanged(auth, async (fbUser) => {
-        if (!active) return;
-        if (fbUser) {
-          try {
-            let freshToken = await fbUser.getIdToken();
-            let profile;
-            try {
-              profile = await authService.getMe(freshToken);
-            } catch (e) {
-              // Force token refresh if expired
-              freshToken = await fbUser.getIdToken(true);
-              profile = await authService.getMe(freshToken);
-            }
-            if (!active) return;
-            localStorage.setItem('military_auth_token', freshToken);
-            localStorage.setItem('authToken', freshToken);
-            setToken(freshToken);
-            setAuthUser({
-              uid: fbUser.uid,
-              email: fbUser.email,
-              displayName: fbUser.displayName || profile?.name || 'مستخدم',
-            });
-            setDbUser(profile);
-          } catch (e) {
-            console.error('Firebase token verification error:', e);
-          } finally {
-            if (active) setLoadingAuth(false);
-          }
-        } else {
-          setAuthUser(null);
-          setDbUser(null);
-          setToken(null);
-          setLoadingAuth(false);
-        }
+    authService.getMe(localToken).then((profile) => {
+      if (!active) return;
+      setToken(localToken);
+      setAuthUser({
+        uid: profile.id,
+        email: profile.email || `${profile.id}@local.com`,
+        displayName: profile.name || 'مستخدم',
       });
+      setDbUser(profile);
+    }).catch((err: unknown) => {
+      const apiErr = err as { status?: number };
+      console.warn('Local session token invalid or expired:', err);
+      if (apiErr?.status === 401 || apiErr?.status === 403) {
+        localStorage.removeItem('military_auth_token');
+        localStorage.removeItem('authToken');
+      }
+    }).finally(() => {
+      if (active) setLoadingAuth(false);
+    });
 
-      return () => {
-        unsubscribeIdToken();
-      };
-    };
-
-    initAuth();
-
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, []);
 
   const loginWithPassword = useCallback(async (username: string, password: string, otp?: string) => {
@@ -153,29 +101,6 @@ export function useAuth() {
     }
   }, []);
 
-  const loginWithGoogle = useCallback(async () => {
-    setLoginError('');
-    try {
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
-      const idToken = await result.user.getIdToken();
-      const profile = await authService.getMe(idToken);
-      localStorage.setItem('military_auth_token', idToken);
-      localStorage.setItem('authToken', idToken);
-      setToken(idToken);
-      setAuthUser({
-        uid: result.user.uid,
-        email: result.user.email,
-        displayName: result.user.displayName,
-      });
-      setDbUser(profile);
-      return true;
-    } catch (err: unknown) {
-      setLoginError(explainAuthError(err, 'فشل تسجيل الدخول عبر جوجل'));
-      return false;
-    }
-  }, []);
-
   return {
     authUser,
     dbUser,
@@ -185,7 +110,6 @@ export function useAuth() {
     setLoginError,
     setDbUser,
     loginWithPassword,
-    loginWithGoogle,
     logout,
   };
 }

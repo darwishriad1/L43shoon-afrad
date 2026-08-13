@@ -81,7 +81,6 @@ export default function App() {
     loginError,
     setLoginError,
     loginWithPassword,
-    loginWithGoogle,
     logout
   } = useAuth();
 
@@ -880,7 +879,6 @@ export default function App() {
         loginError={loginError}
         loadingAuth={loadingAuth}
         handleLocalLogin={handleLocalLogin}
-        handleGoogleLogin={loginWithGoogle}
         otpEnabled={otpEnabled}
         setOtpEnabled={setOtpEnabled}
         otpValue={otpValue}
