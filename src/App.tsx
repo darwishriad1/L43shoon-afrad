@@ -53,7 +53,7 @@ import {
 } from './services';
 
 // Component Imports
-const Dashboard = lazy(() => import('./components/Dashboard'));
+const Dashboard = lazy(() => import('./components/DashboardModern'));
 const AttendanceSheet = lazy(() => import('./components/AttendanceSheet'));
 const OrgManager = lazy(() => import('./components/OrgManager'));
 const Reports = lazy(() => import('./components/Reports'));
