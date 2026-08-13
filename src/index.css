@@ -1240,3 +1240,81 @@ button:not(:disabled):active {
     transform: none;
   }
 }
+
+
+/* --- Android-style command center --- */
+.command-trigger {
+  min-height: 38px;
+  border-color: rgba(15, 157, 138, 0.22) !important;
+  background: rgba(240, 250, 248, 0.92) !important;
+  color: #17685e !important;
+}
+
+.command-trigger kbd {
+  border: 1px solid rgba(15, 157, 138, 0.12);
+}
+
+.command-overlay {
+  animation: commandFadeIn 160ms var(--ease-out) both;
+}
+
+.command-panel {
+  animation: commandPanelIn 220ms var(--ease-out) both;
+  box-shadow: 0 30px 80px rgba(6, 23, 39, 0.26) !important;
+}
+
+.command-panel button {
+  min-height: 52px;
+}
+
+@keyframes commandFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes commandPanelIn {
+  from { opacity: 0; transform: translateY(-10px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 640px) {
+  .command-trigger {
+    min-width: 38px;
+    justify-content: center;
+    padding-inline: 0.55rem !important;
+  }
+
+  .command-overlay {
+    padding-top: max(4.5rem, env(safe-area-inset-top));
+  }
+
+  .command-panel {
+    border-radius: 1.35rem !important;
+  }
+}
+
+.dark .command-trigger {
+  background: rgba(15, 157, 138, 0.16) !important;
+  border-color: rgba(114, 224, 203, 0.24) !important;
+  color: #8eeadd !important;
+}
+
+.dark .command-panel {
+  background: #16253a !important;
+  border-color: rgba(148, 163, 184, 0.18) !important;
+}
+
+.dark .command-panel input {
+  color: #e5eef8 !important;
+}
+
+.dark .command-panel .bg-slate-50 {
+  background: #102038 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .command-overlay,
+  .command-panel {
+    animation: none;
+  }
+}

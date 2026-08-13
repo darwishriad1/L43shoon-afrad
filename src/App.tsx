@@ -70,6 +70,7 @@ import SoldierPortal from './components/SoldierPortal';
 import SoldierRequestsReviewModal from './components/SoldierRequestsReviewModal';
 import BottomSheetNavigation from './components/BottomSheetNavigation';
 import { triggerToast } from './components/ToastContainer';
+import CommandCenter from './components/CommandCenter';
 
 const PageLoading = () => (
   <div className="min-h-[45vh] flex items-center justify-center" dir="rtl" aria-live="polite">
@@ -976,6 +977,12 @@ export default function App() {
 
         {/* Right Tools & Time Display */}
         <div className="flex items-center gap-1.5 sm:gap-2 text-slate-400 font-sans text-[10px] sm:text-[11px] shrink-0">
+          <CommandCenter
+            onNavigate={(tab) => setActiveTab(tab)}
+            soldierCount={soldiers.filter(s => s.isActive).length}
+            unitCount={units.length}
+            pendingRequests={soldierRequests.filter(r => ['pending', 'new', 'under_review'].includes(String(r.status))).length}
+          />
           <div className="flex items-center gap-1 bg-slate-900 px-2 py-0.5 rounded-md border border-slate-800/60 text-[10px] xs:text-[11px] whitespace-nowrap shrink-0">
             <Calendar className="w-3 h-3 text-slate-400 shrink-0" />
             <span className="text-slate-300 font-medium whitespace-nowrap">{formattedGregorianDate} م</span>
