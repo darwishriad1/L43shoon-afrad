@@ -21,6 +21,7 @@ import { createLocalSession } from "./src/lib/localSession.ts";
 import { hashPassword, verifyPassword, isHashedPassword, generateTemporaryPassword } from "./src/lib/passwords.ts";
 import { setupCloudDbRoutes } from "./src/server/cloudDbRoutes.ts";
 import { eq, ne, isNull, and, inArray, or, ilike, sql, gte, lte } from "drizzle-orm";
+import { normalizeSoldierPayload, validateSoldierPayload } from './src/lib/personnelValidation.ts';
 
 function tokensMatch(expected: string, received: string): boolean {
   const expectedBuffer = Buffer.from(expected);
@@ -484,14 +485,15 @@ async function startServer() {
   });
 
   // 4. Soldiers CRUD
-  app.get("/api/soldiers/search", async (req, res) => {
+  app.get("/api/soldiers/search", requireAuth, async (req: AuthRequest, res) => {
     try {
       const q = req.query.q as string | undefined;
       const rank = req.query.rank as string | undefined;
       const unitId = req.query.unitId as string | undefined;
       const isActiveStr = req.query.isActive as string | undefined;
-      const limit = parseInt(req.query.limit as string) || 20;
-      const offset = parseInt(req.query.offset as string) || 0;
+      const requestedLimit = parseInt(req.query.limit as string) || 20;
+      const limit = Math.min(Math.max(requestedLimit, 1), 100);
+      const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
 
       const conditions = [];
 
@@ -500,7 +502,9 @@ async function startServer() {
         conditions.push(
           or(
             ilike(soldiers.fullName, pattern),
-            ilike(soldiers.militaryNumber, pattern)
+            ilike(soldiers.militaryNumber, pattern),
+            ilike(soldiers.rank, pattern),
+            ilike(soldiers.nationalId, pattern)
           )
         );
       }
@@ -545,7 +549,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/soldiers/:id", async (req, res) => {
+  app.get("/api/soldiers/:id", requireAuth, async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
       const result = await db.select().from(soldiers).where(eq(soldiers.id, id)).limit(1);
@@ -559,7 +563,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/soldiers", async (req, res) => {
+  app.get("/api/soldiers", requireAuth, async (req: AuthRequest, res) => {
     try {
       const allSoldiers = await db.select().from(soldiers);
       return res.json(allSoldiers);
@@ -568,103 +572,48 @@ async function startServer() {
     }
   });
 
-  app.post("/api/soldiers", async (req, res) => {
+  app.post("/api/soldiers", requireAuth, requireRole(['admin', 'commander_formation', 'commander_unit', 'data_writer']), async (req: AuthRequest, res) => {
     try {
-      const { id, militaryNumber, fullName, rank, unitId, isActive, photoUrl } = req.body;
-      const newSoldier = { id, militaryNumber, fullName, rank, unitId, isActive, photoUrl: photoUrl || null };
+      const payload = req.body || {};
+      const validationError = validateSoldierPayload(payload);
+      if (validationError) return res.status(400).json({ error: validationError });
+      const normalized = normalizeSoldierPayload(payload) as any;
+      const soldierId = typeof payload.id === 'string' && payload.id.trim() ? payload.id.trim() : randomUUID();
+      const duplicate = await db.select({ id: soldiers.id }).from(soldiers).where(eq(soldiers.militaryNumber, String(normalized.militaryNumber))).limit(1);
+      if (duplicate.length > 0) return res.status(409).json({ error: 'الرقم العسكري مستخدم مسبقاً' });
+      const newSoldier = { id: soldierId, ...normalized } as any;
       await db.insert(soldiers).values(newSoldier);
       return res.status(201).json(newSoldier);
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      console.error("Error in POST /api/soldiers:", error);
+      if (String(error?.code) === '23505') return res.status(409).json({ error: 'يوجد سجل فرد بنفس الرقم العسكري' });
+      return res.status(500).json({ error: 'تعذر حفظ بيانات الفرد حالياً' });
     }
   });
 
-  app.put("/api/soldiers/:id", async (req, res) => {
+  app.put("/api/soldiers/:id", requireAuth, requireRole(['admin', 'commander_formation', 'commander_unit', 'data_writer']), async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
-      const { 
-        militaryNumber, 
-        fullName, 
-        rank, 
-        unitId, 
-        isActive,
-        nationalId,
-        birthDate,
-        bloodType,
-        phoneNumber,
-        address,
-        emergencyContact,
-        qualification,
-        specialization,
-        joinDate,
-        battalion,
-        company,
-        platoon,
-        militaryStatus,
-        medicalHistory,
-        promotionHistory,
-        assignmentsHistory,
-        attachments,
-        photoUrl
-      } = req.body;
+      const existing = await db.select().from(soldiers).where(eq(soldiers.id, id)).limit(1);
+      if (existing.length === 0) return res.status(404).json({ error: 'العسكري غير موجود' });
 
-      await db.update(soldiers)
-        .set({ 
-          militaryNumber, 
-          fullName, 
-          rank, 
-          unitId, 
-          isActive,
-          nationalId: nationalId !== undefined ? nationalId : null,
-          birthDate: birthDate !== undefined ? birthDate : null,
-          bloodType: bloodType !== undefined ? bloodType : null,
-          phoneNumber: phoneNumber !== undefined ? phoneNumber : null,
-          address: address !== undefined ? address : null,
-          emergencyContact: emergencyContact !== undefined ? emergencyContact : null,
-          qualification: qualification !== undefined ? qualification : null,
-          specialization: specialization !== undefined ? specialization : null,
-          joinDate: joinDate !== undefined ? joinDate : null,
-          battalion: battalion !== undefined ? battalion : null,
-          company: company !== undefined ? company : null,
-          platoon: platoon !== undefined ? platoon : null,
-          militaryStatus: militaryStatus || 'على رأس العمل',
-          medicalHistory: medicalHistory !== undefined ? medicalHistory : null,
-          promotionHistory: promotionHistory !== undefined ? promotionHistory : null,
-          assignmentsHistory: assignmentsHistory !== undefined ? assignmentsHistory : null,
-          attachments: attachments !== undefined ? attachments : null,
-          photoUrl: photoUrl !== undefined ? photoUrl : null
-        })
-        .where(eq(soldiers.id, id));
+      const payload = req.body || {};
+      const validationError = validateSoldierPayload(payload, true);
+      if (validationError) return res.status(400).json({ error: validationError });
+      const normalized = normalizeSoldierPayload(payload, true) as any;
 
-      return res.json({ 
-        id, 
-        militaryNumber, 
-        fullName, 
-        rank, 
-        unitId, 
-        isActive,
-        nationalId,
-        birthDate,
-        bloodType,
-        phoneNumber,
-        address,
-        emergencyContact,
-        qualification,
-        specialization,
-        joinDate,
-        battalion,
-        company,
-        platoon,
-        militaryStatus: militaryStatus || 'على رأس العمل',
-        medicalHistory,
-        promotionHistory,
-        assignmentsHistory,
-        attachments,
-        photoUrl
-      });
+      if (normalized.militaryNumber) {
+        const duplicate = await db.select({ id: soldiers.id }).from(soldiers).where(and(eq(soldiers.militaryNumber, String(normalized.militaryNumber)), ne(soldiers.id, id))).limit(1);
+        if (duplicate.length > 0) return res.status(409).json({ error: 'الرقم العسكري مستخدم لدى فرد آخر' });
+      }
+
+      await db.update(soldiers).set(normalized).where(eq(soldiers.id, id));
+      const [updated] = await db.select().from(soldiers).where(eq(soldiers.id, id)).limit(1);
+      return res.json(updated);
     } catch (error: any) {
       console.error("Error in PUT /api/soldiers/:id:", error);
-      return res.status(500).json({ error: error.message });
+      if (String(error?.code) === '23505') return res.status(409).json({ error: 'يوجد سجل فرد بنفس الرقم العسكري' });
+      return res.status(500).json({ error: 'تعذر تحديث بيانات الفرد حالياً' });
     }
   });
 
