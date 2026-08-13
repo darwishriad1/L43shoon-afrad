@@ -1,5 +1,6 @@
 import express, { Request, Response } from "express";
 import path from "path";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer as createViteServer } from "vite";
 import { adminAuth } from "./src/lib/firebase-admin.ts";
 import { db } from "./src/db/index.ts";
@@ -20,6 +21,16 @@ import { createLocalSession } from "./src/lib/localSession.ts";
 import { hashPassword, verifyPassword, isHashedPassword, generateTemporaryPassword } from "./src/lib/passwords.ts";
 import { setupCloudDbRoutes } from "./src/server/cloudDbRoutes.ts";
 import { eq, ne, isNull, and, inArray, or, ilike, sql, gte, lte } from "drizzle-orm";
+
+function tokensMatch(expected: string, received: string): boolean {
+  const expectedBuffer = Buffer.from(expected);
+  const receivedBuffer = Buffer.from(received);
+  return expectedBuffer.length === receivedBuffer.length && timingSafeEqual(expectedBuffer, receivedBuffer);
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>'\"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '\"': '&quot;' }[character] || character));
+}
 
 function sanitizeSensitive(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sanitizeSensitive);
@@ -69,6 +80,50 @@ async function startServer() {
       databaseConfigured: Boolean(process.env.SQL_HOST && process.env.SQL_DB_NAME && process.env.SQL_USER),
       firebaseConfigured: Boolean(process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_APPLICATION_CREDENTIALS),
     });
+  });
+
+  // One-time first-admin setup for phone users. Requires a Render secret and closes after the first admin exists.
+  app.get('/setup-admin', (_req, res) => {
+    res.type('html').send(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>إعداد المدير الأول</title><style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}main{max-width:520px;margin:30px auto;background:#1e293b;padding:24px;border-radius:18px}h1{margin-top:0;color:#fbbf24}label{display:block;margin-top:14px}input{width:100%;box-sizing:border-box;margin-top:6px;padding:12px;border-radius:10px;border:1px solid #475569;background:#0f172a;color:#fff;font-size:16px}button{width:100%;margin-top:22px;padding:13px;border:0;border-radius:10px;background:#f59e0b;color:#111827;font-weight:700;font-size:16px}small{color:#94a3b8}</style></head><body><main><h1>إعداد المدير الأول</h1><p>هذه الصفحة تعمل مرة واحدة فقط، وتحتاج رمز الإعداد الموجود في متغير <code>ADMIN_BOOTSTRAP_TOKEN</code> داخل Render.</p><form method="post" action="/setup-admin"><label>رمز الإعداد<input name="setupToken" type="password" required autocomplete="off"></label><label>الاسم الكامل<input name="name" required></label><label>اسم المستخدم<input name="username" required autocomplete="username"></label><label>البريد الإلكتروني<input name="email" type="email" required autocomplete="email"></label><label>كلمة المرور<input name="password" type="password" minlength="12" required autocomplete="new-password"></label><label>تأكيد كلمة المرور<input name="confirmPassword" type="password" minlength="12" required autocomplete="new-password"></label><button type="submit">إنشاء الحساب الإداري</button></form><p><small>لا تشارك رمز الإعداد أو كلمة المرور.</small></p></main></body></html>`);
+  });
+
+  app.post('/setup-admin', async (req, res) => {
+    try {
+      const configuredToken = process.env.ADMIN_BOOTSTRAP_TOKEN?.trim();
+      const { setupToken, name, username, email, password, confirmPassword } = req.body as Record<string, unknown>;
+      if (!configuredToken) return res.status(503).type('html').send('<h1>لم يتم تفعيل إعداد المدير</h1><p>أضف ADMIN_BOOTSTRAP_TOKEN في إعدادات Render أولًا.</p>');
+      if (typeof setupToken !== 'string' || !tokensMatch(configuredToken, setupToken.trim())) return res.status(403).type('html').send('<h1>رمز الإعداد غير صحيح</h1>');
+
+      const existingAdmins = await db.select({ id: users.id }).from(users).where(eq(users.role, 'admin')).limit(1);
+      if (existingAdmins.length > 0) return res.status(410).type('html').send('<h1>تم إغلاق صفحة الإعداد</h1><p>يوجد حساب إداري بالفعل.</p>');
+
+      const cleanName = typeof name === 'string' ? name.trim() : '';
+      const cleanUsername = typeof username === 'string' ? username.trim() : '';
+      const cleanEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+      const cleanPassword = typeof password === 'string' ? password : '';
+      const cleanConfirm = typeof confirmPassword === 'string' ? confirmPassword : '';
+      if (!cleanName || !cleanUsername || !cleanEmail || cleanPassword.length < 12 || cleanPassword !== cleanConfirm) {
+        return res.status(400).type('html').send('<h1>بيانات غير صحيحة</h1><p>تأكد من جميع الحقول وأن كلمة المرور 12 حرفًا على الأقل ومتطابقة.</p><p><a href="/setup-admin">العودة</a></p>');
+      }
+
+      const duplicate = await db.select({ id: users.id }).from(users).where(or(eq(users.username, cleanUsername), eq(users.email, cleanEmail))).limit(1);
+      if (duplicate.length > 0) return res.status(409).type('html').send('<h1>الحساب موجود مسبقًا</h1><p>اسم المستخدم أو البريد مستخدم.</p>');
+
+      await db.insert(users).values({
+        id: randomUUID(),
+        uid: null,
+        name: cleanName,
+        email: cleanEmail,
+        username: cleanUsername,
+        password: await hashPassword(cleanPassword),
+        role: 'admin',
+        unitId: null,
+      });
+      return res.status(201).type('html').send(`<h1>تم إنشاء الحساب الإداري</h1><p>يمكنك الآن تسجيل الدخول باسم المستخدم: <strong>${escapeHtml(cleanUsername)}</strong></p><p><a href="/">فتح صفحة الدخول</a></p>`);
+    } catch (error) {
+      console.error('First admin setup failed:', error);
+      return res.status(500).type('html').send('<h1>تعذر إنشاء الحساب</h1><p>تحقق من اتصال قاعدة البيانات ثم أعد المحاولة.</p>');
+    }
   });
 
   // --- API ROUTES ---
