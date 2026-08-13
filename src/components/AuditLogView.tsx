@@ -45,7 +45,7 @@ export default function AuditLogView({ logs, onClearLogs, currentUserRole }: Aud
       ['نوع العملية', 'المستخدم', 'الدور', 'الجدول', 'التفاصيل', 'التاريخ'],
       ...filteredLogs.map(log => [log.actionType, log.userName, log.userRole, log.tableName, log.details, formatTimestamp(log.timestamp)]),
     ];
-    const csv = '\\ufeff' + rows.map(row => row.map(escapeCsv).join(',')).join('\\r\\n');
+    const csv = '\ufeff' + rows.map(row => row.map(escapeCsv).join(',')).join('\r\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
