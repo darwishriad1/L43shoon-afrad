@@ -9,11 +9,13 @@ export async function fetchWithRetry(
   retries = 5,
   delay = 1000
 ): Promise<Response> {
+  const method = String(options.method || 'GET').toUpperCase();
+  const canRetry = ['GET', 'HEAD', 'OPTIONS'].includes(method) || options.headers instanceof Headers && options.headers.get('X-Idempotency-Key');
   try {
     const response = await fetch(url, options);
     
-    // If rate limited (429) or transient server error (500, 502, 503, 504), retry with backoff
-    if ((response.status === 429 || (!response.ok && response.status >= 500)) && retries > 0) {
+    // Retry only idempotent requests or explicitly idempotent mutations.
+    if (canRetry && (response.status === 429 || (!response.ok && response.status >= 500)) && retries > 0) {
       console.warn(`Server returned status ${response.status} for ${url}. Retrying in ${delay}ms... (${retries} left)`);
       await new Promise((resolve) => setTimeout(resolve, delay));
       return fetchWithRetry(url, options, retries - 1, delay * 1.5);
@@ -21,7 +23,7 @@ export async function fetchWithRetry(
     
     return response;
   } catch (error) {
-    if (retries > 0) {
+    if (canRetry && retries > 0) {
       console.warn(`Fetch failed for ${url} with error:`, error, `. Retrying in ${delay}ms... (${retries} left)`);
       await new Promise((resolve) => setTimeout(resolve, delay));
       return fetchWithRetry(url, options, retries - 1, delay * 1.5);

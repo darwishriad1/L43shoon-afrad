@@ -16,15 +16,60 @@ import {
   surveys
 } from "./src/db/schema.ts";
 import { requireAuth, requireRole, AuthRequest } from "./src/middleware/auth.ts";
+import { createLocalSession } from "./src/lib/localSession.ts";
+import { hashPassword, verifyPassword, isHashedPassword, generateTemporaryPassword } from "./src/lib/passwords.ts";
 import { setupCloudDbRoutes } from "./src/server/cloudDbRoutes.ts";
 import { eq, ne, isNull, and, inArray, or, ilike, sql, gte, lte } from "drizzle-orm";
 
+function sanitizeSensitive(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeSensitive);
+  if (!value || typeof value !== 'object') return value;
+  const result: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (['password', 'accountPassword', 'passwordHash'].includes(key)) continue;
+    result[key] = sanitizeSensitive(child);
+  }
+  return result;
+}
+
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
+  app.disable('x-powered-by');
+
+  const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+  app.use('/api/auth/login', (req, res, next) => {
+    const key = String(req.ip || 'unknown');
+    const now = Date.now();
+    const state = loginAttempts.get(key);
+    if (!state || state.resetAt <= now) {
+      loginAttempts.set(key, { count: 1, resetAt: now + 15 * 60 * 1000 });
+      return next();
+    }
+    if (state.count >= 20) return res.status(429).json({ error: 'محاولات تسجيل الدخول كثيرة؛ حاول لاحقًا' });
+    state.count += 1;
+    return next();
+  });
+
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    next();
+  });
 
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+  app.get('/healthz', (_req, res) => {
+    res.status(200).json({
+      ok: true,
+      service: 'l43shoon-afrad',
+      databaseConfigured: Boolean(process.env.SQL_HOST && process.env.SQL_DB_NAME && process.env.SQL_USER),
+      firebaseConfigured: Boolean(process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_APPLICATION_CREDENTIALS),
+    });
+  });
 
   // --- API ROUTES ---
 
@@ -34,7 +79,20 @@ async function startServer() {
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
     res.setHeader("Surrogate-Control", "no-store");
+    const originalJson = res.json.bind(res);
+    res.json = (body: unknown) => originalJson(sanitizeSensitive(body));
     next();
+  });
+
+  // Every API endpoint is protected by default. Only login and OTP verification are public.
+  app.use('/api', (req: AuthRequest, res, next) => {
+    if (req.path === '/auth/login' || req.path === '/auth/verify-2fa') return next();
+    return requireAuth(req, res, () => {
+      if (req.dbUser?.role === 'pending' && req.path !== '/users/me') {
+        return res.status(403).json({ error: 'الحساب بانتظار اعتماد مدير النظام' });
+      }
+      return next();
+    });
   });
 
   // Setup Cloud DB Inspection & Sync API routes
@@ -69,7 +127,7 @@ async function startServer() {
         email: email,
         username: null,
         password: null,
-        role: "admin",
+        role: "pending",
         unitId: null,
       };
 
@@ -90,10 +148,7 @@ async function startServer() {
       }
 
       if (otp !== undefined && otp !== null && String(otp).trim() !== "") {
-        const cleanOtp = String(otp).trim();
-        if (!/^\d{6}$/.test(cleanOtp)) {
-          return res.status(401).json({ error: "رمز التحقق الثنائي (OTP) غير صحيح" });
-        }
+        return res.status(501).json({ error: "التحقق الثنائي غير مفعّل بعد؛ لا يمكن قبول رمز غير موثق" });
       }
 
       const cleanUsername = String(username).trim();
@@ -121,24 +176,16 @@ async function startServer() {
       }
 
       for (const u of matchedUsers) {
-        // Collect all possible valid passwords for this user
-        const userPasswords = [u.password];
-
-        if (u.soldierId) {
+        let validPassword = await verifyPassword(cleanPassword, u.password);
+        if (!validPassword && u.soldierId) {
           const [s] = await db.select().from(soldiers).where(eq(soldiers.id, u.soldierId)).limit(1);
-          if (s) {
-            userPasswords.push(s.accountPassword);
-            if (s.militaryNumber) {
-              userPasswords.push(s.militaryNumber);
-              userPasswords.push(s.militaryNumber.split('').reverse().join(''));
-            }
-            userPasswords.push('123456');
-          }
+          validPassword = Boolean(s && await verifyPassword(cleanPassword, s.accountPassword));
         }
-
-        const validPassSet = new Set(userPasswords.filter(Boolean).map(p => String(p).trim()));
-        if (validPassSet.has(cleanPassword)) {
-          const token = `local_${u.id}`;
+        if (validPassword) {
+          if (!isHashedPassword(u.password)) {
+            await db.update(users).set({ password: await hashPassword(cleanPassword) }).where(eq(users.id, u.id));
+          }
+          const token = createLocalSession(u.id);
           return res.json({ token, user: u });
         }
       }
@@ -165,15 +212,9 @@ async function startServer() {
       }
 
       for (const s of soldierMatches) {
-        const reversedMilitaryNo = s.militaryNumber ? s.militaryNumber.split('').reverse().join('') : '';
-        const validPassSet = new Set([
-          s.accountPassword,
-          s.militaryNumber,
-          reversedMilitaryNo,
-          '123456'
-        ].filter(Boolean).map(p => String(p).trim()));
+        const validPassword = await verifyPassword(cleanPassword, s.accountPassword);
 
-        if (validPassSet.has(cleanPassword)) {
+        if (validPassword) {
           // Password is valid! Find or create matching user record in users table
           let userObj;
           const existingUser = await db.select().from(users).where(
@@ -187,7 +228,7 @@ async function startServer() {
           if (existingUser.length > 0) {
             userObj = existingUser[0];
             await db.update(users).set({
-              password: cleanPassword,
+              password: await hashPassword(cleanPassword),
               name: s.fullName,
               username: s.accountUsername || s.militaryNumber || s.id
             }).where(eq(users.id, userObj.id));
@@ -199,7 +240,7 @@ async function startServer() {
               name: s.fullName,
               email: `${s.militaryNumber || s.id}@military.local`,
               username: s.accountUsername || s.militaryNumber || s.id,
-              password: cleanPassword,
+              password: await hashPassword(cleanPassword),
               role: 'soldier' as const,
               unitId: s.unitId,
               soldierId: s.id
@@ -211,10 +252,10 @@ async function startServer() {
           await db.update(soldiers).set({
             hasAccount: true,
             accountUsername: s.accountUsername || s.militaryNumber || s.id,
-            accountPassword: cleanPassword
+            accountPassword: await hashPassword(cleanPassword)
           }).where(eq(soldiers.id, s.id));
 
-          const token = `local_${userObj.id}`;
+          const token = createLocalSession(userObj.id);
           return res.json({ token, user: userObj });
         }
       }
@@ -229,8 +270,9 @@ async function startServer() {
   app.post("/api/auth/verify-2fa", async (req, res) => {
     try {
       const { code } = req.body;
-      if (!code || !/^\d{6}$/.test(String(code).trim())) {
-        return res.status(400).json({ error: "رمز التحقق الثنائي (OTP) غير صحيح" });
+      const configuredCode = process.env.OTP_DEV_CODE;
+      if (!configuredCode || !/^\d{6}$/.test(String(code || '').trim()) || String(code).trim() !== configuredCode) {
+        return res.status(401).json({ error: "رمز التحقق الثنائي غير صحيح أو غير مفعّل" });
       }
       return res.json({ success: true, message: "تم التحقق الثنائي بنجاح" });
     } catch (error: any) {
@@ -239,7 +281,7 @@ async function startServer() {
   });
 
   // 2. Users CRUD
-  app.get("/api/users", async (req, res) => {
+  app.get("/api/users", requireRole('admin'), async (req, res) => {
     try {
       const allUsers = await db.select().from(users);
       return res.json(allUsers);
@@ -248,7 +290,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/users", async (req, res) => {
+  app.post("/api/users", requireRole('admin'), async (req, res) => {
     try {
       const { id, name, email, username, password, role, unitId } = req.body;
       const newUser = {
@@ -257,8 +299,8 @@ async function startServer() {
         name,
         email: email || `${username}@military.local`,
         username: username || null,
-        password: password || null,
-        role,
+        password: password ? await hashPassword(String(password)) : null,
+        role: role || 'pending',
         unitId: unitId || null
       };
       await db.insert(users).values(newUser);
@@ -269,28 +311,27 @@ async function startServer() {
     }
   });
 
-  app.put("/api/users/:id", async (req, res) => {
+  app.put("/api/users/:id", requireRole('admin'), async (req, res) => {
     try {
       const { id } = req.params;
       const { name, email, username, password, role, unitId } = req.body;
-      await db.update(users)
-        .set({ 
-          name, 
-          email: email || `${username}@military.local`, 
-          username: username || null, 
-          password: password || null, 
-          role, 
-          unitId: unitId || null 
-        })
-        .where(eq(users.id, id));
-      return res.json({ id, name, email, username, password, role, unitId });
+      const updateData: Record<string, unknown> = {
+        name,
+        email: email || `${username}@military.local`,
+        username: username || null,
+        role: role || 'pending',
+        unitId: unitId || null
+      };
+      if (password && String(password).trim()) updateData.password = await hashPassword(String(password));
+      await db.update(users).set(updateData as any).where(eq(users.id, id));
+      return res.json({ id, name, email, username, role: role || 'pending', unitId });
     } catch (error: any) {
       console.error("Error updating user:", error);
       return res.status(500).json({ error: error.message });
     }
   });
 
-  app.delete("/api/users/:id", async (req, res) => {
+  app.delete("/api/users/:id", requireRole('admin'), async (req, res) => {
     try {
       const { id } = req.params;
       await db.delete(users).where(eq(users.id, id));
@@ -301,7 +342,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/users/:id/delete", async (req, res) => {
+  app.post("/api/users/:id/delete", requireRole('admin'), async (req, res) => {
     try {
       const { id } = req.params;
       await db.delete(users).where(eq(users.id, id));
@@ -322,7 +363,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/units", async (req, res) => {
+  app.post("/api/units", requireRole(['admin', 'commander_formation']), async (req, res) => {
     try {
       const { id, name, parentId, commanderId, commanderName, type, location, approvedStrength, status, code } = req.body;
       const newUnit = { 
@@ -344,7 +385,7 @@ async function startServer() {
     }
   });
 
-  app.put("/api/units/:id", async (req, res) => {
+  app.put("/api/units/:id", requireRole(['admin', 'commander_formation']), async (req, res) => {
     try {
       const { id } = req.params;
       const { name, parentId, commanderId, commanderName, type, location, approvedStrength, status, code } = req.body;
@@ -367,7 +408,7 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/units/:id", async (req, res) => {
+  app.delete("/api/units/:id", requireRole(['admin', 'commander_formation']), async (req, res) => {
     try {
       const { id } = req.params;
       await db.delete(units).where(eq(units.id, id));
@@ -377,7 +418,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/units/:id/delete", async (req, res) => {
+  app.post("/api/units/:id/delete", requireRole(['admin', 'commander_formation']), async (req, res) => {
     try {
       const { id } = req.params;
       await db.delete(units).where(eq(units.id, id));
@@ -1041,7 +1082,7 @@ async function startServer() {
   });
 
   // Toggle/Update Soldier Account and sync User entry
-  app.put("/api/soldiers/:id/account", async (req, res) => {
+  app.put("/api/soldiers/:id/account", requireRole(['admin', 'commander_formation']), async (req, res) => {
     try {
       const { id } = req.params;
       const { hasAccount, username, password, assignedTasks, allowProfileEdit } = req.body;
@@ -1053,9 +1094,12 @@ async function startServer() {
 
       const soldier = soldierList[0];
 
-      const defaultPass = soldier.militaryNumber ? soldier.militaryNumber.split('').reverse().join('') : '123456';
       const accountUsername = (username && username.trim()) || soldier.accountUsername || soldier.militaryNumber || id;
-      const accountPassword = (password && password.trim()) || soldier.accountPassword || defaultPass;
+      const suppliedPassword = password && String(password).trim();
+      const plainAccountPassword = suppliedPassword || (!isHashedPassword(soldier.accountPassword) ? soldier.accountPassword : null) || generateTemporaryPassword();
+      const accountPassword = isHashedPassword(soldier.accountPassword) && !suppliedPassword
+        ? soldier.accountPassword!
+        : await hashPassword(String(plainAccountPassword));
 
       // Update soldier record with account state
       await db.update(soldiers)
@@ -1121,7 +1165,7 @@ async function startServer() {
   });
 
   // Batch create accounts for soldiers
-  app.post("/api/soldiers/accounts/batch-create", async (req, res) => {
+  app.post("/api/soldiers/accounts/batch-create", requireRole(['admin', 'commander_formation']), async (req, res) => {
     try {
       const { soldierIds, unitId, battalion, company, platoon } = req.body;
 
@@ -1153,7 +1197,8 @@ async function startServer() {
         }
 
         const accountUsername = soldier.accountUsername || soldier.militaryNumber || soldier.id;
-        const initialPassword = soldier.accountPassword || (soldier.militaryNumber ? soldier.militaryNumber.split('').reverse().join('') : '123456');
+        const initialPassword = generateTemporaryPassword();
+        const initialPasswordHash = await hashPassword(initialPassword);
 
         const existingUsers = await db.select().from(users).where(
           or(
@@ -1166,14 +1211,14 @@ async function startServer() {
           await db.update(soldiers).set({
             hasAccount: true,
             accountUsername: accountUsername,
-            accountPassword: initialPassword,
+            accountPassword: initialPasswordHash,
             allowProfileEdit: true
           }).where(eq(soldiers.id, soldier.id));
 
           await db.update(users).set({
             name: soldier.fullName,
             username: accountUsername,
-            password: initialPassword,
+            password: initialPasswordHash,
             role: 'soldier',
             unitId: soldier.unitId,
             soldierId: soldier.id
@@ -1186,7 +1231,7 @@ async function startServer() {
           await db.update(soldiers).set({
             hasAccount: true,
             accountUsername: accountUsername,
-            accountPassword: initialPassword,
+            accountPassword: initialPasswordHash,
             allowProfileEdit: true
           }).where(eq(soldiers.id, soldier.id));
 
@@ -1196,7 +1241,7 @@ async function startServer() {
             name: soldier.fullName,
             email: `${accountUsername}@military.local`,
             username: accountUsername,
-            password: initialPassword,
+            password: initialPasswordHash,
             role: 'soldier',
             unitId: soldier.unitId,
             soldierId: soldier.id
@@ -1221,20 +1266,24 @@ async function startServer() {
   });
 
   // Batch status & password management for soldier accounts
-  app.post("/api/soldiers/accounts/batch-status", async (req, res) => {
+  app.post("/api/soldiers/accounts/batch-status", requireRole(['admin', 'commander_formation']), async (req, res) => {
     try {
-      const { soldierIds, action } = req.body; // action: 'activate' | 'deactivate' | 'suspend' | 'reset_password'
+      const { soldierIds, action, newPassword } = req.body; // action: 'activate' | 'deactivate' | 'suspend' | 'reset_password'
       if (!Array.isArray(soldierIds) || soldierIds.length === 0) {
         return res.status(400).json({ error: "لم يتم اختيار أي أفراد" });
       }
 
+      if (action === 'reset_password' && (!newPassword || String(newPassword).trim().length < 10)) {
+        return res.status(400).json({ error: 'يجب إدخال كلمة مرور جديدة لا تقل عن 10 أحرف' });
+      }
       const selectedSoldiers = await db.select().from(soldiers).where(inArray(soldiers.id, soldierIds));
       let updatedCount = 0;
 
       for (const soldier of selectedSoldiers) {
         const username = soldier.accountUsername || soldier.militaryNumber || soldier.id;
-        const reversedMilitaryNo = soldier.militaryNumber ? soldier.militaryNumber.split('').reverse().join('') : '123456';
-        const password = soldier.accountPassword || reversedMilitaryNo;
+        const password = isHashedPassword(soldier.accountPassword)
+          ? soldier.accountPassword!
+          : await hashPassword(soldier.accountPassword || generateTemporaryPassword());
 
         if (action === 'activate') {
           await db.update(soldiers).set({
@@ -1287,7 +1336,7 @@ async function startServer() {
           await db.update(soldiers).set({
             hasAccount: true,
             accountUsername: username,
-            accountPassword: reversedMilitaryNo
+            accountPassword: await hashPassword(String(newPassword).trim())
           }).where(eq(soldiers.id, soldier.id));
 
           const existingUsers = await db.select().from(users).where(
@@ -1299,7 +1348,7 @@ async function startServer() {
 
           if (existingUsers.length > 0) {
             await db.update(users).set({
-              password: reversedMilitaryNo,
+              password: await hashPassword(String(newPassword).trim()),
               username: username,
               name: soldier.fullName
             }).where(eq(users.id, existingUsers[0].id));
@@ -1310,7 +1359,7 @@ async function startServer() {
               name: soldier.fullName,
               email: `${username}@military.local`,
               username: username,
-              password: reversedMilitaryNo,
+              password: await hashPassword(String(newPassword).trim()),
               role: 'soldier',
               unitId: soldier.unitId,
               soldierId: soldier.id
@@ -1798,7 +1847,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/units/bulk", async (req, res) => {
+  app.post("/api/units/bulk", requireRole(['admin', 'commander_formation', 'data_writer']), async (req, res) => {
     try {
       const { records } = req.body;
       if (!Array.isArray(records) || records.length === 0) {
@@ -1820,7 +1869,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/soldiers/bulk", async (req, res) => {
+  app.post("/api/soldiers/bulk", requireRole(['admin', 'commander_formation', 'data_writer']), async (req, res) => {
     try {
       const { records } = req.body;
       if (!Array.isArray(records) || records.length === 0) {
@@ -1991,7 +2040,7 @@ async function startServer() {
     }
   });
 
-  app.put("/api/settings", async (req, res) => {
+  app.put("/api/settings", requireRole('admin'), async (req, res) => {
     try {
       const { warningThreshold, dailyReminderEnabled, dailyReminderTime, autoBackupEnabled, hijriSupport, highContrastMode, printSettings } = req.body;
       const printSettingsStr = printSettings ? JSON.stringify(printSettings) : null;
@@ -2171,7 +2220,7 @@ async function startServer() {
   });
 
   // 10. Database Full Reset & Clean-up
-  app.post("/api/system/reset-database", requireAuth, async (req: AuthRequest, res) => {
+  app.post("/api/system/reset-database", requireAuth, requireRole('admin'), async (req: AuthRequest, res) => {
     try {
       await db.transaction(async (tx) => {
         // Delete all data tables 100%

@@ -5,6 +5,21 @@ import { authService } from '../services/auth';
 import { User, AuthUser } from '../types';
 import { setUnauthorizedListener, setApiAuthToken } from '../services/api';
 
+function explainAuthError(error: unknown, fallback: string): string {
+  const code = typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code) : '';
+  const message = error instanceof Error ? error.message : '';
+  if (code === 'auth/unauthorized-domain') {
+    return `نطاق تشغيل التطبيق غير مصرح به في Firebase. أضف النطاق الحالي إلى Firebase Authentication > Settings > Authorized domains، ثم أعد المحاولة. النطاق الحالي: ${window.location.hostname}`;
+  }
+  if (code === 'auth/popup-blocked') return 'المتصفح منع نافذة Google؛ اسمح بالنوافذ المنبثقة لهذا الموقع ثم أعد المحاولة.';
+  if (code === 'auth/popup-closed-by-user') return 'تم إغلاق نافذة Google قبل إكمال تسجيل الدخول.';
+  if (code === 'auth/operation-not-allowed') return 'تسجيل الدخول عبر Google غير مفعّل في Firebase Authentication > Sign-in method.';
+  if (message.includes('فشل الاتصال') || message.includes('NetworkError') || message.includes('Failed to fetch')) {
+    return 'لا يمكن الوصول إلى خادم التطبيق. شغّل الخادم عبر npm run dev أو npm start، وتأكد من إعداد PostgreSQL وملف .env، ثم افتح التطبيق من عنوان الخادم نفسه.';
+  }
+  return message || fallback;
+}
+
 export function useAuth() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [dbUser, setDbUser] = useState<User | null>(null);
@@ -133,8 +148,7 @@ export function useAuth() {
       setDbUser(res.user);
       return true;
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'فشل تسجيل الدخول: اسم المستخدم أو كلمة المرور خاطئة';
-      setLoginError(message);
+      setLoginError(explainAuthError(err, 'فشل تسجيل الدخول: اسم المستخدم أو كلمة المرور خاطئة'));
       return false;
     }
   }, []);
@@ -157,8 +171,7 @@ export function useAuth() {
       setDbUser(profile);
       return true;
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'فشل تسجيل الدخول عبر جوجل';
-      setLoginError(message);
+      setLoginError(explainAuthError(err, 'فشل تسجيل الدخول عبر جوجل'));
       return false;
     }
   }, []);

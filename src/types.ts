@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'commander_formation' | 'commander_unit' | 'operations' | 'data_writer' | 'soldier';
+export type UserRole = 'admin' | 'commander_formation' | 'commander_unit' | 'operations' | 'data_writer' | 'soldier' | 'pending';
 
 export interface AuthUser {
   uid: string;

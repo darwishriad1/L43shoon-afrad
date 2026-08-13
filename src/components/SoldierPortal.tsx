@@ -451,7 +451,7 @@ export default function SoldierPortal({
         body: JSON.stringify({
           hasAccount: soldier.hasAccount,
           username: soldier.accountUsername || soldier.militaryNumber,
-          password: soldier.accountPassword || '123456',
+          password: '',
           allowProfileEdit: soldier.allowProfileEdit !== false,
           assignedTasks: {
             tasks: remainingTasks,
@@ -573,7 +573,7 @@ export default function SoldierPortal({
         body: JSON.stringify({
           hasAccount: soldier.hasAccount,
           username: soldier.accountUsername || soldier.militaryNumber,
-          password: soldier.accountPassword || '123456',
+          password: '',
           allowProfileEdit: soldier.allowProfileEdit !== false,
           assignedTasks: {
             tasks: [],
