@@ -166,31 +166,30 @@ export default function UsersPermissionsManager({
   });
 
   // Notifications or alert state
-  const [securityAlerts, setSecurityAlerts] = useState([
-    { id: '1', type: 'warning', title: 'محاولة دخول فاشلة متكررة', user: 'katib_04', ip: '10.100.12.44', time: 'منذ دقيقة', status: 'checked' },
-    { id: '2', type: 'error', title: 'تعديل صلاحيات غير مصرح به', user: 'admin_test', ip: '192.168.1.112', time: 'منذ ١٥ دقيقة', status: 'flagged' },
-    { id: '3', type: 'info', title: 'تصدير كشف القوات العام', user: 'captain_khaled', ip: '10.100.2.19', time: 'منذ ساعة', status: 'checked' }
-  ]);
+  const [securityAlerts, setSecurityAlerts] = useState<any[]>([]);
 
-  // Temporary delegations mock list
-  const [delegations, setDelegations] = useState<TemporaryDelegation[]>([
-    {
-      id: 'del_1',
-      fromUserId: users[0]?.id || 'u_admin',
-      toUserId: users[1]?.id || 'u_ops',
-      startDate: '2026-07-17',
-      endDate: '2026-07-24',
-      permissions: ['view', 'add', 'approve'],
-      status: 'active'
-    }
-  ]);
+  // Temporary delegations list
+  const [delegations, setDelegations] = useState<TemporaryDelegation[]>([]);
 
   // Active connected devices list
-  const [sessions, setSessions] = useState<ActiveSession[]>([
-    { id: 'sess_1', userId: currentUser?.id || '1', userName: currentUser?.name || 'مدير النظام', deviceName: 'Station 4-Main Terminal', deviceType: 'desktop', os: 'RHEL (Red Hat Enterprise Linux)', browser: 'Firefox 118', ip: '10.100.1.15', location: 'مركز القيادة الرئيسي', loginTime: '٢٠٢٦/٠٧/١٧ ١٠:٢٤ ص', status: 'active' },
-    { id: 'sess_2', userId: 'usr_2', userName: 'رائد عدي بن حاتم', deviceName: 'Commander-Tab-LTE', deviceType: 'tablet', os: 'Android 14 Secure', browser: 'Chrome Mobile Secure', ip: '10.100.22.4', location: 'ميدان تدريب اللواء الثالث', loginTime: '٢٠٢٦/٠٧/١٧ ١١:٠٥ ص', status: 'active' },
-    { id: 'sess_3', userId: 'usr_3', userName: 'ملازم أول خالد الشمري', deviceName: 'Field Notebook 12', deviceType: 'mobile', os: 'iOS 17 Secure Edition', browser: 'Safari Mobile', ip: '10.100.45.101', location: 'نقطة المراقبة المتقدمة', loginTime: '٢٠٢٦/٠٧/١٧ ٠٩:٤٠ ص', status: 'active' }
-  ]);
+  const [sessions, setSessions] = useState<ActiveSession[]>(() => {
+    if (currentUser) {
+      return [{
+        id: 'sess_current',
+        userId: currentUser.id,
+        userName: currentUser.name,
+        deviceName: 'الجهاز الحالي (الجلسة النشطة)',
+        deviceType: 'desktop',
+        os: 'نظام تشغيل الجهاز الحالي',
+        browser: 'المتصفح الحالي',
+        ip: 'محلّي / شبكة آمنة',
+        location: 'مركز التحكم الرئيسي',
+        loginTime: new Date().toLocaleTimeString('ar-YE'),
+        status: 'active'
+      }];
+    }
+    return [];
+  });
 
   // System Security Rating Simulator
   const securityRating = useMemo(() => {

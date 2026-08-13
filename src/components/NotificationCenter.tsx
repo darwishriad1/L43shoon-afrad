@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Bell, 
@@ -47,6 +48,16 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   const [soundEnabled, setSoundEnabled] = useState(true);
 
   const unreadCount = useMemo(() => notifications.filter(n => !n.isRead).length, [notifications]);
+
+  // Listen for open-notifications custom event (e.g. triggered by pull-down gesture in Dashboard)
+  React.useEffect(() => {
+    const handleOpenNotifs = () => {
+      setIsOpen(true);
+      playTacticalChime();
+    };
+    window.addEventListener('open-notifications', handleOpenNotifs);
+    return () => window.removeEventListener('open-notifications', handleOpenNotifs);
+  }, []);
 
   // Helper to play tactical chime using Web Audio API
   const playTacticalChime = () => {
@@ -144,6 +155,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
     <div className="relative">
       {/* Bell Button */}
       <button
+        type="button"
         onClick={handleOpenToggle}
         className={`relative p-2 rounded-xl border transition-all duration-300 flex items-center justify-center cursor-pointer select-none active:scale-95 ${
           isOpen
@@ -171,24 +183,25 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
         )}
       </button>
 
-      {/* Popover Dropdown Panel */}
-      <AnimatePresence>
-        {isOpen && (
-          <>
-            {/* Backdrop overlay for mobile */}
-            <div 
-              className="fixed inset-0 z-40 bg-slate-950/20 backdrop-blur-[1px] sm:hidden"
-              onClick={() => setIsOpen(false)} 
-            />
+      {/* Popover Dropdown Panel rendered with fixed positioning relative to viewport via Portal */}
+      {typeof document !== 'undefined' && createPortal(
+        <AnimatePresence>
+          {isOpen && (
+            <>
+              {/* Backdrop overlay for mobile & desktop */}
+              <div 
+                className="fixed inset-0 z-[9999] bg-slate-950/70 backdrop-blur-xs transition-opacity"
+                onClick={() => setIsOpen(false)} 
+              />
 
-            <motion.div
-              initial={{ opacity: 0, y: 10, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 8, scale: 0.96 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
-              className="fixed sm:absolute left-2 right-2 sm:right-auto sm:left-0 mt-3 w-auto sm:w-96 bg-slate-900/95 text-slate-100 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] border border-slate-700/80 backdrop-blur-xl z-50 overflow-hidden font-sans dir-rtl"
-              dir="rtl"
-            >
+              <motion.div
+                initial={{ opacity: 0, y: -12, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -12, scale: 0.95 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+                className="fixed top-12 left-2 right-2 sm:left-10 sm:right-auto sm:w-[440px] max-h-[85vh] bg-slate-900/98 text-slate-100 rounded-2xl shadow-[0_25px_60px_rgba(0,0,0,0.95)] border border-slate-700/90 backdrop-blur-2xl z-[10000] overflow-hidden font-sans dir-rtl flex flex-col"
+                dir="rtl"
+              >
               {/* Header */}
               <div className="p-3.5 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 border-b border-slate-800 flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
@@ -421,7 +434,9 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
             </motion.div>
           </>
         )}
-      </AnimatePresence>
+      </AnimatePresence>,
+      document.body
+    )}
     </div>
   );
 };

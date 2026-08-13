@@ -110,36 +110,12 @@ export default function SpecialSections({
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  // Mock initial data for services
-  const [leavesList, setLeavesList] = useState([
-    { id: '1', soldierName: 'أحمد علي حسن الشحري', militaryNo: 'MIL-1002', unit: 'الكتيبة الأولى - السرية 1', type: 'إجازة ميدانية', days: '7 أيام', status: 'سارية', returnDate: '2026-07-25' },
-    { id: '2', soldierName: 'صالح محمد قاسم العولقي', militaryNo: 'MIL-1005', unit: 'الكتيبة الأولى - السرية 2', type: 'إجازة مرضية', days: '14 يوم', status: 'متأخر 2 يوم', returnDate: '2026-07-19' },
-    { id: '3', soldierName: 'خالد عبد الرزاق اليافعي', militaryNo: 'MIL-1012', unit: 'كتيبة الدعم واللوجستيات', type: 'أمر تحرك وتكليف', days: '3 أيام', status: 'عائد حديثاً', returnDate: '2026-07-21' },
-  ]);
-
-  const [promotionsList, setPromotionsList] = useState([
-    { id: '1', soldierName: 'فهد ناصر الماربي', militaryNo: 'MIL-1008', currentRank: 'جندي', targetRank: 'عريف', serviceYears: '4 سنوات', disciplineScore: '98%', status: 'مستحق الترقية القادمة' },
-    { id: '2', soldierName: 'عمر طارق الضالعي', militaryNo: 'MIL-1015', currentRank: 'عريف', targetRank: 'رقيب', serviceYears: '6 سنوات', disciplineScore: '95%', status: 'قيد الاعتماد من القيادة' },
-    { id: '3', soldierName: 'سعيد عبد الله الصبيحي', militaryNo: 'MIL-1020', currentRank: 'رقيب', targetRank: 'رقيب أول', serviceYears: '8 سنوات', disciplineScore: '99%', status: 'تمت الترقية مؤخراً' },
-  ]);
-
-  const [welfareList, setWelfareList] = useState([
-    { id: '1', soldierName: 'الشهيد البطل / سالم عبد الرب العولقي', militaryNo: 'MIL-088', unit: 'الكتيبة الثانية', category: 'شهيد الواجب', benefit: 'راتب شهري كامل + سلة غذائية + إعانة سكن', status: 'معتمد رسمياً' },
-    { id: '2', soldierName: 'الجريح / محسن علي أحمد الحرازي', militaryNo: 'MIL-142', unit: 'الكتيبة الأولى', category: 'جريح معركة', benefit: 'علاج طبي متخصص + إعانة علاجية 200,000 ريال', status: 'قيد الصرف' },
-    { id: '3', soldierName: 'الجندي / عادل سعيد الحضرمي', militaryNo: 'MIL-1025', unit: 'كتيبة المدفعية', category: 'مساعدة اجتماعية', benefit: 'سلفة زواج وإعانة عائلية 100,000 ريال', status: 'تم الصرف' },
-  ]);
-
-  const [equipmentList, setEquipmentList] = useState([
-    { id: '1', soldierName: 'محمد قائد الشبواني', militaryNo: 'MIL-1003', item: 'آلي كلاشنكوف AK-47 + 4 مخازن + سترة تكتيكية', serial: 'AK-884920', issueDate: '2025-01-10', status: 'بحوزة الفرد' },
-    { id: '2', soldierName: 'عبد القادر صالح المهرية', militaryNo: 'MIL-1018', item: 'جهاز لاسلكي تكتيكي HYT + منظار ليلي', serial: 'R-7721', issueDate: '2025-03-15', status: 'مخزنة في المخزن أثناء الإجازة' },
-    { id: '3', soldierName: 'عبد الله محسن الردفاني', militaryNo: 'MIL-1033', item: 'مسدس طارق 9 ملم + جفرة عسكرية', serial: 'P-9912', issueDate: '2024-11-20', status: 'بحوزة الفرد' },
-  ]);
-
-  const [archivesList, setArchivesList] = useState([
-    { id: '1', docNo: 'REF-2026-88', title: 'أمر إداري بشأن تنظيم آلية التحضير اليومي والنداء الآلي', date: '2026-07-01', issuer: 'قائد اللواء 43 عمالقة', category: 'توجيه عملياتي' },
-    { id: '2', docNo: 'REF-2026-92', title: 'قرار حصر وتحديث بيانات العهد الفردية وتصاريح السلاح', date: '2026-07-10', issuer: 'رئيس أركان اللواء', category: 'تنظيمي إداري' },
-    { id: '3', docNo: 'REF-2026-101', title: 'تعميم حوافز ومكافآت الانضباط القتالي والسيطرة الميدانية', date: '2026-07-18', issuer: 'ركن إدارة شؤون الأفراد', category: 'مالي وإداري' },
-  ]);
+  // Lists initialized empty (will be populated dynamically from real database records)
+  const [leavesList, setLeavesList] = useState<any[]>([]);
+  const [promotionsList, setPromotionsList] = useState<any[]>([]);
+  const [welfareList, setWelfareList] = useState<any[]>([]);
+  const [equipmentList, setEquipmentList] = useState<any[]>([]);
+  const [archivesList, setArchivesList] = useState<any[]>([]);
 
   // Derive unified real-time leaves list synchronized with all soldiers
   const effectiveLeavesList = useMemo(() => {

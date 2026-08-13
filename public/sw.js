@@ -1,4 +1,4 @@
-const CACHE_NAME = 'readiness-pwa-v1';
+const CACHE_NAME = 'readiness-pwa-v3';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -38,6 +38,16 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// Handle commands sent from client (e.g. database reset / cache purge)
+self.addEventListener('message', (event) => {
+  if (event.data && (event.data.type === 'CLEAR_CACHE' || event.data.type === 'SKIP_WAITING')) {
+    caches.keys().then((cacheNames) => {
+      return Promise.all(cacheNames.map((cache) => caches.delete(cache)));
+    });
+    self.skipWaiting();
+  }
+});
+
 // Service Worker Fetch Event
 self.addEventListener('fetch', (event) => {
   const { request } = event;
@@ -46,24 +56,10 @@ self.addEventListener('fetch', (event) => {
   // Skip non-GET or cross-origin extension requests
   if (request.method !== 'GET') return;
 
-  // Handle API routes with Network First
+  // CRITICAL: ALL API routes MUST be Network Only and NEVER stored in PWA cache!
+  // This prevents old client versions / offline PWAs from returning stale cached soldiers/users data after database deletion.
   if (url.pathname.startsWith('/api/')) {
-    event.respondWith(
-      fetch(request)
-        .then((response) => {
-          if (response.status === 200) {
-            const responseClone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, responseClone);
-            });
-          }
-          return response;
-        })
-        .catch(() => {
-          return caches.match(request);
-        })
-    );
-    return;
+    return; // Allow standard network fetch without SW interception or caching
   }
 
   // Handle navigation requests (HTML pages)

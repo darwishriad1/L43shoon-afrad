@@ -3,7 +3,7 @@ import { onAuthStateChanged, onIdTokenChanged, signOut, GoogleAuthProvider, sign
 import { auth } from '../lib/firebase';
 import { authService } from '../services/auth';
 import { User, AuthUser } from '../types';
-import { setUnauthorizedListener } from '../services/api';
+import { setUnauthorizedListener, setApiAuthToken } from '../services/api';
 
 export function useAuth() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -12,9 +12,14 @@ export function useAuth() {
   const [loadingAuth, setLoadingAuth] = useState<boolean>(true);
   const [loginError, setLoginError] = useState<string>('');
 
+  useEffect(() => {
+    setApiAuthToken(token);
+  }, [token]);
+
   const logout = useCallback(async () => {
     localStorage.removeItem('military_auth_token');
     localStorage.removeItem('authToken');
+    setApiAuthToken(null);
     setToken(null);
     setAuthUser(null);
     setDbUser(null);

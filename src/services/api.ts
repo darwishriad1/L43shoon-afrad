@@ -11,12 +11,18 @@ export class ApiError extends Error {
 }
 
 let unauthorizedListener: (() => void) | null = null;
+let activeAuthToken: string | null = null;
 
 export function setUnauthorizedListener(listener: (() => void) | null) {
   unauthorizedListener = listener;
 }
 
+export function setApiAuthToken(token: string | null) {
+  activeAuthToken = token;
+}
+
 function getStoredToken(): string | null {
+  if (activeAuthToken) return activeAuthToken;
   try {
     return localStorage.getItem('military_auth_token') || localStorage.getItem('authToken') || localStorage.getItem('token');
   } catch {
@@ -71,7 +77,7 @@ async function request<T>(
         const errorMessage = errorData?.error || errorData?.message || `خطأ في الاتصال بالسيرفر (${response.status})`;
 
         if (response.status === 401) {
-          if (unauthorizedListener) {
+          if (unauthorizedListener && !endpoint.includes('/api/journal-records') && !endpoint.includes('/api/audit-logs')) {
             unauthorizedListener();
           }
         }
@@ -112,22 +118,22 @@ async function request<T>(
 
 export const apiClient = {
   get: <T>(endpoint: string, options?: RequestOptions): Promise<T> =>
-    request<T>(endpoint, { ...options, method: 'GET' }, true, 2),
+    request<T>(endpoint, { ...options, method: 'GET' }, true, 3),
 
   post: <T>(endpoint: string, body?: unknown, options?: RequestOptions): Promise<T> =>
     request<T>(endpoint, {
       ...options,
       method: 'POST',
       body: body !== undefined ? JSON.stringify(body) : undefined,
-    }, false, 0),
+    }, true, 3),
 
   put: <T>(endpoint: string, body?: unknown, options?: RequestOptions): Promise<T> =>
     request<T>(endpoint, {
       ...options,
       method: 'PUT',
       body: body !== undefined ? JSON.stringify(body) : undefined,
-    }, false, 0),
+    }, true, 3),
 
   delete: <T>(endpoint: string, options?: RequestOptions): Promise<T> =>
-    request<T>(endpoint, { ...options, method: 'DELETE' }, false, 0),
+    request<T>(endpoint, { ...options, method: 'DELETE' }, true, 3),
 };

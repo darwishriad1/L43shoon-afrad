@@ -3,7 +3,7 @@ import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip 
 } from 'recharts';
 import { 
-  Users, CheckCircle2, XCircle, Plane, ShieldAlert, TrendingUp, Award, AlertTriangle, Search, FileText, Printer, Download, Bell, Clock, ArrowLeftRight, Filter, Calendar, Briefcase, HeartPulse, History, Plus, RefreshCw, RotateCcw, Lock, Shield, Eye, Info, X, Check, FileCheck2, UserCheck, Radio, Settings, Database, ChevronLeft, LayoutDashboard, Sparkles, MessageSquare, CalendarDays, CalendarRange, BarChart2, BarChart3, Building2, User, Activity, BadgeCheck, Stethoscope, Phone, ShieldCheck, Share2, ExternalLink, QrCode, Copy, PhoneCall, ChevronRight
+  Users, CheckCircle2, XCircle, Plane, ShieldAlert, TrendingUp, Award, AlertTriangle, Search, FileText, Printer, Download, Bell, Clock, ArrowLeftRight, Filter, Calendar, Briefcase, HeartPulse, History, Plus, RefreshCw, RotateCcw, Lock, Shield, Eye, Info, X, Check, FileCheck2, UserCheck, Radio, Settings, Database, ChevronLeft, LayoutDashboard, Sparkles, MessageSquare, CalendarDays, CalendarRange, BarChart2, BarChart3, Building2, User, Activity, BadgeCheck, Stethoscope, Phone, ShieldCheck, Share2, ExternalLink, QrCode, Copy, PhoneCall, ChevronRight, Smartphone, Monitor
 } from 'lucide-react';
 
 const MONTHS_LIST = [
@@ -229,6 +229,7 @@ function DashboardContent({
   // Quick Daily Readiness PDF Report Modal State
   const [showQuickReportModal, setShowQuickReportModal] = useState(false);
   const [isGeneratingQuickReport, setIsGeneratingQuickReport] = useState(false);
+  const [reportMobileFit, setReportMobileFit] = useState(true);
 
   // Executive Readiness Indicators Cards View Mode & Details Modal
   const [executiveTickerMode, setExecutiveTickerMode] = useState<'general' | 'daily_movement'>('general');
@@ -310,29 +311,10 @@ function DashboardContent({
     templateId: 'military_tactical'
   }), [printSettings]);
 
-  const handleGenerateQuickPdfReport = useCallback(async () => {
-    setIsGeneratingQuickReport(true);
+  const handleGenerateQuickPdfReport = useCallback(() => {
     setShowQuickReportModal(true);
-    triggerToast('جاري تحضير وتوليد تقرير الجاهزية اليومي عبر مكتبة PDF المخصصة...', 'info', 2500);
-
-    if (quickReportTimerRef.current) clearTimeout(quickReportTimerRef.current);
-
-    quickReportTimerRef.current = setTimeout(async () => {
-      try {
-        const reportFilename = `تقرير_ملخص_الجاهزية_اليومي_اللواء_43_${latestDate}`;
-        await exportQuickReadinessPdfReport('quick-readiness-pdf-report', reportFilename);
-        triggerToast('تم توليد وتنزيل ملف PDF لتقرير الجاهزية مباشرة بنجاح!', 'success', 4000);
-      } catch (err: unknown) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.error('Failed to generate quick report PDF:', err);
-        }
-        const errMsg = err instanceof Error ? err.message : 'تعذر تحميل ملف PDF، يرجى إعادة المحاولة.';
-        triggerToast(errMsg, 'error', 4000);
-      } finally {
-        setIsGeneratingQuickReport(false);
-      }
-    }, 400);
-  }, [latestDate]);
+    triggerToast('تم فتح معاينة تقرير الجاهزية اليومي - يمكنك الاطلاع أو الضغط على زر التنزيل لطباعة PDF', 'info', 3000);
+  }, []);
 
   const handleOpenGrantLeaveModal = useCallback((s: Soldier, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -571,6 +553,41 @@ function DashboardContent({
 
   // Status Filter for Drill-Down Modal
   const [drillDownStatusFilter, setDrillDownStatusFilter] = useState<string>('all');
+
+  // Pull Down Gesture State for Opening Notifications on Swipe/Drag Down
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isPulling, setIsPulling] = useState(false);
+  const startYRef = useRef<number | null>(null);
+
+  const handlePullStart = useCallback((clientY: number) => {
+    const scrollTop = window.scrollY || document.documentElement.scrollTop;
+    if (scrollTop <= 60) {
+      startYRef.current = clientY;
+      setIsPulling(true);
+    }
+  }, []);
+
+  const handlePullMove = useCallback((clientY: number) => {
+    if (!isPulling || startYRef.current === null) return;
+    const deltaY = clientY - startYRef.current;
+    if (deltaY > 0) {
+      setPullDistance(Math.min(deltaY, 110));
+    } else {
+      setPullDistance(0);
+    }
+  }, [isPulling]);
+
+  const handlePullEnd = useCallback(() => {
+    if (pullDistance > 55) {
+      window.dispatchEvent(new CustomEvent('open-notifications'));
+      if (typeof navigator !== 'undefined' && navigator.vibrate) {
+        try { navigator.vibrate(50); } catch (_) {}
+      }
+    }
+    setIsPulling(false);
+    setPullDistance(0);
+    startYRef.current = null;
+  }, [pullDistance]);
 
   // Filtered Drill Down Items
   const filteredDrillDownItems = useMemo(() => {
@@ -955,19 +972,11 @@ function DashboardContent({
     }, 100);
   }, []);
 
-  // Interactive Ops State: Pending Approvals Simulated
-  const [pendingApprovals, setPendingApprovals] = useState([
-    { id: 'app-1', name: 'النقيب علاء اليوسف', unit: 'الكتيبة الأولى', type: 'إجازة ميدانية طارئة', duration: '٤ أيام', date: '١٤٤٨/٠١/٢٧' },
-    { id: 'app-2', name: 'الجندي أول رامي كمال', unit: 'سرية الاستطلاع', type: 'تكليف مهمة خارجية', duration: 'يومين', date: '١٤٤٨/٠١/٢٧' },
-    { id: 'app-3', name: 'المساعد أول حازم سعد', unit: 'كتيبة الإشارة', type: 'إجازة مرضية مصدقة', duration: '٧ أيام', date: '١٤٤٨/٠١/٢٦' }
-  ]);
+  // Interactive Ops State: Pending Approvals
+  const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
 
-  // Simulated system-wide Alerts
-  const [systemAlerts, setSystemAlerts] = useState([
-    { id: 'alt-1', title: 'انخفاض جاهزية الكتيبة الثالثة', text: 'معدل الحضور والجاهزية اليومية للكتيبة انخفض عن الحد الأمني المعتمد (٦٨%)', type: 'warning', resolved: false, action: 'إرسال تعزيز عسكري' },
-    { id: 'alt-2', title: 'فرد تجاوز الحد الأقصى للإجازة', text: 'الجندي أول خالد العيسى تجاوز تاريخ عودته المحدد بيومين دون تقديم عذر رسمي', type: 'error', resolved: false, action: 'استدعاء والانضباط' },
-    { id: 'alt-3', title: 'صلاحية عهدة أجهزة الإشارة السلكية', text: 'تنتهي صلاحية المعاينة الدورية للعهدة التكنولوجية في سرية الإشارة غداً', type: 'info', resolved: false, action: 'تجديد العهدة الفني' }
-  ]);
+  // System-wide Alerts
+  const [systemAlerts, setSystemAlerts] = useState<any[]>([]);
 
   // Handle alert resolution
   const handleResolveAlert = (id: string, actionName: string) => {
@@ -1616,8 +1625,33 @@ function DashboardContent({
   const isCompact = true;
 
   return (
-    <div className="space-y-2 sm:space-y-4 text-right select-none pb-12 mt-0" dir="rtl">
-      
+    <div 
+      className="space-y-2 sm:space-y-4 text-right select-none pb-12 mt-0 relative" 
+      dir="rtl"
+      onTouchStart={(e) => handlePullStart(e.touches[0].clientY)}
+      onTouchMove={(e) => handlePullMove(e.touches[0].clientY)}
+      onTouchEnd={handlePullEnd}
+      onMouseDown={(e) => handlePullStart(e.clientY)}
+      onMouseMove={(e) => handlePullMove(e.clientY)}
+      onMouseUp={handlePullEnd}
+    >
+      {/* Visual Pull Down Indicator Banner */}
+      <AnimatePresence>
+        {pullDistance > 6 && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: Math.min(pullDistance, 64) }}
+            exit={{ opacity: 0, height: 0 }}
+            className="w-full flex items-center justify-center bg-gradient-to-b from-amber-500/25 via-amber-500/15 to-transparent text-amber-300 font-bold gap-2.5 rounded-2xl border border-amber-500/40 backdrop-blur-md shadow-lg my-1 overflow-hidden transition-all"
+          >
+            <Bell className={`w-5 h-5 text-amber-400 ${pullDistance > 55 ? 'animate-bounce text-amber-200 scale-125' : ''}`} />
+            <span className="text-xs sm:text-sm font-black tracking-wide">
+              {pullDistance > 55 ? 'افلت الآن لفتح مركز الإشعارات والإنذارات العملياتية 🔔!' : 'اسحب إلى الأسفل لفتح مركز الإشعارات...'}
+            </span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Seamless Joined Header: Brigade Banner + Search Bar (Zero Margins) */}
       <div className="rounded-b-xl sm:rounded-b-2xl border-x border-b border-slate-300/80 shadow-xs bg-white relative z-30 mt-0">
         
@@ -1635,51 +1669,42 @@ function DashboardContent({
 
           <div className="flex items-center gap-1.5 sm:gap-2.5 text-[10px] sm:text-xs text-slate-300 font-extrabold flex-wrap sm:flex-nowrap">
             
-            {/* Interactive Top Bar Date Picker Element */}
-            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border transition-all duration-300 shadow-sm ${
-              isHistoricalDate 
-                ? 'bg-amber-500 text-slate-950 border-amber-300 font-black ring-2 ring-amber-400/50 shadow-amber-500/30' 
-                : 'bg-slate-800/90 text-emerald-300 border-slate-700/80 hover:border-emerald-500/50 hover:bg-slate-800'
-            }`}>
-              <Calendar className={`w-3.5 h-3.5 shrink-0 ${isHistoricalDate ? 'text-slate-950' : 'text-emerald-400'}`} />
+            {/* Clean Icon-Only Date Picker Element */}
+            <div 
+              className={`relative flex items-center justify-center p-2 rounded-xl border transition-all duration-300 shadow-xs cursor-pointer active:scale-95 ${
+                isHistoricalDate 
+                  ? 'bg-amber-500 text-slate-950 border-amber-300 ring-2 ring-amber-400/50 shadow-amber-500/30' 
+                  : 'bg-slate-800/90 text-emerald-300 border-slate-700/80 hover:border-emerald-500/50 hover:bg-slate-800'
+              }`}
+              title={isHistoricalDate ? `التاريخ المحدد: ${selectedDailyDate} (انقر للتغيير)` : 'اضغط لاختيار تاريخ العرض'}
+            >
+              <Calendar className={`w-4 h-4 shrink-0 ${isHistoricalDate ? 'text-slate-950' : 'text-emerald-400'}`} />
               
-              <span className={`text-[10px] sm:text-xs font-black hidden xs:inline ${isHistoricalDate ? 'text-slate-950' : 'text-slate-300'}`}>
-                {isHistoricalDate ? 'تاريخ العرض:' : 'التاريخ:'}
-              </span>
-
-              {/* Native Date Input */}
+              {/* Native Date Input overlaid transparently */}
               <input
                 type="date"
                 value={selectedDailyDate || actualToday}
                 onChange={(e) => setSelectedDailyDate(e.target.value)}
-                className={`text-xs font-mono font-black bg-transparent focus:outline-none cursor-pointer dir-ltr ${
-                  isHistoricalDate ? 'text-slate-950 font-extrabold' : 'text-emerald-300'
-                }`}
-                title="اضغط لاختيار أي تاريخ من التقويم لعرض نتائجه في المؤشرات"
+                onClick={(e) => {
+                  try {
+                    (e.target as HTMLInputElement).showPicker?.();
+                  } catch (_) {}
+                }}
+                className="absolute inset-0 opacity-0 w-full h-full cursor-pointer z-10"
+                title={isHistoricalDate ? `التاريخ المحدد: ${selectedDailyDate} (انقر للتغيير)` : 'اضغط لاختيار تاريخ العرض'}
               />
-
-              {/* Status Tag */}
-              {isHistoricalDate ? (
-                <span className="text-[9px] bg-slate-950 text-amber-300 px-1.5 py-0.5 rounded font-black border border-amber-400/40 hidden md:inline-block">
-                  سابق ⚠️
-                </span>
-              ) : (
-                <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded-full font-bold border border-emerald-500/30 hidden md:inline-block">
-                  اليوم 🟢
-                </span>
-              )}
             </div>
 
-            {/* Reset / Return to Today Button (Appears ONLY when isHistoricalDate is true) */}
+            {/* Reset / Return to Today Button (Displays the selected historical date, clicking resets to today) */}
             {isHistoricalDate && (
               <button
                 type="button"
                 onClick={() => setSelectedDailyDate('')}
-                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black rounded-xl text-[10px] sm:text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow-md border border-emerald-400 animate-in zoom-in-95 duration-150 shrink-0"
-                title="اضغط للرجوع الفوري إلى نتائج اليوم الفعلي الحالي"
+                className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 active:scale-95 font-black rounded-xl text-[10px] sm:text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow-md border border-amber-300 animate-in zoom-in-95 duration-150 shrink-0"
+                title={`التاريخ المحدد: ${selectedDailyDate} - انقر للرجوع لليوم الفعلي`}
               >
-                <RotateCcw className="w-3.5 h-3.5 text-white" />
-                <span className="whitespace-nowrap">الرجوع لليوم الفعلي 🟢</span>
+                <RotateCcw className="w-3.5 h-3.5 text-slate-950 shrink-0" />
+                <span className="whitespace-nowrap font-mono font-black dir-ltr">{selectedDailyDate}</span>
               </button>
             )}
 
@@ -7041,26 +7066,39 @@ function DashboardContent({
       {/* Quick Readiness Summary Report Modal / Printable Document */}
       {showQuickReportModal && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto animate-fadeIn font-sans dir-rtl">
-          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-4xl w-full p-3.5 sm:p-6 space-y-4 sm:space-y-6 shadow-2xl border border-slate-200 relative my-2 sm:my-8 max-h-[94vh] flex flex-col">
+          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-5xl w-full p-3 sm:p-6 space-y-3 sm:space-y-5 shadow-2xl border border-slate-200 relative my-2 sm:my-8 max-h-[96vh] flex flex-col">
             {/* Modal Action Header */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-slate-200 pb-3 sm:pb-4 gap-3 shrink-0">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-slate-200 pb-3 gap-2.5 shrink-0">
               <div className="flex items-center gap-2.5 min-w-0">
-                <div className="p-2 sm:p-2.5 bg-emerald-100 text-emerald-800 rounded-xl sm:rounded-2xl border border-emerald-200 shrink-0">
+                <div className="p-2 bg-emerald-100 text-emerald-800 rounded-xl border border-emerald-200 shrink-0">
                   <FileText className="w-5 h-5 text-emerald-800" />
                 </div>
                 <div className="text-right min-w-0">
                   <h3 className="text-sm sm:text-base font-black text-slate-900 truncate">تقرير ملخص الجاهزية اليومي لجميع الوحدات</h3>
-                  <p className="text-[10px] sm:text-xs text-slate-500 font-bold truncate">معاينة وتوليد ملف PDF رسمي معتمد - اللواء 43 عمالقة</p>
+                  <p className="text-[10px] sm:text-xs text-slate-500 font-bold truncate">معاينة الشاشة وتوليد ملف PDF عند الطلب - اللواء 43 عمالقة</p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 w-full sm:w-auto justify-end shrink-0">
+              <div className="flex items-center gap-1.5 sm:gap-2 w-full sm:w-auto justify-end shrink-0 flex-wrap sm:flex-nowrap">
+                {/* Mobile Fit Toggle Button */}
+                <button
+                  type="button"
+                  onClick={() => setReportMobileFit(!reportMobileFit)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 active:scale-95 text-slate-800 rounded-xl text-xs font-black transition-all cursor-pointer border border-slate-300"
+                  title="تبديل وضع العرض بين ملائمة الهاتف والحجم المكتبي A4"
+                >
+                  {reportMobileFit ? <Smartphone className="w-4 h-4 text-emerald-600" /> : <Monitor className="w-4 h-4 text-slate-600" />}
+                  <span className="text-[11px] font-extrabold">{reportMobileFit ? 'مُكيّف للهاتف' : 'حجم A4 المكتبي'}</span>
+                </button>
+
+                {/* PDF Download Button */}
                 <button
                   type="button"
                   onClick={async () => {
                     setIsGeneratingQuickReport(true);
                     try {
                       const reportFilename = `تقرير_ملخص_الجاهزية_اليومي_اللواء_43_${latestDate}`;
+                      await new Promise((r) => setTimeout(r, 100));
                       await exportQuickReadinessPdfReport('quick-readiness-pdf-report', reportFilename);
                       triggerToast('تم تنزيل ملف PDF بنجاح عبر مكتبة PDF المخصصة!', 'success');
                     } catch (e: any) {
@@ -7071,16 +7109,16 @@ function DashboardContent({
                     }
                   }}
                   disabled={isGeneratingQuickReport}
-                  className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                  className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs disabled:opacity-50"
                 >
                   <Download className={`w-4 h-4 ${isGeneratingQuickReport ? 'animate-spin' : ''}`} />
-                  <span>{isGeneratingQuickReport ? 'جاري التحميل...' : 'تنزيل PDF مباشر (jsPDF)'}</span>
+                  <span>{isGeneratingQuickReport ? 'جاري التحميل...' : 'تنزيل PDF مباشر'}</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setShowQuickReportModal(false)}
-                  className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition-colors cursor-pointer shrink-0"
+                  className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl transition-colors cursor-pointer shrink-0"
                   title="إغلاق"
                 >
                   <X className="w-5 h-5" />
@@ -7089,15 +7127,19 @@ function DashboardContent({
             </div>
 
             {/* Printable Area Wrapper with Scroll for Mobile */}
-            <div className="overflow-y-auto overflow-x-auto flex-1 p-2 sm:p-4 bg-slate-100/80 rounded-2xl">
+            <div className="overflow-y-auto overflow-x-auto flex-1 p-1.5 sm:p-4 bg-slate-100/90 rounded-2xl flex justify-center">
               <div
                 id="quick-readiness-pdf-report"
-                className="w-[794px] mx-auto p-8 bg-white text-slate-900 space-y-5 border-4 border-double border-slate-900 rounded-xl shadow-xl font-sans shrink-0"
-                style={{ backgroundColor: '#ffffff', color: '#0f172a', minWidth: '794px' }}
+                className={`bg-white text-slate-900 font-sans border-2 sm:border-4 border-double border-slate-900 rounded-xl shadow-xl transition-all duration-200 ${
+                  !reportMobileFit || isGeneratingQuickReport
+                    ? 'w-[794px] min-w-[794px] p-8 space-y-5 shrink-0'
+                    : 'w-full max-w-[794px] p-3.5 sm:p-8 space-y-4 sm:space-y-5'
+                }`}
+                style={{ backgroundColor: '#ffffff', color: '#0f172a' }}
               >
                 {/* Official Bismillah Heading */}
                 <div className="text-center pb-2 border-b-2 border-slate-900" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
-                  <p className="text-sm font-black text-slate-900 tracking-widest font-serif">بسم الله الرحمن الرحيم</p>
+                  <p className="text-xs sm:text-sm font-black text-slate-900 tracking-widest font-serif">بسم الله الرحمن الرحيم</p>
                 </div>
 
                 <PrintHeader
@@ -7110,20 +7152,24 @@ function DashboardContent({
 
                 {/* Official Memo Addressee Header Box */}
                 <div 
-                  className="bg-slate-50 border-r-4 border-slate-900 p-3.5 rounded-l-xl text-xs space-y-1.5 shadow-2xs"
+                  className="bg-slate-50 border-r-4 border-slate-900 p-2.5 sm:p-3.5 rounded-l-xl text-xs space-y-1.5 shadow-2xs"
                   style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}
                 >
-                  <div className="flex justify-between items-center font-black text-slate-900">
-                    <span className="text-sm font-extrabold text-slate-900">الموضوع: مذكرة تقرير الجاهزية العملياتية والموقف اليومي العسكري</span>
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1 font-black text-slate-900">
+                    <span className="text-xs sm:text-sm font-extrabold text-slate-900">الموضوع: مذكرة تقرير الجاهزية العملياتية والموقف اليومي العسكري</span>
                     <span className="text-[10px] font-mono bg-slate-900 text-amber-300 px-2.5 py-0.5 rounded-md">مذكرة رقم: م ج / 43 / {latestDate.replace(/-/g, '')}</span>
                   </div>
-                  <p className="text-slate-800 font-black">إلـى: السيّد قائد اللواء 43 عمالقة / أركان حرب اللواء المحترم</p>
-                  <p className="text-slate-600 font-bold text-[11px]">سلام الله عليكم ورحمته وبركاته،، نرفق لسيادتكم أدناه الموقف الميداني اليومي الشامل لمستوى الجاهزية والاستعداد القتالي والقوة البشرية لكافة كتائب وسرايا اللواء 43 عمالقة بتاريخ {latestDate}:</p>
+                  <p className="text-slate-800 font-black text-xs">إلـى: السيّد قائد اللواء 43 عمالقة / أركان حرب اللواء المحترم</p>
+                  <p className="text-slate-600 font-bold text-[10px] sm:text-[11px]">سلام الله عليكم ورحمته وبركاته،، نرفق لسيادتكم أدناه الموقف الميداني اليومي الشامل لمستوى الجاهزية والاستعداد القتالي والقوة البشرية لكافة كتائب وسرايا اللواء 43 عمالقة بتاريخ {latestDate}:</p>
                 </div>
 
                 {/* Executive Metrics Summary Box */}
                 <div 
-                  className="grid grid-cols-6 gap-2 bg-slate-50 p-3.5 rounded-xl border-2 border-slate-300 text-center font-sans shadow-xs"
+                  className={`bg-slate-50 p-2.5 sm:p-3.5 rounded-xl border-2 border-slate-300 text-center font-sans shadow-xs ${
+                    !reportMobileFit || isGeneratingQuickReport
+                      ? 'grid grid-cols-6 gap-2'
+                      : 'grid grid-cols-2 xs:grid-cols-3 sm:grid-cols-6 gap-2'
+                  }`}
                   style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}
                 >
                   <div className="p-2 bg-white rounded-lg border border-slate-300">
@@ -7153,8 +7199,8 @@ function DashboardContent({
                 </div>
 
                 {/* Full Units Readiness Table */}
-                <div className="overflow-hidden rounded-xl border-2 border-slate-900">
-                  <table className="w-full text-right text-xs">
+                <div className="overflow-x-auto rounded-xl border-2 border-slate-900">
+                  <table className="w-full text-right text-[11px] sm:text-xs min-w-[620px] sm:min-w-full">
                     <thead className="bg-slate-900 text-amber-300 border-b-2 border-slate-900 font-black" style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}>
                       <tr>
                         <th className="py-2.5 px-2 text-center border-l border-slate-800 w-8">#</th>
@@ -7221,7 +7267,11 @@ function DashboardContent({
 
                 {/* Military Signatures & Approvals Section */}
                 <div 
-                  className="pt-4 border-t-2 border-slate-300 grid grid-cols-3 gap-4 text-center font-sans"
+                  className={`pt-4 border-t-2 border-slate-300 font-sans ${
+                    !reportMobileFit || isGeneratingQuickReport
+                      ? 'grid grid-cols-3 gap-4 text-center'
+                      : 'grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 text-center'
+                  }`}
                   style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}
                 >
                   <div className="space-y-4 p-3 bg-slate-50/80 rounded-lg border border-slate-200 flex flex-col justify-between h-36">
@@ -7260,7 +7310,7 @@ function DashboardContent({
 
                 {/* Administrative Footnote & Verification */}
                 <div 
-                  className="pt-2 border-t border-slate-200 flex justify-between items-center text-[10px] text-slate-600 font-bold"
+                  className="pt-2 border-t border-slate-200 flex justify-between items-center text-[10px] text-slate-600 font-bold flex-wrap gap-2"
                   style={{ pageBreakInside: 'avoid', breakInside: 'avoid' }}
                 >
                   <p>تنويه عملياتي: هذا التقرير مستخرج إلكترونياً ويعكس موقف الجاهزية والاستعداد القتالي اليومي لجميع تشكيلات اللواء 43 عمالقة.</p>

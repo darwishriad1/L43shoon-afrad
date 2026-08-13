@@ -1,6 +1,7 @@
-import express from "express";
+import express, { Request, Response } from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
+import { adminAuth } from "./src/lib/firebase-admin.ts";
 import { db } from "./src/db/index.ts";
 import { 
   users, 
@@ -15,6 +16,7 @@ import {
   surveys
 } from "./src/db/schema.ts";
 import { requireAuth, requireRole, AuthRequest } from "./src/middleware/auth.ts";
+import { setupCloudDbRoutes } from "./src/server/cloudDbRoutes.ts";
 import { eq, ne, isNull, and, inArray, or, ilike, sql, gte, lte } from "drizzle-orm";
 
 async function startServer() {
@@ -25,6 +27,18 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
   // --- API ROUTES ---
+
+  // Disable HTTP response caching for ALL /api/ routes to guarantee fresh data after database resets
+  app.use("/api", (req, res, next) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Surrogate-Control", "no-store");
+    next();
+  });
+
+  // Setup Cloud DB Inspection & Sync API routes
+  setupCloudDbRoutes(app);
 
   // 1. Authenticate / get or create current user
   app.get("/api/users/me", requireAuth, async (req: AuthRequest, res) => {
@@ -1838,14 +1852,33 @@ async function startServer() {
     }
   });
 
-  app.post(["/api/audit-logs", "/api/journal-records"], requireAuth, async (req: AuthRequest, res) => {
+  const handleCreateAuditLog = async (req: Request, res: Response) => {
     try {
-      const { id, userId, userName, userRole, actionType, tableName, details, timestamp } = req.body;
+      let dbUser: any = null;
+      const authHeader = req.headers?.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.split('Bearer ')[1];
+        if (token.startsWith('local_')) {
+          const userId = token.replace('local_', '');
+          const [foundUser] = await db.select().from(users).where(eq(users.id, userId));
+          if (foundUser) dbUser = foundUser;
+        } else {
+          try {
+            const decodedToken = await adminAuth.verifyIdToken(token);
+            const [foundUser] = await db.select().from(users).where(or(eq(users.uid, decodedToken.uid), eq(users.id, decodedToken.uid)));
+            if (foundUser) dbUser = foundUser;
+          } catch {
+            // Ignore token verification errors for non-blocking audit log creation
+          }
+        }
+      }
+
+      const { id, userId, userName, userRole, actionType, tableName, details, timestamp } = req.body || {};
       const log = {
         id: id || `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-        userId: userId || req.dbUser?.id || 'admin',
-        userName: userName || req.dbUser?.name || 'مستخدم',
-        userRole: userRole || req.dbUser?.role || 'admin',
+        userId: userId || dbUser?.id || 'admin',
+        userName: userName || dbUser?.name || 'مستخدم',
+        userRole: userRole || dbUser?.role || 'مدير النظام',
         actionType: actionType || 'تعديل',
         tableName: tableName || 'سجل',
         details: details || '',
@@ -1865,7 +1898,10 @@ async function startServer() {
       console.error("Error saving audit log:", error);
       return res.status(500).json({ error: error.message });
     }
-  });
+  };
+
+  app.post("/api/audit-logs", handleCreateAuditLog);
+  app.post("/api/journal-records", handleCreateAuditLog);
 
   app.delete(["/api/audit-logs", "/api/journal-records"], requireAuth, requireRole('admin'), async (req: AuthRequest, res) => {
     try {
@@ -2138,6 +2174,7 @@ async function startServer() {
   app.post("/api/system/reset-database", requireAuth, async (req: AuthRequest, res) => {
     try {
       await db.transaction(async (tx) => {
+        // Delete all data tables 100%
         await tx.delete(attendance);
         await tx.delete(sickLeaves);
         await tx.delete(soldierRequests);
@@ -2147,31 +2184,57 @@ async function startServer() {
         await tx.delete(soldiers);
         await tx.delete(units);
 
-        // Delete users except current main admin user
+        // Identify current active requesting user to preserve ONLY 1 admin account
         const currentDbUserId = req.dbUser?.id;
         const currentUid = req.user?.uid;
+        const currentEmail = req.user?.email || req.dbUser?.email;
 
+        // Try to find matching user in DB
+        let currentAdminUser = null;
         if (currentDbUserId) {
-          // Promote current user to 'admin' to guarantee they remain system administrator
-          await tx.update(users)
-            .set({ role: 'admin' })
-            .where(eq(users.id, currentDbUserId));
+          const [u] = await tx.select().from(users).where(eq(users.id, currentDbUserId)).limit(1);
+          currentAdminUser = u;
+        }
+        if (!currentAdminUser && currentUid) {
+          const [u] = await tx.select().from(users).where(or(eq(users.uid, currentUid), eq(users.id, currentUid))).limit(1);
+          currentAdminUser = u;
+        }
+        if (!currentAdminUser && currentEmail) {
+          const [u] = await tx.select().from(users).where(eq(users.email, currentEmail)).limit(1);
+          currentAdminUser = u;
+        }
 
-          // Delete all other users from database
-          await tx.delete(users).where(ne(users.id, currentDbUserId));
-        } else if (currentUid) {
+        if (currentAdminUser) {
+          // Clean up current admin account (unlink from unit/soldier)
           await tx.update(users)
-            .set({ role: 'admin' })
-            .where(eq(users.uid, currentUid));
+            .set({ 
+              role: 'admin', 
+              unitId: null, 
+              soldierId: null 
+            })
+            .where(eq(users.id, currentAdminUser.id));
 
-          await tx.delete(users).where(
-            or(
-              isNull(users.uid),
-              ne(users.uid, currentUid)
-            )
-          );
+          // DELETE ALL OTHER USERS FROM DATABASE WITHOUT EXCEPTION
+          await tx.delete(users).where(ne(users.id, currentAdminUser.id));
         } else {
+          // If no matching user record exists, create 1 clean admin user
+          const cleanAdminId = currentUid || currentDbUserId || `admin_${Date.now()}`;
+          const cleanAdmin = {
+            id: cleanAdminId,
+            uid: currentUid || cleanAdminId,
+            name: req.user?.name || (currentEmail ? currentEmail.split('@')[0] : 'مدير النظام'),
+            email: currentEmail || 'admin@military.local',
+            username: null,
+            password: null,
+            role: 'admin',
+            unitId: null,
+            soldierId: null
+          };
+
+          // Delete ALL users
           await tx.delete(users);
+          // Insert clean admin
+          await tx.insert(users).values(cleanAdmin);
         }
       });
 

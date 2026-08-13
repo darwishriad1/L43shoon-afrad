@@ -185,8 +185,25 @@ export default function App() {
     }
   }, [settings?.highContrastMode]);
 
-  // --- AUTOMATIC UPDATE CHECK ON STARTUP ---
+  // --- AUTOMATIC UPDATE CHECK ON STARTUP & DB RESET SYNC ---
   useEffect(() => {
+    // Listen for database reset signals across tabs / old windows
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel('military_db_sync');
+      bc.onmessage = (event) => {
+        if (event.data && event.data.type === 'DATABASE_RESET') {
+          console.log('[App] Database reset broadcast received! Clearing local caches...');
+          if ('caches' in window) {
+            caches.keys().then((keys) => keys.forEach((key) => caches.delete(key)));
+          }
+          window.location.reload();
+        }
+      };
+    } catch (e) {
+      console.warn('BroadcastChannel not supported:', e);
+    }
+
     const isAutoCheckEnabled = localStorage.getItem('auto_check_updates') !== 'false';
     if (isAutoCheckEnabled) {
       const timer = setTimeout(() => {
@@ -201,8 +218,15 @@ export default function App() {
         );
       }, 2000);
 
-      return () => clearTimeout(timer);
+      return () => {
+        clearTimeout(timer);
+        if (bc) bc.close();
+      };
     }
+
+    return () => {
+      if (bc) bc.close();
+    };
   }, []);
 
   // Current User Object
@@ -241,7 +265,7 @@ export default function App() {
     try {
       await auditLogsService.addLog(newLog);
     } catch (e) {
-      console.error("Error saving audit log:", e);
+      console.warn("Could not sync audit log to server:", e);
     }
   }, [currentUser, setAuditLogs]);
 
@@ -435,34 +459,63 @@ export default function App() {
       // 2. CALL RESET API ON SERVER
       await apiClient.post('/api/system/reset-database');
 
+      // 3. PURGE SERVICE WORKER CACHES AND BROADCAST TO ALL TABS / OLD CLIENTS
+      if ('caches' in window) {
+        try {
+          const cacheKeys = await caches.keys();
+          await Promise.all(cacheKeys.map(k => caches.delete(k)));
+        } catch (err) {
+          console.warn('Error deleting SW caches:', err);
+        }
+      }
+
+      if (navigator.serviceWorker?.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_CACHE' });
+      }
+
+      try {
+        const bc = new BroadcastChannel('military_db_sync');
+        bc.postMessage({ type: 'DATABASE_RESET' });
+        bc.close();
+      } catch (err) {
+        console.warn('BroadcastChannel error:', err);
+      }
+
       // Clear local React state
       setUnits([]);
       setSoldiers([]);
       setAttendance([]);
       setAuditLogs([]);
+      setNotifications([]);
+      refreshSoldierRequests();
       if (currentUser && currentUser.id !== 'guest') {
         setUsers([{ ...currentUser, role: 'admin' as const }]);
       } else {
         setUsers([]);
+      }
+
+      // Clear local storage keys for device cache cleanup while preserving active auth token
+      try {
+        const savedToken = localStorage.getItem('military_auth_token') || localStorage.getItem('authToken');
+        localStorage.clear();
+        if (savedToken) {
+          localStorage.setItem('military_auth_token', savedToken);
+          localStorage.setItem('authToken', savedToken);
+        }
+      } catch (err) {
+        console.warn('Could not clear local storage:', err);
       }
       
       handleAddLog('حذف', 'قاعدة البيانات', 'تمت تهيئة قاعدة البيانات وتصفية كافة السجلات والمستخدمين باستثناء مدير النظام.');
       
+      triggerToast('تمت تهيئة قاعدة البيانات السحابية وتصفياتها بنجاح 100%.', 'success');
+
       setTimeout(() => {
         window.location.reload();
-      }, 1500);
+      }, 1000);
     } catch (e: any) {
       console.error("Error resetting database:", e);
-      // Fallback local reset if backend request fails
-      setUnits([]);
-      setSoldiers([]);
-      setAttendance([]);
-      setAuditLogs([]);
-      if (currentUser && currentUser.id !== 'guest') {
-        setUsers([{ ...currentUser, role: 'admin' as const }]);
-      } else {
-        setUsers([]);
-      }
+      triggerToast('فشلت عملية تهيئة قاعدة البيانات السحابية: ' + (e.message || 'خطأ في الاتصال بالسيرفر'), 'error');
       throw e;
     }
   }, [units, soldiers, attendance, auditLogs, currentUser, setUsers, setUnits, setSoldiers, setAttendance, setAuditLogs, handleAddLog]);
@@ -899,7 +952,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* Top Bar: Official Status, Title & Clock */}
-      <div className="bg-slate-950 text-slate-100 py-1 px-2 sm:px-3 border-b border-slate-800 flex flex-row justify-between items-center gap-1.5 sm:gap-2 text-xs sticky top-0 z-40 shadow-sm backdrop-blur-md whitespace-nowrap overflow-x-auto no-scrollbar">
+      <div className="bg-slate-950 text-slate-100 py-1 px-2 sm:px-3 border-b border-slate-800 flex flex-row justify-between items-center gap-1.5 sm:gap-2 text-xs sticky top-0 z-40 shadow-sm backdrop-blur-md whitespace-nowrap overflow-x-auto sm:overflow-visible no-scrollbar">
         {/* Compact Account Button */}
         <button
           type="button"

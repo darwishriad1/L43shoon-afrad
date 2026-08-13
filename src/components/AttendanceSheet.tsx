@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { 
   Search, 
@@ -78,6 +78,13 @@ export default function AttendanceSheet({
   const [isAttendanceSettingsOpen, setIsAttendanceSettingsOpen] = useState(false);
   const [exportPeriodType, setExportPeriodType] = useState<'monthly' | 'daily'>('monthly');
   const [exportMonth, setExportMonth] = useState<number>(() => new Date().getMonth() + 1);
+
+  // Clear offline buffer if database/soldiers array was reset to empty
+  useEffect(() => {
+    if (!soldiers || soldiers.length === 0) {
+      setOfflineBuffer([]);
+    }
+  }, [soldiers]);
   const [exportYear, setExportYear] = useState<number>(() => new Date().getFullYear());
   const [exportDailyDate, setExportDailyDate] = useState<string>(() => {
     const d = new Date();

@@ -1017,18 +1017,17 @@ export default function SettingsView({
 
               {/* TAB 4: BACKUP & DATA PROTECTION */}
               {subTab === 'backup' && (
-                <div className="space-y-6">
-                  
+                <div className="space-y-4">
                   {/* Header info */}
                   <div>
-                    <h3 className="text-base font-extrabold text-slate-900">النسخ الاحتياطي وحفظ سجلات القوة</h3>
-                    <p className="text-xs text-slate-400 mt-1 leading-relaxed font-semibold">النسخ الاحتياطي السحابي المشفر والمزامنة مع مراكز البيانات الوطنية لمنع فقدان البيانات.</p>
+                    <h3 className="text-sm sm:text-base font-black text-slate-900">النسخ الاحتياطي وإدارة البيانات</h3>
+                    <p className="text-[11px] sm:text-xs text-slate-500 font-bold mt-0.5">تأمين كشوفات الحضور والقوة العسكرية عبر التصدير المحلي أو المزامنة مع Google Sheets</p>
                   </div>
 
-                  <div className="h-px bg-slate-100 my-4" />
+                  <div className="h-px bg-slate-100 my-2" />
 
-                  {/* Render the unified Backup and Restore panel (which has full S3/Azure, Google sheets auth, restore) */}
-                  <div className="bg-transparent rounded-2xl border-0">
+                  {/* Render the updated Backup and Restore panel */}
+                  <div className="bg-transparent">
                     <BackupRestore 
                       units={units}
                       soldiers={soldiers}
@@ -1038,7 +1037,6 @@ export default function SettingsView({
                       onSetGoogleAccessToken={onSetGoogleAccessToken}
                       onRestoreState={onRestoreState}
                       onAddLog={onAddLog}
-                      onResetDatabase={onResetDatabase}
                     />
                   </div>
 
