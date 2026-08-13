@@ -945,7 +945,7 @@ export default function App() {
 
   // 3. SYSTEM MAIN APP
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans select-none antialiased text-right" dir="rtl">
+    <div className="app-shell min-h-screen flex flex-col font-sans select-none antialiased text-right" dir="rtl">
       
       {/* Animated Military Welcome Splash Screen Overlay */}
       <AnimatePresence>
@@ -959,7 +959,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* Top Bar: Official Status, Title & Clock */}
-      <div className="bg-slate-950 text-slate-100 py-1 px-2 sm:px-3 border-b border-slate-800 flex flex-row justify-between items-center gap-1.5 sm:gap-2 text-xs sticky top-0 z-40 shadow-sm backdrop-blur-md whitespace-nowrap overflow-x-auto sm:overflow-visible no-scrollbar">
+      <div className="app-topbar bg-slate-950 text-slate-100 py-1 px-2 sm:px-3 border-b border-slate-800 flex flex-row justify-between items-center gap-1.5 sm:gap-2 text-xs sticky top-0 z-40 shadow-sm backdrop-blur-md whitespace-nowrap overflow-x-auto sm:overflow-visible no-scrollbar">
         {/* Compact Account Button */}
         <button
           type="button"
@@ -1048,7 +1048,7 @@ export default function App() {
       </div>
 
       {/* Mobile Bottom Navigation Dock */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-45 bg-slate-950/95 backdrop-blur-2xl border-t border-slate-800/90 shadow-[0_-10px_36px_rgba(0,0,0,0.7),0_1px_0_rgba(255,255,255,0.08)_inset] px-2 pt-2 pb-[max(0.6rem,env(safe-area-inset-bottom))] transition-all duration-300">
+      <nav className="app-mobile-nav lg:hidden fixed bottom-0 left-0 right-0 z-45 bg-slate-950/95 backdrop-blur-2xl border-t border-slate-800/90 shadow-[0_-10px_36px_rgba(0,0,0,0.7),0_1px_0_rgba(255,255,255,0.08)_inset] px-2 pt-2 pb-[max(0.6rem,env(safe-area-inset-bottom))] transition-all duration-300">
         <div className="max-w-lg mx-auto grid grid-cols-5 gap-1 text-center items-center relative">
           <motion.button
             whileTap={{ scale: 0.88 }}
@@ -1123,7 +1123,7 @@ export default function App() {
       <div className="flex-1 flex flex-col lg:flex-row pb-16 lg:pb-0">
         
         {/* Desktop Sidebar Navigation */}
-        <aside className="hidden lg:flex w-64 bg-slate-900 border-l border-slate-800 text-slate-300 flex-col shrink-0 min-h-[calc(100vh-33px)] shadow-xl z-20">
+        <aside className="app-sidebar hidden lg:flex w-64 bg-slate-900 border-l border-slate-800 text-slate-300 flex-col shrink-0 min-h-[calc(100vh-33px)] shadow-xl z-20">
           <div className="p-4 border-b border-slate-800/80 bg-slate-950/40">
             <h2 className="text-xs font-black text-slate-100 tracking-wide uppercase">قائمة الملاحة والسيطرة</h2>
             <p className="text-[10px] text-slate-400 mt-0.5">منظومة القوة والجاهزية العسكرية</p>
@@ -1171,7 +1171,7 @@ export default function App() {
         </aside>
 
         {/* Dynamic Page Views Container */}
-        <main className="flex-1 px-2.5 sm:px-6 pb-6 pt-0 overflow-y-auto max-w-7xl mx-auto w-full">
+        <main className="app-main flex-1 px-2.5 sm:px-6 pb-6 pt-0 overflow-y-auto max-w-7xl mx-auto w-full">
           <Suspense fallback={<PageLoading />}>
           {activeTab === 'dashboard' && (
             <Dashboard 
