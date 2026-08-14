@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'commander_formation' | 'commander_unit' | 'operations' | 'data_writer' | 'soldier' | 'pending';
+export type UserRole = 'admin' | 'commander_formation' | 'commander_unit' | 'operations' | 'data_writer' | 'soldier';
 
 export interface AuthUser {
   uid: string;
@@ -221,6 +221,38 @@ export interface PrintSettings {
   templateId?: PrintTemplateId;
 }
 
+export type OperationalAlertLevel = 'DEFCON_4' | 'DEFCON_3' | 'DEFCON_2' | 'DEFCON_1';
+// DEFCON_4: أخضر (اعتيادي), DEFCON_3: أصفر (استعداد), DEFCON_2: برتقالي (تأهب متقدم), DEFCON_1: أحمر (استنفار شامل)
+
+export interface GuardPost {
+  id: string;
+  name: string;
+  location: string;
+  requiredSoldiersPerShift: number;
+  importanceLevel: 'high' | 'medium' | 'critical';
+  notes?: string;
+}
+
+export interface GuardShiftAssignment {
+  id: string;
+  date: string;
+  shiftName: 'الوردية الأولى (صباحية 06:00 - 14:00)' | 'الوردية الثانية (مسائية 14:00 - 22:00)' | 'الوردية الثالثة (ليلية 22:00 - 06:00)';
+  shiftType: 'morning' | 'evening' | 'night';
+  postId: string;
+  postName: string;
+  dutyOfficerId?: string;
+  dutyOfficerName?: string;
+  assignedSoldiers: Array<{
+    soldierId: string;
+    soldierName: string;
+    militaryNumber: string;
+    rank: string;
+    unitName: string;
+    roleInShift: 'قائد نوبة' | 'فرد حراسة' | 'سائق دورية' | 'رامي';
+  }>;
+  status: 'draft' | 'confirmed' | 'active' | 'completed';
+}
+
 export interface SystemSettings {
   warningThreshold: number; // e.g. 70%
   dailyReminderEnabled: boolean;
@@ -228,5 +260,7 @@ export interface SystemSettings {
   autoBackupEnabled: boolean;
   hijriSupport: boolean;
   highContrastMode?: boolean;
+  currentAlertLevel?: OperationalAlertLevel;
   printSettings?: PrintSettings;
 }
+

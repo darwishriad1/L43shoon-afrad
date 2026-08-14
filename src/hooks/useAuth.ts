@@ -1,22 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
+import { onAuthStateChanged, onIdTokenChanged, signOut, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { auth } from '../lib/firebase';
 import { authService } from '../services/auth';
 import { User, AuthUser } from '../types';
 import { setUnauthorizedListener, setApiAuthToken } from '../services/api';
-
-function explainAuthError(error: unknown, fallback: string): string {
-  const code = typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code) : '';
-  const message = error instanceof Error ? error.message : '';
-  if (code === 'auth/unauthorized-domain') {
-    return `نطاق تشغيل التطبيق غير مصرح به في Firebase. أضف النطاق الحالي إلى Firebase Authentication > Settings > Authorized domains، ثم أعد المحاولة. النطاق الحالي: ${window.location.hostname}`;
-  }
-  if (code === 'auth/popup-blocked') return 'المتصفح منع نافذة Google؛ اسمح بالنوافذ المنبثقة لهذا الموقع ثم أعد المحاولة.';
-  if (code === 'auth/popup-closed-by-user') return 'تم إغلاق نافذة Google قبل إكمال تسجيل الدخول.';
-  if (code === 'auth/operation-not-allowed') return 'تسجيل الدخول عبر Google غير مفعّل في Firebase Authentication > Sign-in method.';
-  if (message.includes('فشل الاتصال') || message.includes('NetworkError') || message.includes('Failed to fetch')) {
-    return 'لا يمكن الوصول إلى خادم التطبيق. شغّل الخادم عبر npm run dev أو npm start، وتأكد من إعداد PostgreSQL وملف .env، ثم افتح التطبيق من عنوان الخادم نفسه.';
-  }
-  return message || fallback;
-}
 
 export function useAuth() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -36,6 +23,11 @@ export function useAuth() {
     setToken(null);
     setAuthUser(null);
     setDbUser(null);
+    try {
+      await signOut(auth);
+    } catch {
+      // Ignore firebase signout error if offline
+    }
   }, []);
 
   useEffect(() => {
@@ -47,33 +39,78 @@ export function useAuth() {
 
   useEffect(() => {
     let active = true;
-    const localToken = localStorage.getItem('military_auth_token') || localStorage.getItem('authToken');
-    if (!localToken) {
-      setLoadingAuth(false);
-      return () => { active = false; };
-    }
 
-    authService.getMe(localToken).then((profile) => {
-      if (!active) return;
-      setToken(localToken);
-      setAuthUser({
-        uid: profile.id,
-        email: profile.email || `${profile.id}@local.com`,
-        displayName: profile.name || 'مستخدم',
-      });
-      setDbUser(profile);
-    }).catch((err: unknown) => {
-      const apiErr = err as { status?: number };
-      console.warn('Local session token invalid or expired:', err);
-      if (apiErr?.status === 401 || apiErr?.status === 403) {
-        localStorage.removeItem('military_auth_token');
-        localStorage.removeItem('authToken');
+    const initAuth = async () => {
+      const localToken = localStorage.getItem('military_auth_token') || localStorage.getItem('authToken');
+      if (localToken) {
+        try {
+          const profile = await authService.getMe(localToken);
+          if (!active) return;
+          setToken(localToken);
+          setAuthUser({
+            uid: profile.id,
+            email: profile.email || `${profile.id}@local.com`,
+            displayName: profile.name || 'مستخدم',
+          });
+          setDbUser(profile);
+          setLoadingAuth(false);
+          return;
+        } catch (err: unknown) {
+          const apiErr = err as { status?: number; message?: string };
+          console.warn('Session token invalid or expired, clearing token:', err);
+          if (apiErr?.status === 401 || apiErr?.status === 403) {
+            localStorage.removeItem('military_auth_token');
+            localStorage.removeItem('authToken');
+          }
+        }
       }
-    }).finally(() => {
-      if (active) setLoadingAuth(false);
-    });
 
-    return () => { active = false; };
+      const unsubscribeIdToken = onIdTokenChanged(auth, async (fbUser) => {
+        if (!active) return;
+        if (fbUser) {
+          try {
+            let freshToken = await fbUser.getIdToken();
+            let profile;
+            try {
+              profile = await authService.getMe(freshToken);
+            } catch (e) {
+              // Force token refresh if expired
+              freshToken = await fbUser.getIdToken(true);
+              profile = await authService.getMe(freshToken);
+            }
+            if (!active) return;
+            localStorage.setItem('military_auth_token', freshToken);
+            localStorage.setItem('authToken', freshToken);
+            setToken(freshToken);
+            setAuthUser({
+              uid: fbUser.uid,
+              email: fbUser.email,
+              displayName: fbUser.displayName || profile?.name || 'مستخدم',
+            });
+            setDbUser(profile);
+          } catch (e) {
+            console.error('Firebase token verification error:', e);
+          } finally {
+            if (active) setLoadingAuth(false);
+          }
+        } else {
+          setAuthUser(null);
+          setDbUser(null);
+          setToken(null);
+          setLoadingAuth(false);
+        }
+      });
+
+      return () => {
+        unsubscribeIdToken();
+      };
+    };
+
+    initAuth();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const loginWithPassword = useCallback(async (username: string, password: string, otp?: string) => {
@@ -96,7 +133,32 @@ export function useAuth() {
       setDbUser(res.user);
       return true;
     } catch (err: unknown) {
-      setLoginError(explainAuthError(err, 'فشل تسجيل الدخول: اسم المستخدم أو كلمة المرور خاطئة'));
+      const message = err instanceof Error ? err.message : 'فشل تسجيل الدخول: اسم المستخدم أو كلمة المرور خاطئة';
+      setLoginError(message);
+      return false;
+    }
+  }, []);
+
+  const loginWithGoogle = useCallback(async () => {
+    setLoginError('');
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      const idToken = await result.user.getIdToken();
+      const profile = await authService.getMe(idToken);
+      localStorage.setItem('military_auth_token', idToken);
+      localStorage.setItem('authToken', idToken);
+      setToken(idToken);
+      setAuthUser({
+        uid: result.user.uid,
+        email: result.user.email,
+        displayName: result.user.displayName,
+      });
+      setDbUser(profile);
+      return true;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'فشل تسجيل الدخول عبر جوجل';
+      setLoginError(message);
       return false;
     }
   }, []);
@@ -110,6 +172,7 @@ export function useAuth() {
     setLoginError,
     setDbUser,
     loginWithPassword,
+    loginWithGoogle,
     logout,
   };
 }

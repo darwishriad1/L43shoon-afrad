@@ -15,6 +15,7 @@ import { Soldier, User as SystemUser, Unit, PrintSettings, SickLeave, MilitaryCu
 import { fetchWithRetry, safeJson } from '../lib/api';
 import { triggerToast } from './ToastContainer';
 import OfficialMemoSurveyModal from './OfficialMemoSurveyModal';
+import AndroidExitToast, { AndroidExitConfirmModal } from './AndroidExitToast';
 
 const TASK_INFO_MAP: Record<string, { label: string; desc: string; category: string }> = {
   't_phone': { 
@@ -211,6 +212,108 @@ export default function SoldierPortal({
   const [attInquiryDate, setAttInquiryDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [attInquiryReason, setAttInquiryReason] = useState('');
   const [isRefreshingAtt, setIsRefreshingAtt] = useState(false);
+
+  // Android Back Navigation for Soldier Portal
+  const [showExitToast, setShowExitToast] = useState(false);
+  const [isExitConfirmModalOpen, setIsExitConfirmModalOpen] = useState(false);
+  const lastPortalBackPressRef = React.useRef<number>(0);
+  const exitToastTimerRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (!window.history.state) {
+      window.history.replaceState({ tab: 'overview', root: true }, '', window.location.href);
+    }
+
+    const hasOpenModal = 
+      isSalaryCertModalOpen ||
+      isCourseModalOpen ||
+      isRequestModalOpen ||
+      isMemoModalOpen ||
+      isNotificationsOpen ||
+      isLogoutConfirmOpen ||
+      activeTaskModal !== null ||
+      isUnifiedDirectiveModalOpen ||
+      isAttInquiryModalOpen ||
+      showIdQrModal ||
+      selectedDayDetail !== null ||
+      activeTab !== 'overview';
+
+    if (hasOpenModal) {
+      window.history.pushState({ tab: activeTab, ts: Date.now() }, '', window.location.href);
+    }
+  }, [
+    activeTab,
+    isSalaryCertModalOpen,
+    isCourseModalOpen,
+    isRequestModalOpen,
+    isMemoModalOpen,
+    isNotificationsOpen,
+    isLogoutConfirmOpen,
+    activeTaskModal,
+    isUnifiedDirectiveModalOpen,
+    isAttInquiryModalOpen,
+    showIdQrModal,
+    selectedDayDetail
+  ]);
+
+  useEffect(() => {
+    const handlePortalPopState = () => {
+      // 1. Close open modals first
+      if (showIdQrModal) { setShowIdQrModal(false); return; }
+      if (selectedDayDetail) { setSelectedDayDetail(null); return; }
+      if (activeTaskModal) { setActiveTaskModal(null); return; }
+      if (isUnifiedDirectiveModalOpen) { setIsUnifiedDirectiveModalOpen(false); return; }
+      if (isAttInquiryModalOpen) { setIsAttInquiryModalOpen(false); return; }
+      if (isSalaryCertModalOpen) { setIsSalaryCertModalOpen(false); return; }
+      if (isCourseModalOpen) { setIsCourseModalOpen(false); return; }
+      if (isRequestModalOpen) { setIsRequestModalOpen(false); return; }
+      if (isMemoModalOpen) { setIsMemoModalOpen(false); return; }
+      if (isNotificationsOpen) { setIsNotificationsOpen(false); return; }
+      if (isLogoutConfirmOpen) { setIsLogoutConfirmOpen(false); return; }
+
+      // 2. Return to overview tab if on another tab
+      if (activeTab !== 'overview') {
+        setActiveTab('overview');
+        return;
+      }
+
+      // 3. If on overview tab with no modals: double-back to exit
+      const now = Date.now();
+      const diff = now - lastPortalBackPressRef.current;
+      if (diff < 2500 && diff > 0) {
+        setShowExitToast(false);
+        setIsExitConfirmModalOpen(true);
+      } else {
+        window.history.pushState({ tab: 'overview', root: true }, '', window.location.href);
+        lastPortalBackPressRef.current = now;
+        setShowExitToast(true);
+        if (exitToastTimerRef.current) clearTimeout(exitToastTimerRef.current);
+        exitToastTimerRef.current = setTimeout(() => {
+          setShowExitToast(false);
+          lastPortalBackPressRef.current = 0;
+        }, 2500);
+      }
+    };
+
+    window.addEventListener('popstate', handlePortalPopState);
+    return () => {
+      window.removeEventListener('popstate', handlePortalPopState);
+      if (exitToastTimerRef.current) clearTimeout(exitToastTimerRef.current);
+    };
+  }, [
+    activeTab,
+    showIdQrModal,
+    selectedDayDetail,
+    activeTaskModal,
+    isUnifiedDirectiveModalOpen,
+    isAttInquiryModalOpen,
+    isSalaryCertModalOpen,
+    isCourseModalOpen,
+    isRequestModalOpen,
+    isMemoModalOpen,
+    isNotificationsOpen,
+    isLogoutConfirmOpen
+  ]);
 
   const handleRefreshAttendance = async () => {
     setIsRefreshingAtt(true);
@@ -451,7 +554,7 @@ export default function SoldierPortal({
         body: JSON.stringify({
           hasAccount: soldier.hasAccount,
           username: soldier.accountUsername || soldier.militaryNumber,
-          password: '',
+          password: soldier.accountPassword || '123456',
           allowProfileEdit: soldier.allowProfileEdit !== false,
           assignedTasks: {
             tasks: remainingTasks,
@@ -573,7 +676,7 @@ export default function SoldierPortal({
         body: JSON.stringify({
           hasAccount: soldier.hasAccount,
           username: soldier.accountUsername || soldier.militaryNumber,
-          password: '',
+          password: soldier.accountPassword || '123456',
           allowProfileEdit: soldier.allowProfileEdit !== false,
           assignedTasks: {
             tasks: [],
@@ -4341,6 +4444,14 @@ export default function SoldierPortal({
           )}
         </button>
       </div>
+
+      {/* Android Exit Toast & Modal for Soldier Portal */}
+      <AndroidExitToast isVisible={showExitToast} />
+      <AndroidExitConfirmModal
+        isOpen={isExitConfirmModalOpen}
+        onClose={() => setIsExitConfirmModalOpen(false)}
+        onConfirmExit={onLogout}
+      />
 
     </div>
   );

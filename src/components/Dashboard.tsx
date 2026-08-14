@@ -22,7 +22,6 @@ const MONTHS_LIST = [
 ];
 
 import { Unit, Soldier, AttendanceRecord, AttendanceStatusCode, AuditLog, User as UserType, PrintSettings } from '../types';
-import { normalizeStatusCode } from '../utils/attendanceStatus';
 import { motion, AnimatePresence } from 'framer-motion';
 import WhatsAppShareModal from './WhatsAppShareModal';
 import SoldierMonthlyAttendanceModal from './SoldierMonthlyAttendanceModal';
@@ -86,6 +85,22 @@ export interface ItemDetailModalState {
   item: any;
 }
 
+/**
+ * Normalizes military attendance status code to standard character codes:
+ * 'ح': Present, 'غ': Absent, 'إ': Leave, 'م': Mission, 'ع': Excused, 'ن': Half-day, 'pending': Unrecorded
+ */
+export const normalizeStatusCode = (code: string | null | undefined): string => {
+  if (!code) return 'pending';
+  const c = String(code).trim();
+  if (c === 'ح' || c === 'حاضر' || c.startsWith('حاضر')) return 'ح';
+  if (c === 'غ' || c === 'غائب' || c.startsWith('غائب')) return 'غ';
+  if (c === 'إ' || c === 'إجازة' || c.startsWith('إجاز')) return 'إ';
+  if (c === 'م' || c === 'مهمة' || c.startsWith('مهم')) return 'م';
+  if (c === 'ع' || c === 'بعذر' || c === 'عذر' || c.includes('عذر')) return 'ع';
+  if (c === 'ن' || c === 'نصف يوم' || c === 'نصف دوام' || c.includes('نصف')) return 'ن';
+  if (c === 'pending') return 'pending';
+  return c;
+};
 
 interface DashboardProps {
   units: Unit[];
@@ -99,6 +114,7 @@ interface DashboardProps {
   printSettings?: PrintSettings;
   onAddLog?: (actionType: 'إضافة' | 'تعديل' | 'حذف' | 'استيراد' | 'استعادة', tableName: string, details: string) => void;
   onSaveAttendanceBatch?: (soldierIds: string[], dates: string[], status: AttendanceStatusCode) => void;
+  onRefreshData?: () => Promise<void> | void;
 }
 
 function DashboardContent({ 
@@ -112,7 +128,8 @@ function DashboardContent({
   currentUser, 
   printSettings,
   onAddLog,
-  onSaveAttendanceBatch
+  onSaveAttendanceBatch,
+  onRefreshData
 }: DashboardProps) {
   // Safe default user
   const activeUser = useMemo(() => {
@@ -215,6 +232,26 @@ function DashboardContent({
   const [showQuickReportModal, setShowQuickReportModal] = useState(false);
   const [isGeneratingQuickReport, setIsGeneratingQuickReport] = useState(false);
   const [reportMobileFit, setReportMobileFit] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleManualRefresh = useCallback(async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      if (onRefreshData) {
+        await onRefreshData();
+      } else {
+        // Fallback short spin if no callback provided
+        await new Promise(res => setTimeout(res, 800));
+      }
+      triggerToast('🔄 تم تحديث كافة البيانات والمواقف الميدانية بنجاح', 'success');
+    } catch (err) {
+      console.error('Error refreshing data:', err);
+      triggerToast('تعذر تحديث بعض البيانات، يرجى المحاولة مرة أخرى', 'error');
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [isRefreshing, onRefreshData]);
 
   // Executive Readiness Indicators Cards View Mode & Details Modal
   const [executiveTickerMode, setExecutiveTickerMode] = useState<'general' | 'daily_movement'>('general');
@@ -266,10 +303,10 @@ function DashboardContent({
       });
 
       if (onAddLog) {
-        onAddLog('تعديل', 'شؤون الأفراد', `تسديد مواصلة عمل للفرد: ${soldier.rank} / ${soldier.fullName} بتاريخ ${targetDateStr}`);
+        onAddLog('تعديل', 'حركة اليوم الميدانية', `تسديد مواصلة عمل للفرد: ${soldier.rank} / ${soldier.fullName} بتاريخ ${targetDateStr} (مباشرة العمل الميداني وحضور رسمي بعد غياب/إجازة)`);
       }
 
-      triggerToast(`✅ تم تسجيل وتسديد مواصلة العمل الميداني بنجاح للفرد: ${soldier.rank} / ${soldier.fullName}`, 'success');
+      triggerToast(`✅ تم تسجيل وتسديد مواصلة العمل الميداني بنجاح للفرد: ${soldier.rank} / ${soldier.fullName} (حاضر اليوم)`, 'success');
     } catch (err) {
       if (process.env.NODE_ENV !== 'production') {
         console.error('Error in handleResumeDuty:', err);
@@ -1038,13 +1075,52 @@ function DashboardContent({
     const prevStatusMap = new Map<string, string>();
     prevRecords.forEach(r => prevStatusMap.set(r.soldierId, normalizeStatusCode(r.statusCode)));
 
-    // 1. Resumed Today (المواصلون للعمل اليوم)
+    // Check for explicit audit logs of resumption on targetDateStr
+    const resumedSoldierIdsFromLogs = new Set<string>();
+    auditLogs.forEach(log => {
+      if (
+        (log.details?.includes('مواصلة') || log.details?.includes('مباشرة')) &&
+        (log.timestamp?.startsWith(targetDateStr) || log.details?.includes(targetDateStr))
+      ) {
+        activeSoldiers.forEach(s => {
+          if (log.details?.includes(s.fullName) || (s.militaryNumber && log.details?.includes(s.militaryNumber))) {
+            resumedSoldierIdsFromLogs.add(s.id);
+          }
+        });
+      }
+    });
+
+    // 1. Resumed Today (المواصلون للعمل اليوم - من باشروا العمل بعد غياب أو انتهاء إجازة أو مهمة)
     const resumedTodaySoldiers = activeSoldiers.filter(s => {
       const cur = targetStatusMap.get(s.id);
       const prev = prevStatusMap.get(s.id);
+
       if (cur === 'ح') {
-        if (prev === 'إ' || prev === 'ع' || s.militaryStatus?.includes('إجازة')) {
+        // Explicitly resumed through action log today
+        if (resumedSoldierIdsFromLogs.has(s.id)) {
           return true;
+        }
+
+        // Resumed after absence (غ), leave (إ), medical (ع), mission (م), or course (د) yesterday
+        if (prev === 'غ' || prev === 'إ' || prev === 'ع' || prev === 'م' || prev === 'د') {
+          return true;
+        }
+
+        // If status notes / militaryStatus indicate leave or absence recovery
+        if (s.militaryStatus?.includes('إجازة') || s.militaryStatus?.includes('غياب') || s.militaryStatus?.includes('مواصلة')) {
+          return true;
+        }
+
+        // Check latest recorded attendance before targetDateStr
+        const pastRecords = attendance
+          .filter(a => a.soldierId === s.id && a.date < targetDateStr)
+          .sort((a, b) => b.date.localeCompare(a.date));
+
+        if (pastRecords.length > 0) {
+          const lastPastStatus = normalizeStatusCode(pastRecords[0].statusCode);
+          if (lastPastStatus === 'غ' || lastPastStatus === 'إ' || lastPastStatus === 'ع' || lastPastStatus === 'م') {
+            return true;
+          }
         }
       }
       return false;
@@ -1070,6 +1146,7 @@ function DashboardContent({
       if ((prev === 'إ' || prev === 'ع') && cur !== 'ح' && cur !== 'إ' && cur !== 'ع') {
         return true;
       }
+      if (s.militaryStatus?.includes('غياب') && cur !== 'ح') return true;
       return false;
     });
 
@@ -1079,7 +1156,7 @@ function DashboardContent({
       overdueAbsentSoldiers,
       targetDateStr
     };
-  }, [attendance, activeSoldiers, selectedDailyDate, actualToday]);
+  }, [attendance, activeSoldiers, selectedDailyDate, actualToday, auditLogs]);
 
   // Unit Stats parsing
   const unitStats = useMemo(() => {
@@ -1647,6 +1724,18 @@ function DashboardContent({
               <Shield className="w-3.5 h-3.5" />
             </div>
             <span className="text-xs sm:text-sm font-black text-white tracking-wide">اللواء 43 عمالقة</span>
+            
+            {/* Refresh Data Icon-Only Button */}
+            <button
+              type="button"
+              onClick={handleManualRefresh}
+              disabled={isRefreshing}
+              className="p-1.5 bg-emerald-500/20 hover:bg-emerald-500/35 border border-emerald-500/40 hover:border-emerald-400/70 text-emerald-300 hover:text-white rounded-lg transition-all duration-200 cursor-pointer active:scale-90 disabled:opacity-50 flex items-center justify-center shadow-xs"
+              title="تحديث البيانات وسجلات التحضير والمواقف الميدانية فورياً"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 hover:text-emerald-200 transition-transform ${isRefreshing ? 'animate-spin text-emerald-300' : ''}`} />
+            </button>
+
             <span className="hidden lg:inline-block text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-extrabold">
               قيادة القوة والسيطرة
             </span>
@@ -7463,6 +7552,13 @@ function DashboardContent({
                       </div>
 
                       <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                        {movementDetailModal === 'resumed' && (
+                          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-950/80 border border-emerald-500/40 rounded-xl text-emerald-300 text-xs font-bold shadow-xs">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                            <span>باشر وواصل العمل اليوم 🟢</span>
+                          </div>
+                        )}
+
                         {movementDetailModal === 'overdue' && (
                           <button
                             type="button"

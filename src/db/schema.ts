@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, integer, timestamp, index, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, text, boolean, integer, timestamp, index } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
   id: text('id').primaryKey(), // We can use the firebase uid or u1, u2 for system mock/init users
@@ -10,11 +10,7 @@ export const users = pgTable('users', {
   role: text('role').notNull(), // 'admin' | 'commander_formation' | 'commander_unit' | 'operations' | 'data_writer' | 'soldier'
   unitId: text('unit_id'), // Restrict to a specific unit if unit-level role
   soldierId: text('soldier_id'), // Link to soldier ID if role is 'soldier'
-}, (table) => ({
-  usernameUnique: uniqueIndex('users_username_unique').on(table.username),
-  emailUnique: uniqueIndex('users_email_unique').on(table.email),
-  soldierUnique: uniqueIndex('users_soldier_unique').on(table.soldierId),
-}));
+});
 
 export const units = pgTable('units', {
   id: text('id').primaryKey(),
@@ -63,7 +59,6 @@ export const soldiers = pgTable('soldiers', {
 }, (table) => {
   return {
     milNumIdx: index('mil_num_idx').on(table.militaryNumber),
-    milNumUnique: uniqueIndex('soldiers_military_number_unique').on(table.militaryNumber),
     fullNameIdx: index('full_name_idx').on(table.fullName),
     rankIdx: index('rank_idx').on(table.rank),
     unitIdx: index('unit_idx').on(table.unitId),
@@ -146,7 +141,6 @@ export const attendance = pgTable('attendance', {
     attSoldierIdx: index('att_soldier_idx').on(table.soldierId),
     attDateIdx: index('att_date_idx').on(table.date),
     attSoldierDateIdx: index('att_soldier_date_idx').on(table.soldierId, table.date),
-    attSoldierDateUnique: uniqueIndex('attendance_soldier_date_unique').on(table.soldierId, table.date),
   };
 });
 

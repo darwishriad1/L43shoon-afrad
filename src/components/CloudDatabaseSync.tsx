@@ -323,18 +323,20 @@ export default function CloudDatabaseSync({
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-700/80 pb-4 relative z-10">
           <div className="flex items-center gap-3">
-            <div className="p-3 bg-indigo-500/20 text-indigo-300 rounded-2xl border border-indigo-500/30 shadow-inner">
-              <Cloud className="w-6 h-6 animate-pulse" />
+            <div className="p-3 bg-emerald-500/20 text-emerald-300 rounded-2xl border border-emerald-500/30 shadow-inner">
+              <Cloud className="w-6 h-6 animate-pulse text-emerald-400" />
             </div>
             <div>
-              <h2 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
-                <span>فحص ومزامنة قاعدة البيانات السحابية</span>
-                <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-400/40 text-indigo-200">
-                  الإعدادات السحابية
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
+                  <span>قاعدة البيانات السحابية المركزية (PostgreSQL / Supabase Ready)</span>
+                </h2>
+                <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300">
+                  متصلة ونشطة
                 </span>
-              </h2>
+              </div>
               <p className="text-[10px] sm:text-xs text-slate-300 font-semibold mt-1 leading-relaxed">
-                لوحة فحص السحابة المتقدمة، تحليل مقارنة البيانات، المزامنة الذكية، والتحكم الآمن في السجلات والمكررات.
+                لوحة فحص السحابة المركزية، تحليل مقارنة البيانات، المزامنة الذكية، والتحكم الآمن في السجلات والمكررات.
               </p>
             </div>
           </div>

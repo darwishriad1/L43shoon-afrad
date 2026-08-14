@@ -15,6 +15,7 @@ import { downloadElementAsPdf, downloadElementAsImage, shareElementViaWhatsApp }
 import WhatsAppShareModal from './WhatsAppShareModal';
 import SoldierMonthlyAttendanceModal from './SoldierMonthlyAttendanceModal';
 import SoldierAccountTasksTab from './SoldierAccountTasksTab';
+import MilitaryIdCardModal from './MilitaryIdCardModal';
 import { PrintHeader, PrintFooter } from './PrintHeaderFooter';
 
 const MONTHS_LIST = [
@@ -108,6 +109,7 @@ export default function SoldierProfile({
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isAttachmentModalOpen, setIsAttachmentModalOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
+  const [isIdCardModalOpen, setIsIdCardModalOpen] = useState(false);
 
   // Delete & Edit Leave modal states
   const [isDeleteConfirmModalOpen, setIsDeleteConfirmModalOpen] = useState(false);
@@ -2083,6 +2085,14 @@ export default function SoldierProfile({
         </div>
         
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <button
+            onClick={() => setIsIdCardModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-black transition-all shadow-md shadow-indigo-950/40 cursor-pointer min-h-[40px] border border-indigo-400/40 active:scale-95"
+            title="إصدار وطباعة بطاقة الهوية العسكرية المعتمدة"
+          >
+            <ShieldCheck className="w-4 h-4 text-indigo-200" />
+            <span className="hidden md:inline">بطاقة الهوية</span>
+          </button>
           <button
             onClick={handleSendWhatsApp}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black transition-all shadow-md shadow-emerald-950/40 cursor-pointer min-h-[40px] border border-emerald-400/40 active:scale-95"
@@ -7238,6 +7248,15 @@ export default function SoldierProfile({
         units={units}
         attendanceRecords={attendanceHistory}
       />
+
+      {/* Official Military ID Card Modal */}
+      {isIdCardModalOpen && soldier && (
+        <MilitaryIdCardModal
+          soldier={soldier}
+          unit={units.find(u => u.id === soldier.unitId)}
+          onClose={() => setIsIdCardModalOpen(false)}
+        />
+      )}
 
       </div>
     </div>

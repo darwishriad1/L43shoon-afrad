@@ -10,3 +10,5 @@ export * from './backup';
 export * from './soldierRequests';
 export * from './settings';
 export * from './auditLogs';
+export * from './supabaseSecondary';
+export * from './offlineSyncService';

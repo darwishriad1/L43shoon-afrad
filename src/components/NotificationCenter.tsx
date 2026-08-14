@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -20,9 +20,17 @@ import {
   ChevronLeft,
   Info,
   Layers,
-  Zap
+  Zap,
+  RefreshCw,
+  Wifi,
+  WifiOff,
+  Database,
+  CloudCheck,
+  Check,
+  Server
 } from 'lucide-react';
 import { Notification, Unit, Soldier, AttendanceRecord } from '../types';
+import { offlineSyncService, OfflineQueueItem, SyncedHistoryItem } from '../services/offlineSyncService';
 
 interface NotificationCenterProps {
   notifications: Notification[];
@@ -44,13 +52,107 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   attendance = []
 }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [activeCategory, setActiveCategory] = useState<'all' | 'critical' | 'readiness' | 'system'>('all');
+  const [activeCategory, setActiveCategory] = useState<'all' | 'synced_data' | 'critical' | 'readiness' | 'system'>('all');
   const [soundEnabled, setSoundEnabled] = useState(true);
+
+  // Offline / Synced Data state
+  const [isOnline, setIsOnline] = useState(offlineSyncService.isOnline());
+  const [pendingQueue, setPendingQueue] = useState<OfflineQueueItem[]>([]);
+  const [syncedHistory, setSyncedHistory] = useState<SyncedHistoryItem[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const unreadCount = useMemo(() => notifications.filter(n => !n.isRead).length, [notifications]);
 
+  // Load IndexedDB Offline Queue & Synced History
+  const loadOfflineAndSyncState = useCallback(async () => {
+    try {
+      const [queue, history] = await Promise.all([
+        offlineSyncService.getPendingQueue(),
+        offlineSyncService.getSyncedHistory()
+      ]);
+      setPendingQueue(queue);
+      setSyncedHistory(history);
+    } catch (e) {
+      console.warn('Error fetching IndexedDB sync data:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadOfflineAndSyncState();
+
+    const handleOnline = () => {
+      setIsOnline(true);
+      loadOfflineAndSyncState();
+    };
+
+    const handleOffline = () => {
+      setIsOnline(false);
+      loadOfflineAndSyncState();
+    };
+
+    const handleQueueUpdated = () => {
+      loadOfflineAndSyncState();
+    };
+
+    const handleSyncCompleted = () => {
+      loadOfflineAndSyncState();
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('offline-queue-updated', handleQueueUpdated);
+    window.addEventListener('offline-sync-completed', handleSyncCompleted);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('offline-queue-updated', handleQueueUpdated);
+      window.removeEventListener('offline-sync-completed', handleSyncCompleted);
+    };
+  }, [loadOfflineAndSyncState]);
+
+  // Reload when popover is opened
+  useEffect(() => {
+    if (isOpen) {
+      loadOfflineAndSyncState();
+    }
+  }, [isOpen, loadOfflineAndSyncState]);
+
+  // Manual Trigger for Sync Now
+  const handleManualSyncNow = async () => {
+    if (isSyncing || !isOnline) return;
+    setIsSyncing(true);
+    try {
+      const result = await offlineSyncService.syncPendingQueue();
+      await loadOfflineAndSyncState();
+      playTacticalChime();
+      
+      // Dispatch toast notification via custom event or global toast
+      if (result.syncedRecordsCount > 0) {
+        const notif: Notification = {
+          id: `notif_sync_${Date.now()}`,
+          title: 'اكتمال مزامنة البيانات يدوياً',
+          message: `تم ترحيل ومزامنة (${result.syncedRecordsCount}) سجل حضور من IndexedDB بنجاح مع السيرفر المركزي.`,
+          isRead: false,
+          type: 'info',
+          createdAt: new Date().toISOString()
+        };
+        setNotifications(prev => [notif, ...prev]);
+      }
+    } catch (err) {
+      console.error('Manual sync failed:', err);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleClearSyncedHistory = async () => {
+    await offlineSyncService.clearSyncedHistory();
+    setSyncedHistory([]);
+  };
+
   // Listen for open-notifications custom event (e.g. triggered by pull-down gesture in Dashboard)
-  React.useEffect(() => {
+  useEffect(() => {
     const handleOpenNotifs = () => {
       setIsOpen(true);
       playTacticalChime();
@@ -279,7 +381,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
               </div>
 
               {/* Category Filter Tabs */}
-              <div className="px-3 py-2 bg-slate-900/80 border-b border-slate-800 flex items-center gap-1 overflow-x-auto no-scrollbar">
+              <div className="px-3 py-2 bg-slate-900/80 border-b border-slate-800 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
                 <button
                   onClick={() => setActiveCategory('all')}
                   className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all shrink-0 cursor-pointer ${
@@ -289,6 +391,27 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                   }`}
                 >
                   الكل ({notifications.length})
+                </button>
+
+                <button
+                  onClick={() => setActiveCategory('synced_data')}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                    activeCategory === 'synced_data'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'bg-slate-800/80 text-emerald-400 hover:bg-slate-800'
+                  }`}
+                >
+                  <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
+                  <span>البيانات المزامنة</span>
+                  {pendingQueue.length > 0 ? (
+                    <span className="bg-amber-500 text-slate-950 text-[9px] font-black px-1.5 py-0.2 rounded-full animate-pulse">
+                      {pendingQueue.length} معلق
+                    </span>
+                  ) : syncedHistory.length > 0 ? (
+                    <span className="bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 text-[9px] font-bold px-1.5 py-0.2 rounded-full">
+                      {syncedHistory.length}
+                    </span>
+                  ) : null}
                 </button>
 
                 <button
@@ -307,8 +430,8 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                   onClick={() => setActiveCategory('readiness')}
                   className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all shrink-0 flex items-center gap-1 cursor-pointer ${
                     activeCategory === 'readiness'
-                      ? 'bg-emerald-600 text-white shadow-sm'
-                      : 'bg-slate-800/80 text-emerald-400 hover:bg-slate-800'
+                      ? 'bg-teal-600 text-white shadow-sm'
+                      : 'bg-slate-800/80 text-teal-400 hover:bg-slate-800'
                   }`}
                 >
                   <Zap className="w-3 h-3" />
@@ -328,8 +451,185 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
               </div>
 
               {/* Notification List Container */}
-              <div className="max-h-80 overflow-y-auto divide-y divide-slate-800/60 p-2 space-y-1.5 custom-scrollbar">
-                {filteredNotifications.length === 0 ? (
+              <div className="max-h-84 overflow-y-auto divide-y divide-slate-800/60 p-2 space-y-2 custom-scrollbar">
+                {activeCategory === 'synced_data' ? (
+                  /* SYNCED DATA & OFFLINE QUEUE VIEW */
+                  <div className="space-y-3">
+                    {/* Live Network & Sync Header Card */}
+                    <div className={`p-3 rounded-xl border flex flex-col gap-2.5 ${
+                      isOnline 
+                        ? 'bg-emerald-950/20 border-emerald-500/30 text-slate-200' 
+                        : 'bg-amber-950/25 border-amber-500/40 text-slate-200'
+                    }`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className={`p-1.5 rounded-lg border ${
+                            isOnline 
+                              ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400' 
+                              : 'bg-amber-500/20 border-amber-500/40 text-amber-400 animate-pulse'
+                          }`}>
+                            {isOnline ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="text-xs font-black text-slate-100">
+                                {isOnline ? 'الاتصال نشط (Online)' : 'وضع عدم الاتصال (Offline Mode)'}
+                              </h4>
+                              <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'}`} />
+                            </div>
+                            <p className="text-[10px] text-slate-400 leading-relaxed font-sans">
+                              {isOnline 
+                                ? 'المزامنة التلقائية مع السيرفر تعمل بكفاءة' 
+                                : 'يتم حفظ الحضور والغياب في ذاكرة IndexedDB المحلية تلقائياً'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {pendingQueue.length > 0 && isOnline && (
+                          <button
+                            onClick={handleManualSyncNow}
+                            disabled={isSyncing}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black shadow-lg shadow-emerald-950/50 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                            <span>{isSyncing ? 'جاري المزامنة...' : 'مزامنة الآن'}</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Stats Pills */}
+                      <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-800/80 text-[10px]">
+                        <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80 flex items-center justify-between">
+                          <span className="text-slate-400">معلق في IndexedDB:</span>
+                          <span className={`font-mono font-black ${pendingQueue.length > 0 ? 'text-amber-400' : 'text-slate-300'}`}>
+                            {pendingQueue.length} عملية
+                          </span>
+                        </div>
+                        <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80 flex items-center justify-between">
+                          <span className="text-slate-400">تمت مزامنتها:</span>
+                          <span className="font-mono font-black text-emerald-400">
+                            {syncedHistory.length} عملية
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Section 1: Pending Offline Queue (if any) */}
+                    {pendingQueue.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between px-1">
+                          <span className="text-[11px] font-black text-amber-400 flex items-center gap-1.5">
+                            <Clock className="w-3.5 h-3.5 animate-spin" />
+                            بيانات بانتظار استعادة الاتصال ({pendingQueue.length})
+                          </span>
+                          <span className="text-[9px] text-slate-500">IndexedDB Local Queue</span>
+                        </div>
+
+                        {pendingQueue.map((item) => (
+                          <div 
+                            key={item.id}
+                            className="p-3 rounded-xl bg-amber-950/30 border border-amber-500/40 text-slate-100 space-y-1.5 relative overflow-hidden"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="p-1 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+                                  قيد الانتظار ⏳
+                                </span>
+                                <h5 className="text-xs font-black text-slate-200">{item.summary}</h5>
+                              </div>
+                              <span className="text-[9px] font-mono text-amber-300/80">
+                                {new Date(item.createdAt).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+
+                            {item.soldierNames && item.soldierNames.length > 0 && (
+                              <div className="text-[10px] text-slate-300 flex flex-wrap gap-1">
+                                <span className="text-slate-400">الأفراد:</span>
+                                {item.soldierNames.slice(0, 4).map((name, idx) => (
+                                  <span key={idx} className="bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-800 text-[9px] text-slate-300">
+                                    {name}
+                                  </span>
+                                ))}
+                                {item.soldierNames.length > 4 && (
+                                  <span className="text-[9px] text-slate-400 font-mono">+{item.soldierNames.length - 4} آخرين</span>
+                                )}
+                              </div>
+                            )}
+
+                            <div className="text-[9px] text-amber-400/90 font-sans flex items-center gap-1 pt-0.5">
+                              <span>⚠️ سيتم ترحيل هذا السجل تلقائياً فور توفر الإنترنت ولن يُعاد إرساله بعد ذلك.</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Section 2: Synced History List */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between px-1">
+                        <span className="text-[11px] font-black text-emerald-400 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          سجل البيانات التي تم مزامنتها ({syncedHistory.length})
+                        </span>
+                        {syncedHistory.length > 0 && (
+                          <button
+                            onClick={handleClearSyncedHistory}
+                            className="text-[9px] text-slate-500 hover:text-rose-400 transition-colors flex items-center gap-1 cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>مسح السجل</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {syncedHistory.length === 0 ? (
+                        <div className="p-6 text-center rounded-xl bg-slate-950/40 border border-slate-800 space-y-1.5">
+                          <Database className="w-8 h-8 text-slate-600 mx-auto" />
+                          <p className="text-xs font-bold text-slate-400">لا توجد عمليات مزامنة سابقة حتى الآن</p>
+                          <p className="text-[10px] text-slate-500">
+                            أي حضور وغياب تسجله أثناء انقطاع الإنترنت سيظهر هنا تلقائياً بعد مزامنته.
+                          </p>
+                        </div>
+                      ) : (
+                        syncedHistory.map((hItem) => (
+                          <div 
+                            key={hItem.id}
+                            className="p-3 rounded-xl bg-slate-950/60 border border-emerald-500/30 text-slate-100 space-y-1.5 hover:border-emerald-500/50 transition-colors"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="p-1 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold flex items-center gap-1">
+                                  <Check className="w-3 h-3 text-emerald-400" />
+                                  <span>تمت المزامنة</span>
+                                </span>
+                                <h5 className="text-xs font-black text-slate-200">{hItem.summary}</h5>
+                              </div>
+                              <span className="text-[9px] font-mono text-slate-400">
+                                {new Date(hItem.syncedAt).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5 border-t border-slate-900">
+                              <div className="flex items-center gap-2">
+                                <span className="text-emerald-400 font-mono font-bold">
+                                  {hItem.recordsCount} سجل
+                                </span>
+                                <span>•</span>
+                                <span className="text-[9px] text-slate-400">
+                                  {new Date(hItem.syncedAt).toLocaleDateString('ar-SA')}
+                                </span>
+                              </div>
+
+                              <span className="text-[9px] text-emerald-400/80 font-bold bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                                ✓ لن يُعاد مزامنتها
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                ) : filteredNotifications.length === 0 ? (
                   <div className="p-8 text-center space-y-2">
                     <div className="w-10 h-10 mx-auto rounded-2xl bg-slate-800/80 border border-slate-700 flex items-center justify-center text-slate-500">
                       <CheckCircle2 className="w-5 h-5 text-emerald-400" />

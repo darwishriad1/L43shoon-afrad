@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   LayoutDashboard, 
   Table, 
@@ -8,19 +8,20 @@ import {
   User, 
   Calendar, 
   ShieldCheck, 
-  Clock,
-  LogOut,
-  Loader2,
-  Menu,
-  ShieldAlert,
-  Info,
-  Sparkles,
-  X,
-  ChevronLeft,
-  Search,
-  Sun,
-  Moon,
-  ChevronDown
+  Clock, 
+  LogOut, 
+  Loader2, 
+  Menu, 
+  ShieldAlert, 
+  Info, 
+  Sparkles, 
+  X, 
+  ChevronLeft, 
+  Search, 
+  Sun, 
+  Moon, 
+  ChevronDown,
+  ArrowRight
 } from 'lucide-react';
 
 import { 
@@ -49,18 +50,19 @@ import {
   soldierRequestsService, 
   settingsService, 
   auditLogsService,
+  offlineSyncService,
   apiClient 
 } from './services';
 
 // Component Imports
-const Dashboard = lazy(() => import('./components/DashboardModern'));
-const AttendanceSheet = lazy(() => import('./components/AttendanceSheet'));
-const OrgManager = lazy(() => import('./components/OrgManager'));
-const Reports = lazy(() => import('./components/Reports'));
-const SettingsView = lazy(() => import('./components/SettingsView'));
-const UsersPermissionsManager = lazy(() => import('./components/UsersPermissionsManager'));
-const AboutApp = lazy(() => import('./components/AboutApp'));
-const SpecialSections = lazy(() => import('./components/SpecialSections'));
+import Dashboard from './components/Dashboard';
+import AttendanceSheet from './components/AttendanceSheet';
+import OrgManager from './components/OrgManager';
+import Reports from './components/Reports';
+import SettingsView from './components/SettingsView';
+import UsersPermissionsManager from './components/UsersPermissionsManager';
+import AboutApp from './components/AboutApp';
+import SpecialSections from './components/SpecialSections';
 import SplashScreen from './components/SplashScreen';
 import LoginPage from './components/LoginPage';
 import PWAInstallBanner from './components/PWAInstallBanner';
@@ -69,17 +71,13 @@ import SoldierProfile from './components/SoldierProfile';
 import SoldierPortal from './components/SoldierPortal';
 import SoldierRequestsReviewModal from './components/SoldierRequestsReviewModal';
 import BottomSheetNavigation from './components/BottomSheetNavigation';
+import TacticalReadinessCenter from './components/TacticalReadinessCenter';
+import GuardRosterGenerator from './components/GuardRosterGenerator';
+import TacticalCommandPalette from './components/TacticalCommandPalette';
+import MilitaryIdCardModal from './components/MilitaryIdCardModal';
+import AndroidExitToast, { AndroidExitConfirmModal } from './components/AndroidExitToast';
+import { useAndroidBackNavigation } from './hooks/useAndroidBackNavigation';
 import { triggerToast } from './components/ToastContainer';
-import CommandCenter from './components/CommandCenter';
-
-const PageLoading = () => (
-  <div className="min-h-[45vh] flex items-center justify-center" dir="rtl" aria-live="polite">
-    <div className="flex items-center gap-3 rounded-2xl bg-white/90 px-5 py-4 text-sm font-bold text-slate-600 shadow-lg ring-1 ring-slate-200/80 backdrop-blur-sm">
-      <Loader2 className="h-5 w-5 animate-spin text-emerald-600" />
-      جارٍ تجهيز القسم...
-    </div>
-  </div>
-);
 
 export default function App() {
   // Authentication Custom Hook
@@ -91,6 +89,7 @@ export default function App() {
     loginError,
     setLoginError,
     loginWithPassword,
+    loginWithGoogle,
     logout
   } = useAuth();
 
@@ -128,6 +127,8 @@ export default function App() {
   const [showSplashScreen, setShowSplashScreen] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [selectedSoldierIdForProfile, setSelectedSoldierIdForProfile] = useState<string | null>(null);
+  const [militaryCardSoldier, setMilitaryCardSoldier] = useState<Soldier | null>(null);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
   const [isMoreBottomSheetOpen, setIsMoreBottomSheetOpen] = useState(false);
   const [isRequestsModalOpen, setIsRequestsModalOpen] = useState(false);
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
@@ -238,6 +239,60 @@ export default function App() {
     };
   }, []);
 
+  // Offline Mode & Automatic Data Sync Listener (IndexedDB)
+  useEffect(() => {
+    const triggerAutoSync = async () => {
+      if (!offlineSyncService.isOnline()) return;
+      try {
+        const result = await offlineSyncService.syncPendingQueue();
+        if (result.syncedRecordsCount > 0) {
+          triggerToast(
+            `✅ تم استعادة الاتصال بالإنترنت ومزامنة (${result.syncedRecordsCount}) عملية حضور وغياب مسجلة محلياً في IndexedDB بنجاح!`,
+            'success',
+            6000
+          );
+          await refreshAttendance();
+          
+          // Add informational alert to Notification Center
+          const notif: Notification = {
+            id: `notif_autosync_${Date.now()}`,
+            title: 'اكتمال المزامنة التلقائية مع السيرفر',
+            message: `تم ترحيل ومزامنة (${result.syncedRecordsCount}) عملية حضور وغياب من IndexedDB بنجاح دون أي تكرار للبيانات المزامنة مسبقاً.`,
+            isRead: false,
+            type: 'info',
+            createdAt: new Date().toISOString()
+          };
+          setNotifications(prev => [notif, ...prev]);
+          notificationsService.createNotification(notif).catch(() => {});
+        }
+      } catch (err) {
+        console.warn('Auto-sync error:', err);
+      }
+    };
+
+    // Initial check on mount
+    if (offlineSyncService.isOnline()) {
+      triggerAutoSync();
+    }
+
+    const handleOnline = () => {
+      triggerToast('🟢 تم استعادة الاتصال بالإنترنت - جاري مزامنة البيانات المعلقة تلقائياً...', 'info', 4000);
+      triggerAutoSync();
+    };
+
+    const handleOffline = () => {
+      triggerToast('📡 تم الانتقال لوضع عدم الاتصال (Offline) - يتم حفظ الحضور والغياب محلياً في الذاكرة (IndexedDB) بأمان', 'warning', 6000);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [refreshAttendance, setNotifications]);
+
   // Current User Object
   const currentUser = useMemo(() => {
     return dbUser || {
@@ -299,6 +354,32 @@ export default function App() {
     triggerToast('تم تسجيل الخروج بنجاح', 'info');
   };
 
+  // Android System Back Button & Gesture Navigation Hook
+  const {
+    showExitToast,
+    isExitConfirmModalOpen,
+    setIsExitConfirmModalOpen,
+    handleGoBack
+  } = useAndroidBackNavigation({
+    activeTab,
+    setActiveTab,
+    selectedSoldierIdForProfile,
+    setSelectedSoldierIdForProfile,
+    militaryCardSoldier,
+    setMilitaryCardSoldier,
+    isCommandPaletteOpen,
+    setIsCommandPaletteOpen,
+    isMoreBottomSheetOpen,
+    setIsMoreBottomSheetOpen,
+    isRequestsModalOpen,
+    setIsRequestsModalOpen,
+    isLogoutModalOpen,
+    setIsLogoutModalOpen,
+    isUserAccountPopoverOpen,
+    setIsUserAccountPopoverOpen,
+    onLogout: handleLogout
+  });
+
   // Review & Approve/Reject Soldier Action Requests
   const handleReviewSoldierRequest = async (requestId: string, status: 'approved' | 'rejected', rejectionReason?: string) => {
     try {
@@ -341,13 +422,25 @@ export default function App() {
       return [...filtered, record];
     });
 
-    const soldierName = soldiers.find(s => s.id === soldierId)?.fullName || 'عسكري غير معروف';
+    const soldierObj = soldiers.find(s => s.id === soldierId);
+    const soldierName = soldierObj?.fullName || 'عسكري غير معروف';
     handleAddLog('تعديل', 'التحضير اليومي', `تعديل حالة حضور العسكري (${soldierName}) إلى (${status}) ليوم ${date}`);
-    triggerToast('تم تحديث حالة الحضور اليومي بنجاح', 'success');
+
+    const isCurrentlyOnline = offlineSyncService.isOnline();
+    if (isCurrentlyOnline) {
+      triggerToast(`تم تحديث حالة الحضور للعسكري (${soldierName}) بنجاح`, 'success');
+    } else {
+      triggerToast(`💾 وضع عدم الاتصال: تم حفظ تحضير (${soldierName}) محلياً في الذاكرة وسيتم مزامنته تلقائياً عند عودة الإنترنت`, 'warning', 5000);
+    }
 
     try {
-      await attendanceService.saveAttendanceRecord(soldierId, date, status);
-      await refreshAttendance();
+      await attendanceService.saveAttendanceRecord(soldierId, date, status, {
+        soldierNames: [soldierName],
+        summary: `تحضير الفرد: ${soldierName} (${status})`
+      });
+      if (isCurrentlyOnline) {
+        await refreshAttendance();
+      }
     } catch (e) {
       console.error("Error saving attendance:", e);
     }
@@ -387,16 +480,28 @@ export default function App() {
       return [...filtered, ...newRecords];
     });
 
+    const targetSoldierNames = soldiers.filter(s => soldierIds.includes(s.id)).map(s => s.fullName);
     handleAddLog('تعديل', 'التحضير اليومي', `تحضير جماعي: تعديل حالة حضور لعدد (${soldierIds.length}) عسكري للأيام (${dates.join(', ')}) إلى (${status})`);
-    triggerToast('تم تطبيق التحضير الجماعي بنجاح', 'success');
+    
+    const isCurrentlyOnline = offlineSyncService.isOnline();
+    if (isCurrentlyOnline) {
+      triggerToast(`تم تطبيق التحضير الجماعي لعدد (${soldierIds.length}) عسكري بنجاح`, 'success');
+    } else {
+      triggerToast(`💾 وضع عدم الاتصال: تم حفظ التحضير الجماعي لعدد (${soldierIds.length}) فرد في الذاكرة المحلية وسيتم رفعه تلقائياً فور عودة الإنترنت`, 'warning', 5000);
+    }
 
     try {
-      await attendanceService.bulkSaveAttendance(newRecords);
-      await refreshAttendance();
+      await attendanceService.bulkSaveAttendance(newRecords, {
+        soldierNames: targetSoldierNames,
+        summary: `تحضير جماعي (${soldierIds.length} فرد) للأيام (${dates.join(', ')})`
+      });
+      if (isCurrentlyOnline) {
+        await refreshAttendance();
+      }
     } catch (e) {
       console.error("Error saving bulk attendance:", e);
     }
-  }, [currentUser, setSoldiers, setAttendance, handleAddLog, refreshAttendance]);
+  }, [currentUser, soldiers, setSoldiers, setAttendance, handleAddLog, refreshAttendance]);
 
   // Restore whole state (Backups)
   const handleRestoreState = useCallback(async (importedData: {
@@ -860,6 +965,8 @@ export default function App() {
 
   const NAV_ITEMS = [
     { id: 'dashboard', label: 'لوحة القيادة والمؤشرات', icon: LayoutDashboard },
+    { id: 'tactical_readiness', label: 'مركز السيطرة والجاهزية ⚡', icon: ShieldAlert },
+    { id: 'guard_roster', label: 'نوبات الحراسة والخفارات 🛡️', icon: ShieldCheck },
     { id: 'attendance', label: 'كشف التحضير اليومي', icon: Table },
     { id: 'org_manager', label: 'إدارة الهيكل والأفراد', icon: Users },
     { id: 'special_sections', label: 'الأقسام والخدمات المميزة', icon: Sparkles },
@@ -889,6 +996,7 @@ export default function App() {
         loginError={loginError}
         loadingAuth={loadingAuth}
         handleLocalLogin={handleLocalLogin}
+        handleGoogleLogin={loginWithGoogle}
         otpEnabled={otpEnabled}
         setOtpEnabled={setOtpEnabled}
         otpValue={otpValue}
@@ -946,7 +1054,7 @@ export default function App() {
 
   // 3. SYSTEM MAIN APP
   return (
-    <div className="app-shell min-h-screen flex flex-col font-sans select-none antialiased text-right" dir="rtl">
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans select-none antialiased text-right" dir="rtl">
       
       {/* Animated Military Welcome Splash Screen Overlay */}
       <AnimatePresence>
@@ -960,7 +1068,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* Top Bar: Official Status, Title & Clock */}
-      <div className="app-topbar bg-slate-950 text-slate-100 py-1 px-2 sm:px-3 border-b border-slate-800 flex flex-row justify-between items-center gap-1.5 sm:gap-2 text-xs sticky top-0 z-40 shadow-sm backdrop-blur-md whitespace-nowrap overflow-x-auto sm:overflow-visible no-scrollbar">
+      <div className="bg-slate-950 text-slate-100 py-1 px-2 sm:px-3 border-b border-slate-800 flex flex-row justify-between items-center gap-1.5 sm:gap-2 text-xs sticky top-0 z-40 shadow-sm backdrop-blur-md whitespace-nowrap overflow-x-auto sm:overflow-visible no-scrollbar">
         {/* Compact Account Button */}
         <button
           type="button"
@@ -977,12 +1085,21 @@ export default function App() {
 
         {/* Right Tools & Time Display */}
         <div className="flex items-center gap-1.5 sm:gap-2 text-slate-400 font-sans text-[10px] sm:text-[11px] shrink-0">
-          <CommandCenter
-            onNavigate={(tab) => setActiveTab(tab)}
-            soldierCount={soldiers.filter(s => s.isActive).length}
-            unitCount={units.length}
-            pendingRequests={soldierRequests.filter(r => ['pending', 'new', 'under_review'].includes(String(r.status))).length}
-          />
+          
+          {/* Quick Search & Command Palette Button */}
+          <button
+            type="button"
+            onClick={() => setIsCommandPaletteOpen(true)}
+            className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 active:scale-95 text-slate-200 hover:text-white px-2.5 py-1 rounded-lg border border-slate-800 hover:border-slate-700 transition-all cursor-pointer text-[11px] font-bold shrink-0 shadow-xs"
+            title="بحث تكتيكي سريع وقائمة الأوامر (Ctrl + K)"
+          >
+            <Search className="w-3.5 h-3.5 text-indigo-400" />
+            <span className="hidden md:inline text-slate-300">بحث سريع</span>
+            <span className="hidden sm:inline-block text-[9px] font-mono bg-slate-800 text-slate-400 px-1.5 py-0.2 rounded border border-slate-700">
+              Ctrl+K
+            </span>
+          </button>
+
           <div className="flex items-center gap-1 bg-slate-900 px-2 py-0.5 rounded-md border border-slate-800/60 text-[10px] xs:text-[11px] whitespace-nowrap shrink-0">
             <Calendar className="w-3 h-3 text-slate-400 shrink-0" />
             <span className="text-slate-300 font-medium whitespace-nowrap">{formattedGregorianDate} م</span>
@@ -1054,8 +1171,30 @@ export default function App() {
         </div>
       </div>
 
+      {/* Android Mobile Top Navigation Bar with Back Button when in sub-sections */}
+      {activeTab !== 'dashboard' && (
+        <div className="lg:hidden bg-slate-900/95 border-b border-slate-800/80 px-3 py-1.5 flex items-center justify-between shadow-sm sticky top-[33px] z-30 backdrop-blur-md">
+          <button
+            type="button"
+            onClick={handleGoBack}
+            className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 active:scale-95 text-amber-400 rounded-lg border border-slate-700 text-xs font-bold transition-all shadow-xs cursor-pointer"
+            title="الرجوع للشاشة السابقة (زر رجوع الأندرويد)"
+          >
+            <ArrowRight className="w-3.5 h-3.5" />
+            <span>رجوع</span>
+          </button>
+          
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-black text-slate-200 truncate max-w-[210px]">
+              {NAV_ITEMS.find(n => n.id === activeTab)?.label || 'القسم'}
+            </span>
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          </div>
+        </div>
+      )}
+
       {/* Mobile Bottom Navigation Dock */}
-      <nav className="app-mobile-nav lg:hidden fixed bottom-0 left-0 right-0 z-45 bg-slate-950/95 backdrop-blur-2xl border-t border-slate-800/90 shadow-[0_-10px_36px_rgba(0,0,0,0.7),0_1px_0_rgba(255,255,255,0.08)_inset] px-2 pt-2 pb-[max(0.6rem,env(safe-area-inset-bottom))] transition-all duration-300">
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-45 bg-slate-950/95 backdrop-blur-2xl border-t border-slate-800/90 shadow-[0_-10px_36px_rgba(0,0,0,0.7),0_1px_0_rgba(255,255,255,0.08)_inset] px-2 pt-2 pb-[max(0.6rem,env(safe-area-inset-bottom))] transition-all duration-300">
         <div className="max-w-lg mx-auto grid grid-cols-5 gap-1 text-center items-center relative">
           <motion.button
             whileTap={{ scale: 0.88 }}
@@ -1130,7 +1269,7 @@ export default function App() {
       <div className="flex-1 flex flex-col lg:flex-row pb-16 lg:pb-0">
         
         {/* Desktop Sidebar Navigation */}
-        <aside className="app-sidebar hidden lg:flex w-64 bg-slate-900 border-l border-slate-800 text-slate-300 flex-col shrink-0 min-h-[calc(100vh-33px)] shadow-xl z-20">
+        <aside className="hidden lg:flex w-64 bg-slate-900 border-l border-slate-800 text-slate-300 flex-col shrink-0 min-h-[calc(100vh-33px)] shadow-xl z-20">
           <div className="p-4 border-b border-slate-800/80 bg-slate-950/40">
             <h2 className="text-xs font-black text-slate-100 tracking-wide uppercase">قائمة الملاحة والسيطرة</h2>
             <p className="text-[10px] text-slate-400 mt-0.5">منظومة القوة والجاهزية العسكرية</p>
@@ -1178,8 +1317,7 @@ export default function App() {
         </aside>
 
         {/* Dynamic Page Views Container */}
-        <main className="app-main flex-1 px-2.5 sm:px-6 pb-6 pt-0 overflow-y-auto max-w-7xl mx-auto w-full">
-          <Suspense fallback={<PageLoading />}>
+        <main className="flex-1 px-2.5 sm:px-6 pb-6 pt-0 overflow-y-auto max-w-7xl mx-auto w-full">
           {activeTab === 'dashboard' && (
             <Dashboard 
               units={units} 
@@ -1192,7 +1330,33 @@ export default function App() {
               currentUser={currentUser}
               printSettings={settings?.printSettings}
               onAddLog={handleAddLog}
+              onRefreshData={loadAllData}
             />
+          )}
+
+          {activeTab === 'tactical_readiness' && (
+            <div className="pt-3 sm:pt-4">
+              <TacticalReadinessCenter 
+                soldiers={soldiers}
+                units={units}
+                attendance={attendance}
+                currentUser={currentUser}
+                onNavigateTab={(tab) => setActiveTab(tab)}
+                onSelectSoldier={(soldier) => setSelectedSoldierIdForProfile(soldier.id)}
+              />
+            </div>
+          )}
+
+          {activeTab === 'guard_roster' && (
+            <div className="pt-3 sm:pt-4">
+              <GuardRosterGenerator 
+                soldiers={soldiers}
+                units={units}
+                attendance={attendance}
+                currentUser={currentUser}
+                onPrintRoster={() => {}}
+              />
+            </div>
           )}
 
           {activeTab === 'attendance' && (
@@ -1316,7 +1480,6 @@ export default function App() {
               <AboutApp />
             </div>
           )}
-          </Suspense>
         </main>
       </div>
 
@@ -1495,6 +1658,36 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Tactical Quick Command Palette (Ctrl+K) */}
+      <TacticalCommandPalette 
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        soldiers={soldiers}
+        units={units}
+        onNavigateTab={(tab) => setActiveTab(tab)}
+        onSelectSoldier={(soldier) => setSelectedSoldierIdForProfile(soldier.id)}
+        onOpenMilitaryCard={(soldier) => setMilitaryCardSoldier(soldier)}
+      />
+
+      {/* Official Military ID Card Modal */}
+      {militaryCardSoldier && (
+        <MilitaryIdCardModal 
+          soldier={militaryCardSoldier}
+          unit={units.find(u => u.id === militaryCardSoldier.unitId)}
+          onClose={() => setMilitaryCardSoldier(null)}
+        />
+      )}
+
+      {/* Android Back-Button Exit Toast Notification */}
+      <AndroidExitToast isVisible={showExitToast} />
+
+      {/* Android Double-Back Exit Confirmation Modal */}
+      <AndroidExitConfirmModal
+        isOpen={isExitConfirmModalOpen}
+        onClose={() => setIsExitConfirmModalOpen(false)}
+        onConfirmExit={handleLogout}
+      />
 
       <PWAInstallBanner />
     </div>

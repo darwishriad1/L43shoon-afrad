@@ -194,8 +194,11 @@ export default function SoldierAccountsSection({
     }
   };
 
-  // Passwords are never derived from military numbers; the server generates a temporary value securely.
-  const getReversedMilitaryNumber = (_militaryNumber: string) => '';
+  // Helper to reverse military number for default password
+  const getReversedMilitaryNumber = (militaryNumber: string) => {
+    if (!militaryNumber) return '123456';
+    return militaryNumber.split('').reverse().join('');
+  };
 
   // Single Account Save
   const handleSaveSingleAccount = async () => {
@@ -777,7 +780,7 @@ export default function SoldierAccountsSection({
                     </p>
                     <ul className="list-disc list-inside space-y-1 pr-2 font-bold text-[11px]">
                       <li>اعتماد <b>الرقم العسكري</b> كاسم المستخدم.</li>
-                      <li>إنشاء كلمة مرور مؤقتة عشوائية من الخادم، مع ضرورة تغييرها عند أول استخدام.</li>
+                      <li>إنشاء <b>كلمة المرور الابتدائية</b> بعكس الرقم العسكري تلقائياً (مثال: الرقم 123456 يصبح كلمة المرور 654321).</li>
                       <li>تجاهل الحسابات المنشأة مسبقاً لمنع التكرار والأخطاء.</li>
                       <li>ربط الحساب تلقائياً بسجل ملف الفرد في النظام.</li>
                     </ul>

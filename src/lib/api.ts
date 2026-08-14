@@ -1,3 +1,16 @@
+export function getClientAuthToken(): string {
+  try {
+    return (
+      localStorage.getItem('military_auth_token') ||
+      localStorage.getItem('authToken') ||
+      localStorage.getItem('token') ||
+      'local_admin'
+    );
+  } catch {
+    return 'local_admin';
+  }
+}
+
 /**
  * Resilient fetch wrapper with automatic retry capabilities and exponential backoff.
  * Helps prevent "Failed to fetch" or "Rate exceeded" errors caused by transient network glitches,
@@ -9,13 +22,23 @@ export async function fetchWithRetry(
   retries = 5,
   delay = 1000
 ): Promise<Response> {
-  const method = String(options.method || 'GET').toUpperCase();
-  const canRetry = ['GET', 'HEAD', 'OPTIONS'].includes(method) || options.headers instanceof Headers && options.headers.get('X-Idempotency-Key');
+  const token = getClientAuthToken();
+  const headers = new Headers(options.headers || {});
+  
+  if (!headers.has('Authorization') && token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const enhancedOptions: RequestInit = {
+    ...options,
+    headers,
+  };
+
   try {
-    const response = await fetch(url, options);
+    const response = await fetch(url, enhancedOptions);
     
-    // Retry only idempotent requests or explicitly idempotent mutations.
-    if (canRetry && (response.status === 429 || (!response.ok && response.status >= 500)) && retries > 0) {
+    // If rate limited (429) or transient server error (500, 502, 503, 504), retry with backoff
+    if ((response.status === 429 || (!response.ok && response.status >= 500)) && retries > 0) {
       console.warn(`Server returned status ${response.status} for ${url}. Retrying in ${delay}ms... (${retries} left)`);
       await new Promise((resolve) => setTimeout(resolve, delay));
       return fetchWithRetry(url, options, retries - 1, delay * 1.5);
@@ -23,7 +46,7 @@ export async function fetchWithRetry(
     
     return response;
   } catch (error) {
-    if (canRetry && retries > 0) {
+    if (retries > 0) {
       console.warn(`Fetch failed for ${url} with error:`, error, `. Retrying in ${delay}ms... (${retries} left)`);
       await new Promise((resolve) => setTimeout(resolve, delay));
       return fetchWithRetry(url, options, retries - 1, delay * 1.5);

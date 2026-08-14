@@ -7,6 +7,8 @@ import {
   Sparkles,
   FilePieChart,
   ShieldCheck,
+  ShieldAlert,
+  Shield,
   Settings,
   Info,
   X,
@@ -20,7 +22,9 @@ import {
   Package,
   ClipboardCheck,
   Clock,
-  Search
+  Search,
+  Database,
+  Server
 } from 'lucide-react';
 import { User } from '../types';
 
@@ -177,6 +181,24 @@ export default function BottomSheetNavigation({
       badge: 'الرئيسية'
     },
     {
+      id: 'tactical_readiness',
+      title: 'مركز السيطرة والجاهزية',
+      subtitle: 'تحليل تكتيكي والإنذار',
+      icon: ShieldAlert,
+      category: 'ops',
+      iconColor: 'text-amber-400 drop-shadow-[0_2px_12px_rgba(251,191,36,0.6)]',
+      badge: 'DEFCON'
+    },
+    {
+      id: 'guard_roster',
+      title: 'مولد نوبات الحراسة',
+      subtitle: 'توزيع ذكي للمواقع والخفارات',
+      icon: ShieldCheck,
+      category: 'ops',
+      iconColor: 'text-indigo-400 drop-shadow-[0_2px_12px_rgba(129,140,248,0.6)]',
+      badge: 'ذكي'
+    },
+    {
       id: 'attendance',
       title: 'كشف التحضير',
       subtitle: 'الحضور والغياب',
@@ -265,6 +287,16 @@ export default function BottomSheetNavigation({
           }
         ]
       : []),
+    {
+      id: 'secondary_db',
+      title: 'القاعدة الاحتياطية',
+      subtitle: 'المزامنة ورفع كل شيء',
+      icon: Server,
+      category: 'admin',
+      iconColor: 'text-emerald-400 drop-shadow-[0_2px_12px_rgba(52,211,153,0.5)]',
+      badge: 'Hot Standby',
+      targetTab: 'settings'
+    },
     {
       id: 'settings',
       title: 'إعدادات المنظومة',

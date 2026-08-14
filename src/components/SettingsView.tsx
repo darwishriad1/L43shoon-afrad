@@ -39,6 +39,7 @@ import { SystemSettings, Unit, Soldier, AttendanceRecord, AuditLog, PrintSetting
 import { PRINT_TEMPLATES, PrintHeader, PrintFooter, PrintWrapper } from './PrintHeaderFooter';
 import { downloadElementAsPdf } from '../utils/pdfGenerator';
 import BackupRestore from './BackupRestore';
+import SecondaryDatabaseManager from './SecondaryDatabaseManager';
 import UsersPermissionsManager from './UsersPermissionsManager';
 import PWAInstallBanner from './PWAInstallBanner';
 import DatabaseResetControl from './DatabaseResetControl';
@@ -80,8 +81,8 @@ interface SettingsViewProps {
     auditLogs: AuditLog[];
   }) => void;
   onResetDatabase?: () => Promise<void> | void;
-  initialSubTab?: 'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'print' | 'reset';
-  onSubTabChange?: (tab: 'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'print' | 'reset') => void;
+  initialSubTab?: 'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'secondary_db' | 'print' | 'reset';
+  onSubTabChange?: (tab: 'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'secondary_db' | 'print' | 'reset') => void;
 }
 
 // Beautiful Custom ToggleSwitch Component
@@ -240,7 +241,7 @@ export default function SettingsView({
   }, [settings]);
   
   // Clean settings subtabs
-  const [subTabState, setSubTabState] = useState<'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'print' | 'reset'>(initialSubTab || 'menu');
+  const [subTabState, setSubTabState] = useState<'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'secondary_db' | 'print' | 'reset'>(initialSubTab || 'menu');
 
   // Permission check for General Readiness Settings
   const canAccessGeneralSettings = useMemo(() => {
@@ -263,7 +264,7 @@ export default function SettingsView({
     }
   }, [subTabState, canAccessGeneralSettings]);
 
-  const setSubTab = (tab: 'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'print' | 'reset') => {
+  const setSubTab = (tab: 'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'secondary_db' | 'print' | 'reset') => {
     setSubTabState(tab);
     if (onSubTabChange) {
       onSubTabChange(tab);
@@ -477,6 +478,18 @@ export default function SettingsView({
       badgeText: `المشرفون: ${users.filter(u => u.role === 'admin').length}`
     },
     {
+      id: 'secondary_db',
+      label: 'قاعدة البيانات الاحتياطية المزدوجة',
+      desc: 'محرك قاعدة بيانات احتياطية ثانوية متطابقة ورفع كل شيء بنقرة واحدة',
+      icon: Server,
+      bgColor: 'bg-emerald-50/45 hover:bg-emerald-50/70',
+      borderColor: 'border-emerald-100 hover:border-emerald-200/80',
+      iconColor: 'text-emerald-700 bg-emerald-100/70',
+      badgeColor: 'bg-emerald-100/80 text-emerald-950',
+      status: 'محرك احتياطي متزامن',
+      badgeText: 'مزامنة كاملة فورية'
+    },
+    {
       id: 'backup',
       label: 'النسخ السحابي والبيانات',
       desc: 'النسخ الاحتياطي السحابي المشفر ومزامنة الكشوفات مع الخوادم الآمنة',
@@ -495,7 +508,8 @@ export default function SettingsView({
     { id: 'settings', label: 'الضبط العام والجاهزية', desc: 'معايير حضور اللواء والتقويم', icon: Sliders },
     { id: 'notifications', label: 'قنوات الإشعار والتنبيه', desc: 'التحضير اليومي والإنذار المبكر', icon: Bell },
     { id: 'users', label: 'صلاحيات الحسابات والوصول', desc: 'إدارة المستخدمين والأدوار والولوج', icon: ShieldCheck },
-    { id: 'backup', label: 'النسخ السحابي والبيانات', desc: 'حفظ الكشوفات والمزامنة المشفرة', icon: Database },
+    { id: 'secondary_db', label: 'قاعدة البيانات الاحتياطية', desc: 'محرك الاحتياط المتزامن ورفع كل شيء', icon: Server },
+    { id: 'backup', label: 'النسخ السحابي والملفات', desc: 'حفظ الكشوفات والمزامنة المشفرة', icon: Database },
     { id: 'print', label: 'إعدادات الطباعة', desc: 'الهوية الرسمية والشعار والختم والتوقيع', icon: Printer },
     { id: 'reset', label: 'تهيئة وتصفية قاعدة البيانات', desc: 'تصفية التطبيق بالكامل (ضغط ٥ ثوانٍ)', icon: Trash2 }
   ] as const;
@@ -1015,31 +1029,39 @@ export default function SettingsView({
                 </div>
               )}
 
+              {/* TAB 4: SECONDARY REDUNDANT DATABASE */}
+              {subTab === 'secondary_db' && (
+                <div className="space-y-4">
+                  <BackupRestore 
+                    units={units}
+                    soldiers={soldiers}
+                    attendance={attendance}
+                    auditLogs={auditLogs}
+                    googleAccessToken={googleAccessToken}
+                    onSetGoogleAccessToken={onSetGoogleAccessToken}
+                    onRestoreState={onRestoreState}
+                    onAddLog={onAddLog}
+                    currentUser={currentUser}
+                    initialTool="secondary_db"
+                  />
+                </div>
+              )}
+
               {/* TAB 4: BACKUP & DATA PROTECTION */}
               {subTab === 'backup' && (
                 <div className="space-y-4">
-                  {/* Header info */}
-                  <div>
-                    <h3 className="text-sm sm:text-base font-black text-slate-900">النسخ الاحتياطي وإدارة البيانات</h3>
-                    <p className="text-[11px] sm:text-xs text-slate-500 font-bold mt-0.5">تأمين كشوفات الحضور والقوة العسكرية عبر التصدير المحلي أو المزامنة مع Google Sheets</p>
-                  </div>
-
-                  <div className="h-px bg-slate-100 my-2" />
-
-                  {/* Render the updated Backup and Restore panel */}
-                  <div className="bg-transparent">
-                    <BackupRestore 
-                      units={units}
-                      soldiers={soldiers}
-                      attendance={attendance}
-                      auditLogs={auditLogs}
-                      googleAccessToken={googleAccessToken}
-                      onSetGoogleAccessToken={onSetGoogleAccessToken}
-                      onRestoreState={onRestoreState}
-                      onAddLog={onAddLog}
-                    />
-                  </div>
-
+                  <BackupRestore 
+                    units={units}
+                    soldiers={soldiers}
+                    attendance={attendance}
+                    auditLogs={auditLogs}
+                    googleAccessToken={googleAccessToken}
+                    onSetGoogleAccessToken={onSetGoogleAccessToken}
+                    onRestoreState={onRestoreState}
+                    onAddLog={onAddLog}
+                    currentUser={currentUser}
+                    initialTool="grid"
+                  />
                 </div>
               )}
 

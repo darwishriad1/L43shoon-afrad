@@ -49,14 +49,14 @@ export default function SoldierAccountTasksTab({
   // Manager Account Config State
   const [hasAccount, setHasAccount] = useState<boolean>(soldier.hasAccount || false);
   const [username, setUsername] = useState<string>(soldier.accountUsername || soldier.militaryNumber || '');
-  const [password, setPassword] = useState<string>('');
+  const [password, setPassword] = useState<string>(soldier.accountPassword || (soldier.militaryNumber ? soldier.militaryNumber.split('').reverse().join('') : '123456'));
   const [allowProfileEdit, setAllowProfileEdit] = useState<boolean>(soldier.allowProfileEdit !== false);
 
   // Sync state when soldier prop changes
   React.useEffect(() => {
     setHasAccount(soldier.hasAccount || false);
     setUsername(soldier.accountUsername || soldier.militaryNumber || '');
-    setPassword('');
+    setPassword(soldier.accountPassword || (soldier.militaryNumber ? soldier.militaryNumber.split('').reverse().join('') : '123456'));
     setAllowProfileEdit(soldier.allowProfileEdit !== false);
     setUpdatedPhone(soldier.phoneNumber || '');
     setUpdatedEmergency(soldier.emergencyContact || '');
@@ -136,7 +136,7 @@ export default function SoldierAccountTasksTab({
       const payload = {
         hasAccount,
         username: username.trim() || soldier.militaryNumber,
-        password: password.trim(),
+        password: password.trim() || '123456',
         allowProfileEdit,
         assignedTasks: {
           tasks: selectedTasks,
@@ -315,7 +315,7 @@ export default function SoldierAccountTasksTab({
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={!hasAccount}
-                placeholder="أدخل كلمة مرور جديدة أو اتركه للتوليد الآمن"
+                placeholder="123456"
                 className="w-full p-2.5 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white disabled:opacity-50 focus:border-amber-500"
               />
             </div>

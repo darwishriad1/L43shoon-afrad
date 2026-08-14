@@ -1,5 +1,6 @@
 import { apiClient } from './api';
 import { SoldierActionRequest } from '../types';
+import { syncToSecondaryDB } from './supabaseSecondary';
 
 export const soldierRequestsService = {
   async fetchRequests(): Promise<SoldierActionRequest[]> {
@@ -12,10 +13,12 @@ export const soldierRequestsService = {
     rejectionReason?: string,
     reviewedBy?: string
   ) {
-    return apiClient.put<{ success: boolean }>(`/api/soldier-requests/${id}/review`, {
+    const result = await apiClient.put<{ success: boolean; request?: SoldierActionRequest }>(`/api/soldier-requests/${id}/review`, {
       status,
       rejectionReason,
       reviewedBy,
     });
+    syncToSecondaryDB('soldier_requests', 'update', { id, status, rejectionReason, reviewedBy });
+    return result;
   }
 };
