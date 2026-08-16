@@ -24,7 +24,20 @@ import {
   Clock,
   Search,
   Database,
-  Server
+  Server,
+  Award,
+  GraduationCap,
+  Scale,
+  ArrowLeftRight,
+  UserCheck,
+  FileText,
+  CalendarCheck,
+  Plane,
+  FolderArchive,
+  MessageSquare,
+  Lock,
+  Contact,
+  Layers
 } from 'lucide-react';
 import { User } from '../types';
 
@@ -33,6 +46,7 @@ interface BottomSheetNavigationProps {
   onClose: () => void;
   activeTab: string;
   setActiveTab: (tab: string) => void;
+  onNavigate?: (tab: string, subTab?: string) => void;
   currentUser: User;
   onOpenRequestsModal?: () => void;
   unreadRequestsCount?: number;
@@ -150,6 +164,7 @@ export default function BottomSheetNavigation({
   onClose,
   activeTab,
   setActiveTab,
+  onNavigate,
   currentUser,
   onOpenRequestsModal,
   unreadRequestsCount = 0,
@@ -160,160 +175,259 @@ export default function BottomSheetNavigation({
 
   if (!isOpen) return null;
 
-  const handleSelectTab = (tabId: string, customAction?: () => void) => {
+  const handleSelectTab = (tabId: string, customAction?: () => void, targetSubTab?: string) => {
     if (customAction) {
       customAction();
+    } else if (onNavigate) {
+      onNavigate(tabId, targetSubTab);
     } else {
       setActiveTab(tabId);
     }
     onClose();
   };
 
-  // Quick navigation grid items (Structured in 3 columns per row)
+  // Quick navigation grid items (Structured in EXACTLY 5 columns per row with bold main titles and enlarged icons)
   const quickNavItems = [
+    // Row 1: القيادة والميدان والجاهزية (5 أزرار)
     {
       id: 'dashboard',
       title: 'لوحة القيادة',
-      subtitle: 'المؤشرات والجاهزية',
       icon: LayoutDashboard,
       category: 'ops',
-      iconColor: 'text-emerald-400 drop-shadow-[0_2px_12px_rgba(52,211,153,0.5)]',
+      iconColor: 'text-emerald-400 drop-shadow-[0_2px_12px_rgba(52,211,153,0.6)]',
       badge: 'الرئيسية'
     },
     {
       id: 'tactical_readiness',
-      title: 'مركز السيطرة والجاهزية',
-      subtitle: 'تحليل تكتيكي والإنذار',
+      title: 'مركز السيطرة',
       icon: ShieldAlert,
       category: 'ops',
-      iconColor: 'text-amber-400 drop-shadow-[0_2px_12px_rgba(251,191,36,0.6)]',
+      iconColor: 'text-amber-400 drop-shadow-[0_2px_12px_rgba(251,191,36,0.7)]',
       badge: 'DEFCON'
     },
     {
-      id: 'guard_roster',
-      title: 'مولد نوبات الحراسة',
-      subtitle: 'توزيع ذكي للمواقع والخفارات',
-      icon: ShieldCheck,
-      category: 'ops',
-      iconColor: 'text-indigo-400 drop-shadow-[0_2px_12px_rgba(129,140,248,0.6)]',
-      badge: 'ذكي'
-    },
-    {
       id: 'attendance',
-      title: 'كشف التحضير',
-      subtitle: 'الحضور والغياب',
+      title: 'دفتر التحضير',
       icon: Table,
       category: 'ops',
-      iconColor: 'text-teal-400 drop-shadow-[0_2px_12px_rgba(45,212,191,0.5)]',
+      iconColor: 'text-teal-400 drop-shadow-[0_2px_12px_rgba(45,212,191,0.6)]',
       badge: 'اليومي'
     },
     {
       id: 'org_manager',
       title: 'سجلات القوة',
-      subtitle: 'الضباط والأفراد',
       icon: Users,
       category: 'ops',
-      iconColor: 'text-blue-400 drop-shadow-[0_2px_12px_rgba(96,165,250,0.5)]',
-      badge: 'التشكيلات'
+      iconColor: 'text-blue-400 drop-shadow-[0_2px_12px_rgba(96,165,250,0.6)]',
+      badge: 'الهيكل'
     },
     {
-      id: 'special_sections',
-      title: 'الخدمات المميزة',
-      subtitle: 'الأقسام والطلبات',
-      icon: Sparkles,
+      id: 'daily_movement',
+      title: 'حركة الميدان',
+      icon: Plane,
+      category: 'ops',
+      iconColor: 'text-cyan-400 drop-shadow-[0_2px_12px_rgba(34,211,238,0.6)]',
+      badge: 'اليومية',
+      targetTab: 'dashboard'
+    },
+
+    // Row 2: الخفارات والعتاد والخدمات المباشرة (5 أزرار)
+    {
+      id: 'duty_roster',
+      title: 'جدول الخفارات',
+      icon: Clock,
+      category: 'ops',
+      iconColor: 'text-indigo-400 drop-shadow-[0_2px_12px_rgba(129,140,248,0.7)]',
+      badge: 'النوبات',
+      targetTab: 'guard_roster'
+    },
+    {
+      id: 'armory_supplies',
+      title: 'العتاد والتسليح',
+      icon: Package,
+      category: 'ops',
+      iconColor: 'text-orange-400 drop-shadow-[0_2px_12px_rgba(251,146,60,0.6)]',
+      badge: 'العهد',
+      targetTab: 'special_sections',
+      targetSubTab: 'equipment'
+    },
+    {
+      id: 'medical_care',
+      title: 'رعاية الجرحى',
+      icon: HeartPulse,
       category: 'services',
-      iconColor: 'text-amber-400 drop-shadow-[0_2px_12px_rgba(251,191,36,0.5)]',
-      badge: 'خاص'
+      iconColor: 'text-rose-400 drop-shadow-[0_2px_12px_rgba(248,113,113,0.6)]',
+      badge: 'الرعاية',
+      targetTab: 'special_sections',
+      targetSubTab: 'welfare'
     },
     {
       id: 'requests_modal',
       title: 'طلبات الأفراد',
-      subtitle: 'الإجازات والاستئذان',
       icon: ClipboardCheck,
       category: 'services',
-      iconColor: 'text-rose-400 drop-shadow-[0_2px_12px_rgba(251,113,133,0.5)]',
-      badge: unreadRequestsCount > 0 ? `${unreadRequestsCount} معلقة` : 'متابعة',
+      iconColor: 'text-pink-400 drop-shadow-[0_2px_12px_rgba(244,114,182,0.6)]',
+      badge: unreadRequestsCount > 0 ? `${unreadRequestsCount}` : undefined,
       action: onOpenRequestsModal
     },
     {
+      id: 'leaves_section',
+      title: 'إجازات القوة',
+      icon: CalendarCheck,
+      category: 'services',
+      iconColor: 'text-emerald-400 drop-shadow-[0_2px_12px_rgba(52,211,153,0.6)]',
+      badge: 'الإجازات',
+      targetTab: 'special_sections',
+      targetSubTab: 'leaves'
+    },
+
+    // Row 3: الشؤون العسكرية والتنظيمية (5 أزرار)
+    {
+      id: 'promotions',
+      title: 'الترقيات',
+      icon: Award,
+      category: 'services',
+      iconColor: 'text-yellow-400 drop-shadow-[0_2px_12px_rgba(250,204,21,0.6)]',
+      badge: 'استحقاق',
+      targetTab: 'special_sections',
+      targetSubTab: 'promotions'
+    },
+    {
+      id: 'courses',
+      title: 'الدورات والتأهيل',
+      icon: GraduationCap,
+      category: 'services',
+      iconColor: 'text-sky-400 drop-shadow-[0_2px_12px_rgba(56,189,248,0.6)]',
+      badge: 'تدريب',
+      targetTab: 'special_sections',
+      targetSubTab: 'courses'
+    },
+    {
+      id: 'punishments',
+      title: 'مجلس الانضباط',
+      icon: Scale,
+      category: 'services',
+      iconColor: 'text-red-400 drop-shadow-[0_2px_12px_rgba(239,68,68,0.6)]',
+      badge: 'انضباط',
+      targetTab: 'special_sections',
+      targetSubTab: 'punishments'
+    },
+    {
+      id: 'movement',
+      title: 'حركة التنقلات',
+      icon: ArrowLeftRight,
+      category: 'ops',
+      iconColor: 'text-lime-400 drop-shadow-[0_2px_12px_rgba(163,230,53,0.6)]',
+      badge: 'تنقلات',
+      targetTab: 'special_sections',
+      targetSubTab: 'movement'
+    },
+    {
+      id: 'surveys_requests',
+      title: 'الاستطلاعات والعرائض',
+      icon: MessageSquare,
+      category: 'services',
+      iconColor: 'text-violet-400 drop-shadow-[0_2px_12px_rgba(167,139,250,0.6)]',
+      badge: 'استبيان',
+      targetTab: 'special_sections',
+      targetSubTab: 'requests_surveys'
+    },
+
+    // Row 4: التقارير والإدارة والبيانات (5 أزرار)
+    {
       id: 'reports',
       title: 'التقارير والطباعة',
-      subtitle: 'تصدير المستخرجات',
       icon: FilePieChart,
       category: 'services',
-      iconColor: 'text-sky-400 drop-shadow-[0_2px_12px_rgba(56,189,248,0.5)]',
-      badge: 'إحصائيات'
+      iconColor: 'text-blue-400 drop-shadow-[0_2px_12px_rgba(96,165,250,0.6)]',
+      badge: 'كشوفات',
+      targetTab: 'reports'
     },
-    {
-      id: 'duty_roster',
-      title: 'جدول الخفارات',
-      subtitle: 'النوبات والخدمات',
-      icon: Clock,
-      category: 'ops',
-      iconColor: 'text-violet-400 drop-shadow-[0_2px_12px_rgba(167,139,250,0.5)]',
-      badge: 'جديد',
-      targetTab: 'special_sections'
-    },
-    {
-      id: 'medical_care',
-      title: 'الرعاية الطبية',
-      subtitle: 'المستشفيات والتقارير',
-      icon: HeartPulse,
-      category: 'services',
-      iconColor: 'text-red-400 drop-shadow-[0_2px_12px_rgba(248,113,113,0.5)]',
-      badge: 'صحي',
-      targetTab: 'special_sections'
-    },
-    {
-      id: 'armory_supplies',
-      title: 'العُهد والتجهيز',
-      subtitle: 'العتاد والمهمات',
-      icon: Package,
-      category: 'ops',
-      iconColor: 'text-orange-400 drop-shadow-[0_2px_12px_rgba(251,146,60,0.5)]',
-      badge: 'مخزون',
-      targetTab: 'special_sections'
-    },
-    ...(currentUser.role === 'admin'
-      ? [
-          {
-            id: 'users_permissions',
-            title: 'إدارة الصلاحيات',
-            subtitle: 'المشرفين والحسابات',
-            icon: ShieldCheck,
-            category: 'admin',
-            iconColor: 'text-purple-400 drop-shadow-[0_2px_12px_rgba(192,132,252,0.5)]',
-            badge: 'إدارة'
-          }
-        ]
-      : []),
     {
       id: 'secondary_db',
-      title: 'القاعدة الاحتياطية',
-      subtitle: 'المزامنة ورفع كل شيء',
-      icon: Server,
+      title: 'القاعدة والاحتياط',
+      icon: Database,
       category: 'admin',
-      iconColor: 'text-emerald-400 drop-shadow-[0_2px_12px_rgba(52,211,153,0.5)]',
-      badge: 'Hot Standby',
-      targetTab: 'settings'
+      iconColor: 'text-emerald-400 drop-shadow-[0_2px_12px_rgba(52,211,153,0.6)]',
+      badge: 'Standby',
+      targetTab: 'settings',
+      targetSubTab: 'backup'
+    },
+    {
+      id: 'users_permissions',
+      title: 'إدارة الصلاحيات',
+      icon: UserCheck,
+      category: 'admin',
+      iconColor: 'text-purple-400 drop-shadow-[0_2px_12px_rgba(192,132,252,0.6)]',
+      badge: 'المشرفين',
+      targetTab: 'users_permissions'
     },
     {
       id: 'settings',
       title: 'إعدادات المنظومة',
-      subtitle: 'التهيئة والنسخ',
       icon: Settings,
       category: 'admin',
-      iconColor: 'text-slate-300 drop-shadow-[0_2px_12px_rgba(203,213,225,0.4)]',
-      badge: 'النظام'
+      iconColor: 'text-slate-300 drop-shadow-[0_2px_12px_rgba(203,213,225,0.5)]',
+      badge: 'النظام',
+      targetTab: 'settings',
+      targetSubTab: 'settings'
+    },
+    {
+      id: 'archive_section',
+      title: 'الأرشيف والوثائق',
+      icon: FolderArchive,
+      category: 'services',
+      iconColor: 'text-amber-400 drop-shadow-[0_2px_12px_rgba(251,191,36,0.6)]',
+      badge: 'أرشيف',
+      targetTab: 'special_sections',
+      targetSubTab: 'archive'
+    },
+
+    // Row 5: المستخرجات والتوثيق والذكاء الميداني (5 أزرار)
+    {
+      id: 'special_sections_main',
+      title: 'الأقسام الإدارية',
+      icon: Sparkles,
+      category: 'services',
+      iconColor: 'text-amber-300 drop-shadow-[0_2px_12px_rgba(252,211,77,0.6)]',
+      badge: 'الشامل',
+      targetTab: 'special_sections'
+    },
+    {
+      id: 'guard_roster_auto',
+      title: 'التوزيع الذكي',
+      icon: ShieldCheck,
+      category: 'ops',
+      iconColor: 'text-teal-300 drop-shadow-[0_2px_12px_rgba(94,234,212,0.6)]',
+      badge: 'ذكي ⚡',
+      targetTab: 'guard_roster'
+    },
+    {
+      id: 'system_docs',
+      title: 'اللوائح والتعليمات',
+      icon: FileText,
+      category: 'services',
+      iconColor: 'text-blue-300 drop-shadow-[0_2px_12px_rgba(147,197,253,0.6)]',
+      badge: 'أوامر',
+      targetTab: 'reports'
+    },
+    {
+      id: 'readiness_pulse',
+      title: 'الموقف والجاهزية',
+      icon: Activity,
+      category: 'ops',
+      iconColor: 'text-rose-400 drop-shadow-[0_2px_12px_rgba(251,113,133,0.6)]',
+      badge: 'مباشر',
+      targetTab: 'tactical_readiness'
     },
     {
       id: 'about',
       title: 'حول المنظومة',
-      subtitle: 'الدعم والتحديثات',
       icon: Info,
       category: 'admin',
-      iconColor: 'text-indigo-400 drop-shadow-[0_2px_12px_rgba(129,140,248,0.5)]',
-      badge: 'v4.2.0'
+      iconColor: 'text-indigo-400 drop-shadow-[0_2px_12px_rgba(129,140,248,0.6)]',
+      badge: 'v4.2.0',
+      targetTab: 'about'
     }
   ];
 
@@ -321,8 +435,7 @@ export default function BottomSheetNavigation({
     const matchesCategory = filterCategory === 'all' || item.category === filterCategory;
     const matchesSearch =
       !searchQuery.trim() ||
-      item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.subtitle.toLowerCase().includes(searchQuery.toLowerCase());
+      item.title.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesCategory && matchesSearch;
   });
 
@@ -495,15 +608,15 @@ export default function BottomSheetNavigation({
           <div className="flex items-center justify-between text-[11px] font-black text-slate-400 px-1 pt-0.5">
             <span className="flex items-center gap-1.5 text-amber-400 font-extrabold">
               <Zap className="w-4 h-4 fill-amber-400/20" />
-              <span>أزرار التنقل السريع (3 في كل سطر):</span>
+              <span>أزرار ومسارات التنقل السريع (5 في كل سطر):</span>
             </span>
             <span className="text-[10px] bg-slate-800 text-amber-400 px-2 py-0.5 rounded-md font-mono border border-slate-700">
-              {filteredItems.length} أزرار
+              {filteredItems.length} اختصارات
             </span>
           </div>
 
-          {/* Clean Modern Quick Grid Icons - EXACTLY 3 COLUMNS PER ROW (grid-cols-3) */}
-          <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
+          {/* Clean Modern Quick Grid Icons - EXACTLY 5 COLUMNS PER ROW (grid-cols-5) */}
+          <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
             {filteredItems.map((item) => {
               const ItemIcon = item.icon;
               const targetTabId = item.targetTab || item.id;
@@ -512,10 +625,10 @@ export default function BottomSheetNavigation({
               return (
                 <motion.button
                   key={item.id}
-                  whileHover={{ scale: 1.04, y: -2 }}
-                  whileTap={{ scale: 0.94 }}
-                  onClick={() => handleSelectTab(targetTabId, item.action)}
-                  className={`relative p-2.5 sm:p-3 rounded-2xl border flex flex-col items-center justify-center text-center transition-all cursor-pointer group ${
+                  whileHover={{ scale: 1.05, y: -2 }}
+                  whileTap={{ scale: 0.93 }}
+                  onClick={() => handleSelectTab(targetTabId, item.action, (item as any).targetSubTab)}
+                  className={`relative p-1.5 sm:p-2 rounded-xl sm:rounded-2xl border flex flex-col items-center justify-center text-center transition-all cursor-pointer group min-h-[84px] sm:min-h-[96px] ${
                     isActive
                       ? 'bg-gradient-to-b from-amber-500/25 to-orange-500/15 border-amber-400 text-amber-300 shadow-xl shadow-amber-950/70 ring-2 ring-amber-400/60'
                       : 'bg-slate-850/90 hover:bg-slate-800 border-slate-800 hover:border-slate-700 text-slate-200 shadow-md'
@@ -523,31 +636,26 @@ export default function BottomSheetNavigation({
                 >
                   {/* Active Indicator Checkmark */}
                   {isActive && (
-                    <span className="absolute top-1.5 left-1.5 w-4.5 h-4.5 rounded-full bg-amber-400 text-slate-950 flex items-center justify-center shadow-md animate-pulse">
-                      <Check className="w-3 h-3 stroke-[3]" />
+                    <span className="absolute top-1 left-1 w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-full bg-amber-400 text-slate-950 flex items-center justify-center shadow-md animate-pulse">
+                      <Check className="w-2 h-2 sm:w-2.5 sm:h-2.5 stroke-[3]" />
                     </span>
                   )}
 
                   {/* Top Badge Label */}
                   {item.badge && !isActive && (
-                    <span className="absolute top-1.5 right-1.5 text-[8px] font-black bg-slate-900/90 text-amber-300 border border-slate-700/80 px-1.5 py-0.2 rounded-full truncate max-w-[62px]">
+                    <span className="absolute top-1 right-1 text-[7px] sm:text-[7.5px] font-black bg-slate-900/95 text-amber-300 border border-slate-700/80 px-1 py-0.2 rounded truncate max-w-[42px] sm:max-w-[55px]">
                       {item.badge}
                     </span>
                   )}
 
-                  {/* Clean Elegant Floating Icon (without surrounding box) */}
-                  <div className="my-2.5 flex items-center justify-center group-hover:scale-125 transition-transform duration-300">
-                    <ItemIcon className={`w-8 h-8 sm:w-9 sm:h-9 stroke-[2.2] ${item.iconColor} group-hover:rotate-6 transition-all duration-300`} />
+                  {/* Enlarged Floating Icon */}
+                  <div className="my-1 sm:my-1.5 flex items-center justify-center group-hover:scale-115 transition-transform duration-300">
+                    <ItemIcon className={`w-7 h-7 sm:w-8 sm:h-8 stroke-[2.3] ${item.iconColor} group-hover:rotate-6 transition-all duration-300`} />
                   </div>
 
-                  {/* Title */}
-                  <span className="text-[11px] sm:text-xs font-black leading-tight text-white group-hover:text-amber-300 transition-colors w-full truncate">
+                  {/* Single Clean Main Title */}
+                  <span className="text-[9.5px] sm:text-[11px] font-black leading-tight text-white group-hover:text-amber-300 transition-colors w-full text-center px-0.5 line-clamp-2">
                     {item.title}
-                  </span>
-
-                  {/* Subtitle */}
-                  <span className="text-[9px] sm:text-[10px] font-bold text-slate-400 mt-0.5 truncate w-full">
-                    {item.subtitle}
                   </span>
                 </motion.button>
               );

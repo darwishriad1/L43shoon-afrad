@@ -126,6 +126,42 @@ export default function App() {
   // App Navigation & Modals
   const [showSplashScreen, setShowSplashScreen] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [settingsSubTab, setSettingsSubTab] = useState<'menu' | 'settings' | 'notifications' | 'users' | 'backup' | 'secondary_db' | 'print' | 'reset'>('settings');
+  const [specialSectionsSubTab, setSpecialSectionsSubTab] = useState<'requests_surveys' | 'leaves' | 'promotions' | 'welfare' | 'equipment' | 'archive' | 'discipline'>('requests_surveys');
+
+  const handleNavigateTab = useCallback((tabId: string, subTab?: string) => {
+    if (tabId === 'secondary_db' || tabId === 'backup' || subTab === 'backup' || subTab === 'secondary_db') {
+      setSettingsSubTab(subTab === 'secondary_db' ? 'secondary_db' : 'backup');
+      setActiveTab('settings');
+    } else if (tabId === 'settings') {
+      setSettingsSubTab((subTab as any) || 'settings');
+      setActiveTab('settings');
+    } else if (
+      tabId === 'special_sections' || 
+      tabId === 'medical_care' || 
+      tabId === 'armory_supplies' || 
+      subTab === 'equipment' || 
+      subTab === 'welfare' || 
+      subTab === 'leaves' || 
+      subTab === 'promotions' || 
+      subTab === 'requests_surveys'
+    ) {
+      if (tabId === 'medical_care' || subTab === 'welfare') {
+        setSpecialSectionsSubTab('welfare');
+      } else if (tabId === 'armory_supplies' || subTab === 'equipment') {
+        setSpecialSectionsSubTab('equipment');
+      } else if (subTab) {
+        setSpecialSectionsSubTab(subTab as any);
+      }
+      setActiveTab('special_sections');
+    } else if (tabId === 'duty_roster') {
+      setActiveTab('guard_roster');
+    } else if (tabId === 'org') {
+      setActiveTab('org_manager');
+    } else {
+      setActiveTab(tabId);
+    }
+  }, []);
   const [selectedSoldierIdForProfile, setSelectedSoldierIdForProfile] = useState<string | null>(null);
   const [militaryCardSoldier, setMilitaryCardSoldier] = useState<Soldier | null>(null);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
@@ -1132,7 +1168,7 @@ export default function App() {
             notifications={notifications}
             setNotifications={setNotifications}
             onToggleRead={handleToggleReadNotif}
-            onNavigateTab={(tab) => setActiveTab(tab)}
+            onNavigateTab={handleNavigateTab}
             units={units}
             soldiers={soldiers}
             attendance={attendance}
@@ -1259,6 +1295,7 @@ export default function App() {
         onClose={() => setIsMoreBottomSheetOpen(false)}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
+        onNavigate={handleNavigateTab}
         currentUser={currentUser}
         onOpenRequestsModal={() => setIsRequestsModalOpen(true)}
         unreadRequestsCount={soldierRequests ? soldierRequests.filter(r => r.status === 'pending').length : 0}
@@ -1282,7 +1319,7 @@ export default function App() {
               return (
                 <button
                   key={item.id}
-                  onClick={() => setActiveTab(item.id)}
+                  onClick={() => handleNavigateTab(item.id)}
                   className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
                     isActive 
                       ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-sm' 
@@ -1298,7 +1335,7 @@ export default function App() {
             {/* Users and Permissions tab for admins */}
             {currentUser.role === 'admin' && (
               <button
-                onClick={() => setActiveTab('users_permissions')}
+                onClick={() => handleNavigateTab('users_permissions')}
                 className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
                   activeTab === 'users_permissions' 
                     ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-sm' 
@@ -1325,7 +1362,7 @@ export default function App() {
               attendance={attendance} 
               users={users}
               auditLogs={auditLogs}
-              onNavigate={(tab) => setActiveTab(tab)}
+              onNavigate={handleNavigateTab}
               onViewSoldierProfile={(id) => setSelectedSoldierIdForProfile(id)}
               currentUser={currentUser}
               printSettings={settings?.printSettings}
@@ -1341,7 +1378,7 @@ export default function App() {
                 units={units}
                 attendance={attendance}
                 currentUser={currentUser}
-                onNavigateTab={(tab) => setActiveTab(tab)}
+                onNavigateTab={handleNavigateTab}
                 onSelectSoldier={(soldier) => setSelectedSoldierIdForProfile(soldier.id)}
               />
             </div>
@@ -1409,6 +1446,7 @@ export default function App() {
                 soldierRequests={soldierRequests}
                 onRefreshRequests={refreshSoldierRequests}
                 onAddLog={(log: any) => handleAddLog(log.actionType || 'تعديل', log.tableName || 'سجل', log.details || '')}
+                initialTab={specialSectionsSubTab}
               />
             </div>
           )}
@@ -1457,6 +1495,8 @@ export default function App() {
                 onSetGoogleAccessToken={setGoogleAccessToken}
                 onRestoreState={handleRestoreState}
                 onResetDatabase={handleResetDatabase}
+                initialSubTab={settingsSubTab}
+                onSubTabChange={setSettingsSubTab}
               />
             </div>
           )}
@@ -1665,7 +1705,7 @@ export default function App() {
         onClose={() => setIsCommandPaletteOpen(false)}
         soldiers={soldiers}
         units={units}
-        onNavigateTab={(tab) => setActiveTab(tab)}
+        onNavigateTab={handleNavigateTab}
         onSelectSoldier={(soldier) => setSelectedSoldierIdForProfile(soldier.id)}
         onOpenMilitaryCard={(soldier) => setMilitaryCardSoldier(soldier)}
       />

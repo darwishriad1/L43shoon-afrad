@@ -25,6 +25,7 @@ import { Unit, Soldier, AttendanceRecord, AttendanceStatusCode, AuditLog, User a
 import { motion, AnimatePresence } from 'framer-motion';
 import WhatsAppShareModal from './WhatsAppShareModal';
 import SoldierMonthlyAttendanceModal from './SoldierMonthlyAttendanceModal';
+import DailyMovementDetailsModal from './DailyMovementDetailsModal';
 import { downloadElementAsPdf, downloadElementAsImage, shareElementViaWhatsApp, exportQuickReadinessPdfReport } from '../utils/pdfGenerator';
 import { fetchWithRetry, safeJson } from '../lib/api';
 import { PrintHeader, PrintFooter } from './PrintHeaderFooter';
@@ -255,8 +256,47 @@ function DashboardContent({
 
   // Executive Readiness Indicators Cards View Mode & Details Modal
   const [executiveTickerMode, setExecutiveTickerMode] = useState<'general' | 'daily_movement'>('general');
-  const [movementDetailModal, setMovementDetailModal] = useState<'resumed' | 'granted' | 'overdue' | null>(null);
+  const [isDailyMovementHubOpen, setIsDailyMovementHubOpen] = useState(false);
+  const [movementDetailModal, setMovementDetailModal] = useState<'resumed' | 'granted' | 'overdue' | 'on_duty' | null>(null);
   const [grantSearchQueryModal, setGrantSearchQueryModal] = useState('');
+  const [onDutySearchQueryModal, setOnDutySearchQueryModal] = useState('');
+  const [onDutyStatusFilter, setOnDutyStatusFilter] = useState<'all' | 'ح' | 'م' | 'ن'>('all');
+
+  // Long-press detection for opening the Daily Movement Hub Modal
+  const dailyMovementLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isDailyMovementLongPressTriggered = useRef(false);
+
+  const handleStartMovementLongPress = useCallback(() => {
+    isDailyMovementLongPressTriggered.current = false;
+    if (dailyMovementLongPressTimerRef.current) {
+      clearTimeout(dailyMovementLongPressTimerRef.current);
+    }
+    dailyMovementLongPressTimerRef.current = setTimeout(() => {
+      isDailyMovementLongPressTriggered.current = true;
+      setIsDailyMovementHubOpen(true);
+      triggerToast('⚡ تم فتح مركز تفاصيل وتصدير حركة اليوم الميدانية (بالضغط المطول)', 'info', 3000);
+      if (typeof window !== 'undefined' && window.navigator && window.navigator.vibrate) {
+        try {
+          window.navigator.vibrate(60);
+        } catch (_) {}
+      }
+    }, 450);
+  }, []);
+
+  const handleCancelMovementLongPress = useCallback(() => {
+    if (dailyMovementLongPressTimerRef.current) {
+      clearTimeout(dailyMovementLongPressTimerRef.current);
+      dailyMovementLongPressTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (dailyMovementLongPressTimerRef.current) {
+        clearTimeout(dailyMovementLongPressTimerRef.current);
+      }
+    };
+  }, []);
 
   const searchMatchedSoldiers = useMemo(() => {
     if (!grantSearchQueryModal.trim()) return [];
@@ -1090,6 +1130,22 @@ function DashboardContent({
       }
     });
 
+    // 0. On-Duty Soldiers (المداومون - الحضور العام بالميدان)
+    // يشمل من هم حضور بشكل عام (حاضر 'ح' أو مهمة 'م' أو نصف يوم / مناوبة 'ن')
+    const onDutySoldiers = activeSoldiers.filter(s => {
+      const cur = targetStatusMap.get(s.id);
+      return cur === 'ح' || cur === 'م' || cur === 'ن';
+    }).map(s => {
+      const cur = targetStatusMap.get(s.id) || 'ح';
+      const unit = scopedUnits.find(u => u.id === s.unitId);
+      return {
+        ...s,
+        unitName: unit?.name || 'قيادة اللواء',
+        statusCode: cur,
+        recordDate: targetDateStr
+      };
+    });
+
     // 1. Resumed Today (المواصلون للعمل اليوم - من باشروا العمل بعد غياب أو انتهاء إجازة أو مهمة)
     const resumedTodaySoldiers = activeSoldiers.filter(s => {
       const cur = targetStatusMap.get(s.id);
@@ -1151,12 +1207,31 @@ function DashboardContent({
     });
 
     return {
+      onDutySoldiers,
       resumedTodaySoldiers,
       grantedLeaveTodaySoldiers,
       overdueAbsentSoldiers,
       targetDateStr
     };
-  }, [attendance, activeSoldiers, selectedDailyDate, actualToday, auditLogs]);
+  }, [attendance, activeSoldiers, selectedDailyDate, actualToday, auditLogs, scopedUnits]);
+
+  const filteredOnDutySoldiers = useMemo(() => {
+    if (movementDetailModal !== 'on_duty') return [];
+    let list = dailyMovementStats.onDutySoldiers;
+    if (onDutyStatusFilter !== 'all') {
+      list = list.filter(s => s.statusCode === onDutyStatusFilter);
+    }
+    if (onDutySearchQueryModal.trim()) {
+      const q = onDutySearchQueryModal.trim().toLowerCase();
+      list = list.filter(s => 
+        s.fullName.toLowerCase().includes(q) ||
+        s.militaryNumber.toLowerCase().includes(q) ||
+        (s.rank && s.rank.toLowerCase().includes(q)) ||
+        (s.unitName && s.unitName.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [movementDetailModal, dailyMovementStats.onDutySoldiers, onDutyStatusFilter, onDutySearchQueryModal]);
 
   // Unit Stats parsing
   const unitStats = useMemo(() => {
@@ -2046,25 +2121,125 @@ function DashboardContent({
             </button>
             <button
               type="button"
-              onClick={() => setExecutiveTickerMode('daily_movement')}
-              className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              onClick={() => {
+                if (!isDailyMovementLongPressTriggered.current) {
+                  setExecutiveTickerMode('daily_movement');
+                }
+              }}
+              onTouchStart={handleStartMovementLongPress}
+              onTouchEnd={handleCancelMovementLongPress}
+              onTouchMove={handleCancelMovementLongPress}
+              onMouseDown={handleStartMovementLongPress}
+              onMouseUp={handleCancelMovementLongPress}
+              onMouseLeave={handleCancelMovementLongPress}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setIsDailyMovementHubOpen(true);
+              }}
+              className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer relative group ${
                 executiveTickerMode === 'daily_movement'
                   ? 'bg-blue-600 text-white shadow-md'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
               }`}
+              title="انقر للتبديل، أو اضغط مطولاً لفتح مركز تفاصيل وتصدير حركة اليوم الشامل"
             >
               <Plane className="w-3.5 h-3.5" />
               <span>حركة اليوم الميدانية</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse hidden sm:inline-block" title="دعم الضغط المطول" />
             </button>
           </div>
         </div>
 
+        {/* Quick Hub Trigger Banner for Daily Movement */}
+        {executiveTickerMode === 'daily_movement' && (
+          <div className="bg-slate-950/80 p-2 sm:p-2.5 rounded-xl border border-blue-500/30 flex flex-wrap items-center justify-between gap-2 shadow-xs">
+            <div className="flex items-center gap-2 text-xs text-blue-300 font-bold">
+              <span className="text-amber-400 text-sm">💡</span>
+              <span className="text-[11px] sm:text-xs">
+                اضغط مطولاً على أي بطاقة أو انقر الزر لفتح <strong>مركز تفاصيل وتصدير حركة اليوم (Excel / PDF / واتساب)</strong>
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setIsDailyMovementHubOpen(true)}
+              className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 via-teal-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 text-white text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-md transition-all active:scale-95 border border-white/10"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span>مركز تفاصيل وتصدير حركة اليوم ⚡</span>
+            </button>
+          </div>
+        )}
+
         {/* Cards View Area */}
         {executiveTickerMode === 'daily_movement' ? (
-          <div className="grid grid-cols-3 gap-2 sm:gap-3 pt-0.5">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3 pt-0.5">
+            {/* Card 0: On-Duty Soldiers (المداومين - الحضور العام) */}
+            <div 
+              onClick={() => {
+                if (!isDailyMovementLongPressTriggered.current) {
+                  setOnDutySearchQueryModal('');
+                  setOnDutyStatusFilter('all');
+                  setMovementDetailModal('on_duty');
+                }
+              }}
+              onTouchStart={handleStartMovementLongPress}
+              onTouchEnd={handleCancelMovementLongPress}
+              onTouchMove={handleCancelMovementLongPress}
+              onMouseDown={handleStartMovementLongPress}
+              onMouseUp={handleCancelMovementLongPress}
+              onMouseLeave={handleCancelMovementLongPress}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setIsDailyMovementHubOpen(true);
+              }}
+              className="bg-slate-950/90 border border-teal-500/40 hover:border-teal-400 p-2.5 sm:p-3 rounded-xl sm:rounded-2xl cursor-pointer transition-all hover:bg-slate-900 group shadow-md flex flex-col justify-between space-y-1.5 sm:space-y-2 relative overflow-hidden"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] sm:text-xs font-extrabold text-teal-400">
+                <span className="flex items-center gap-1">
+                  <Users className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+                  <span className="truncate">المداومين (حضور عام)</span>
+                </span>
+                <span className="text-[8px] sm:text-[10px] bg-teal-950 text-teal-300 border border-teal-800/80 px-1.5 py-0.5 rounded-full font-mono font-bold shrink-0">
+                  مداوم 🛡️
+                </span>
+              </div>
+
+              <div className="flex items-baseline justify-between py-0.5">
+                <span className="text-xl sm:text-2xl font-black text-white font-mono">{dailyMovementStats.onDutySoldiers.length}</span>
+                <span className="text-[10px] sm:text-xs text-teal-300/90 font-bold">فرد</span>
+              </div>
+
+              <p className="text-[9px] sm:text-[10px] text-slate-400 line-clamp-1 hidden xs:block">
+                حاضر • مهمة • مناوبة
+              </p>
+
+              <div className="pt-1.5 border-t border-slate-800/80 flex justify-between items-center text-[9px] sm:text-[10px]">
+                <span className="text-slate-500 hidden sm:inline">القوة المرابطة</span>
+                <span className="text-teal-400 font-extrabold flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
+                  <span>الكشف</span>
+                  <span>←</span>
+                </span>
+              </div>
+            </div>
+
             {/* Card 1: Resumed Work Today */}
             <div 
-              onClick={() => setMovementDetailModal('resumed')}
+              onClick={() => {
+                if (!isDailyMovementLongPressTriggered.current) {
+                  setMovementDetailModal('resumed');
+                }
+              }}
+              onTouchStart={handleStartMovementLongPress}
+              onTouchEnd={handleCancelMovementLongPress}
+              onTouchMove={handleCancelMovementLongPress}
+              onMouseDown={handleStartMovementLongPress}
+              onMouseUp={handleCancelMovementLongPress}
+              onMouseLeave={handleCancelMovementLongPress}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setIsDailyMovementHubOpen(true);
+              }}
               className="bg-slate-950/90 border border-emerald-500/40 hover:border-emerald-400 p-2.5 sm:p-3 rounded-xl sm:rounded-2xl cursor-pointer transition-all hover:bg-slate-900 group shadow-md flex flex-col justify-between space-y-1.5 sm:space-y-2 relative overflow-hidden"
             >
               <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] sm:text-xs font-extrabold text-emerald-400">
@@ -2097,7 +2272,21 @@ function DashboardContent({
 
             {/* Card 2: Leaves Granted Today */}
             <div 
-              onClick={() => setMovementDetailModal('granted')}
+              onClick={() => {
+                if (!isDailyMovementLongPressTriggered.current) {
+                  setMovementDetailModal('granted');
+                }
+              }}
+              onTouchStart={handleStartMovementLongPress}
+              onTouchEnd={handleCancelMovementLongPress}
+              onTouchMove={handleCancelMovementLongPress}
+              onMouseDown={handleStartMovementLongPress}
+              onMouseUp={handleCancelMovementLongPress}
+              onMouseLeave={handleCancelMovementLongPress}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setIsDailyMovementHubOpen(true);
+              }}
               className="bg-slate-950/90 border border-blue-500/40 hover:border-blue-400 p-2.5 sm:p-3 rounded-xl sm:rounded-2xl cursor-pointer transition-all hover:bg-slate-900 group shadow-md flex flex-col justify-between space-y-1.5 sm:space-y-2 relative overflow-hidden"
             >
               <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] sm:text-xs font-extrabold text-blue-400">
@@ -2132,7 +2321,21 @@ function DashboardContent({
 
             {/* Card 3: Overdue Absence */}
             <div 
-              onClick={() => setMovementDetailModal('overdue')}
+              onClick={() => {
+                if (!isDailyMovementLongPressTriggered.current) {
+                  setMovementDetailModal('overdue');
+                }
+              }}
+              onTouchStart={handleStartMovementLongPress}
+              onTouchEnd={handleCancelMovementLongPress}
+              onTouchMove={handleCancelMovementLongPress}
+              onMouseDown={handleStartMovementLongPress}
+              onMouseUp={handleCancelMovementLongPress}
+              onMouseLeave={handleCancelMovementLongPress}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setIsDailyMovementHubOpen(true);
+              }}
               className="bg-slate-950/90 border border-rose-500/40 hover:border-rose-400 p-2.5 sm:p-3 rounded-xl sm:rounded-2xl cursor-pointer transition-all hover:bg-slate-900 group shadow-md flex flex-col justify-between space-y-1.5 sm:space-y-2 relative overflow-hidden"
             >
               <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] sm:text-xs font-extrabold text-rose-400">
@@ -7404,10 +7607,12 @@ function DashboardContent({
           <div className="bg-slate-900 rounded-2xl max-w-2xl w-full border border-slate-700 shadow-2xl overflow-hidden text-right my-auto animate-scaleUp">
             <div className="p-4 bg-slate-950 flex justify-between items-center border-b border-slate-800">
               <div className="flex items-center gap-2">
+                {movementDetailModal === 'on_duty' && <Users className="w-5 h-5 text-teal-400" />}
                 {movementDetailModal === 'resumed' && <UserCheck className="w-5 h-5 text-emerald-400" />}
                 {movementDetailModal === 'granted' && <Plane className="w-5 h-5 text-blue-400" />}
                 {movementDetailModal === 'overdue' && <AlertTriangle className="w-5 h-5 text-rose-400" />}
                 <h3 className="font-extrabold text-sm sm:text-base text-white">
+                  {movementDetailModal === 'on_duty' && `كشف القوة المداومة والمرابطة بالميدان - الحضور العام (${dailyMovementStats.onDutySoldiers.length} فرد)`}
                   {movementDetailModal === 'resumed' && `كشف المواصلين للعمل اليوم (${dailyMovementStats.resumedTodaySoldiers.length} فرد)`}
                   {movementDetailModal === 'granted' && `كشف الإجازات الممنوحة اليوم (${dailyMovementStats.grantedLeaveTodaySoldiers.length} فرد)`}
                   {movementDetailModal === 'overdue' && `كشف الغياب وتأخير المواصلة بعد الإجازة (${dailyMovementStats.overdueAbsentSoldiers.length} فرد)`}
@@ -7423,6 +7628,84 @@ function DashboardContent({
             </div>
 
             <div className="p-4 max-h-[70vh] overflow-y-auto space-y-3">
+              {/* On-Duty (General Attendance) Filter & Search Toolbar */}
+              {movementDetailModal === 'on_duty' && (
+                <div className="bg-slate-950 p-3 rounded-2xl border border-teal-500/40 space-y-2.5 shadow-inner mb-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-xs text-teal-300 font-extrabold">
+                      <Filter className="w-3.5 h-3.5 text-teal-400" />
+                      <span>تصفية المداومين بحسب طبيعة الحضور:</span>
+                    </div>
+                    <div className="flex items-center gap-1 overflow-x-auto">
+                      <button
+                        type="button"
+                        onClick={() => setOnDutyStatusFilter('all')}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer ${
+                          onDutyStatusFilter === 'all'
+                            ? 'bg-teal-600 text-white shadow-xs'
+                            : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                        }`}
+                      >
+                        الكل ({dailyMovementStats.onDutySoldiers.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOnDutyStatusFilter('ح')}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer ${
+                          onDutyStatusFilter === 'ح'
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-slate-900 text-emerald-400 hover:text-white border border-slate-800'
+                        }`}
+                      >
+                        حاضر ({dailyMovementStats.onDutySoldiers.filter(s => s.statusCode === 'ح').length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOnDutyStatusFilter('م')}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer ${
+                          onDutyStatusFilter === 'م'
+                            ? 'bg-purple-600 text-white shadow-xs'
+                            : 'bg-slate-900 text-purple-400 hover:text-white border border-slate-800'
+                        }`}
+                      >
+                        مهمة ({dailyMovementStats.onDutySoldiers.filter(s => s.statusCode === 'م').length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOnDutyStatusFilter('ن')}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer ${
+                          onDutyStatusFilter === 'ن'
+                            ? 'bg-teal-600 text-white shadow-xs'
+                            : 'bg-slate-900 text-teal-400 hover:text-white border border-slate-800'
+                        }`}
+                      >
+                        مناوبة / نصف يوم ({dailyMovementStats.onDutySoldiers.filter(s => s.statusCode === 'ن').length})
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={onDutySearchQueryModal}
+                      onChange={(e) => setOnDutySearchQueryModal(e.target.value)}
+                      placeholder="البحث بالاسم، الرقم العسكري، الكتيبة، أو الرتبة في كشف المداومين..."
+                      className="w-full bg-slate-900 border border-slate-700 focus:border-teal-500 rounded-xl px-3.5 py-2 pr-9 text-xs text-white placeholder:text-slate-500 outline-none transition-all shadow-sm"
+                    />
+                    <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5" />
+                    {onDutySearchQueryModal && (
+                      <button
+                        type="button"
+                        onClick={() => setOnDutySearchQueryModal('')}
+                        className="absolute left-3 top-2 text-[10px] text-slate-400 hover:text-white cursor-pointer"
+                      >
+                        مسح
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Helper Note regarding military attendance rules */}
               {movementDetailModal === 'overdue' && (
                 <div className="p-3 bg-amber-950/50 border border-amber-800/80 rounded-xl text-xs text-amber-200 flex items-start gap-2">
@@ -7512,19 +7795,24 @@ function DashboardContent({
               )}
 
               {/* List Items */}
-              {((movementDetailModal === 'resumed' && dailyMovementStats.resumedTodaySoldiers) ||
+              {(movementDetailModal === 'on_duty' ? filteredOnDutySoldiers : (
+                (movementDetailModal === 'resumed' && dailyMovementStats.resumedTodaySoldiers) ||
                 (movementDetailModal === 'granted' && dailyMovementStats.grantedLeaveTodaySoldiers) ||
-                (movementDetailModal === 'overdue' && dailyMovementStats.overdueAbsentSoldiers)
-              )?.length === 0 ? (
+                (movementDetailModal === 'overdue' && dailyMovementStats.overdueAbsentSoldiers) ||
+                []
+              ))?.length === 0 ? (
                 <div className="py-10 text-center text-slate-400 text-xs">
                   لا يوجد أفراد مسجلين في هذه القائمة بتاريخ ({dailyMovementStats.targetDateStr})
                 </div>
               ) : (
-                ((movementDetailModal === 'resumed' && dailyMovementStats.resumedTodaySoldiers) ||
-                 (movementDetailModal === 'granted' && dailyMovementStats.grantedLeaveTodaySoldiers) ||
-                 (movementDetailModal === 'overdue' && dailyMovementStats.overdueAbsentSoldiers)
-                )?.map(s => {
-                  const unitName = units.find(u => u.id === s.unitId)?.name || 'قيادة اللواء';
+                (movementDetailModal === 'on_duty' ? filteredOnDutySoldiers : (
+                  (movementDetailModal === 'resumed' && dailyMovementStats.resumedTodaySoldiers) ||
+                  (movementDetailModal === 'granted' && dailyMovementStats.grantedLeaveTodaySoldiers) ||
+                  (movementDetailModal === 'overdue' && dailyMovementStats.overdueAbsentSoldiers) ||
+                  []
+                ))?.map(s => {
+                  const unitName = (s as any).unitName || units.find(u => u.id === s.unitId)?.name || 'قيادة اللواء';
+                  const statusCode = (s as any).statusCode;
                   return (
                     <div 
                       key={s.id} 
@@ -7551,7 +7839,30 @@ function DashboardContent({
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                      <div className="flex items-center gap-2 w-full sm:w-auto justify-end flex-wrap">
+                        {movementDetailModal === 'on_duty' && (
+                          <div className="flex items-center gap-1.5">
+                            {statusCode === 'ح' && (
+                              <span className="px-2.5 py-1 bg-emerald-950/90 text-emerald-300 border border-emerald-500/40 rounded-xl text-xs font-black flex items-center gap-1 shadow-xs">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                <span>حاضر بالميدان 🟢</span>
+                              </span>
+                            )}
+                            {statusCode === 'م' && (
+                              <span className="px-2.5 py-1 bg-purple-950/90 text-purple-300 border border-purple-500/40 rounded-xl text-xs font-black flex items-center gap-1 shadow-xs">
+                                <Briefcase className="w-3.5 h-3.5 text-purple-400" />
+                                <span>مهمة رسمية 🟣</span>
+                              </span>
+                            )}
+                            {statusCode === 'ن' && (
+                              <span className="px-2.5 py-1 bg-teal-950/90 text-teal-300 border border-teal-500/40 rounded-xl text-xs font-black flex items-center gap-1 shadow-xs">
+                                <Clock className="w-3.5 h-3.5 text-teal-400" />
+                                <span>مناوبة / نصف يوم 🔵</span>
+                              </span>
+                            )}
+                          </div>
+                        )}
+
                         {movementDetailModal === 'resumed' && (
                           <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-950/80 border border-emerald-500/40 rounded-xl text-emerald-300 text-xs font-bold shadow-xs">
                             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -7587,6 +7898,21 @@ function DashboardContent({
                           </button>
                         )}
 
+                        {onViewSoldierProfile && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMovementDetailModal(null);
+                              onViewSoldierProfile(s.id);
+                            }}
+                            className="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                            title="عرض الملف العسكري للمنتسب"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-blue-400" />
+                            <span className="hidden sm:inline">الملف</span>
+                          </button>
+                        )}
+
                         <button
                           type="button"
                           onClick={(e) => handleSendWhatsAppDetails(s, e)}
@@ -7614,6 +7940,25 @@ function DashboardContent({
           </div>
         </div>
       )}
+
+      {/* 2.6 Comprehensive Daily Movement Hub & Export Modal (Long-Press / Click Hub) */}
+      <DailyMovementDetailsModal
+        isOpen={isDailyMovementHubOpen}
+        onClose={() => setIsDailyMovementHubOpen(false)}
+        targetDate={selectedDailyDate || actualToday}
+        onDateChange={(newDate) => {
+          setSelectedDailyDate(newDate);
+        }}
+        units={units}
+        soldiers={soldiers}
+        attendance={attendance}
+        printSettings={printSettings}
+        currentUser={activeUser}
+        onResumeDuty={handleResumeDuty}
+        onOpenGrantLeave={handleOpenGrantLeaveModal}
+        onViewSoldierProfile={onViewSoldierProfile}
+        onAddLog={onAddLog}
+      />
     </div>
   );
 }

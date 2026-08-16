@@ -53,13 +53,16 @@ import {
   Star,
   Send,
   Calendar,
-  ChevronRight
+  ChevronRight,
+  Milestone,
+  History
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import ExcelImporter from './ExcelImporter';
 import { Unit, Soldier, User, PrintSettings, AuditLog, AttendanceRecord } from '../types';
 import { fetchWithRetry, safeJson } from '../lib/api';
 import SoldierProfile from './SoldierProfile';
+import SoldierMovementHistoryModal from './SoldierMovementHistoryModal';
 
 interface OrgManagerProps {
   units: Unit[];
@@ -461,6 +464,15 @@ export default function OrgManager({
   const [transferIssuedBy, setTransferIssuedBy] = useState('قيادة اللواء');
   const [transferNotes, setTransferNotes] = useState('سد الشواغر وملاك القوة التنظيمية');
   const [isTransferOpen, setIsTransferOpen] = useState(false);
+
+  // Movement History Modal state
+  const [isMovementHistoryModalOpen, setIsMovementHistoryModalOpen] = useState(false);
+  const [movementHistorySoldier, setMovementHistorySoldier] = useState<Soldier | null>(null);
+
+  const handleOpenMovementHistory = (soldier: Soldier) => {
+    setMovementHistorySoldier(soldier);
+    setIsMovementHistoryModalOpen(true);
+  };
 
   // Search and filter for soldiers
   const [soldierSearch, setSoldierSearch] = useState('');
@@ -1767,6 +1779,13 @@ export default function OrgManager({
                                 >
                                   <FileText className="w-4 h-4 text-slate-700" />
                                 </button>
+                                <button
+                                  onClick={() => handleOpenMovementHistory(soldier)}
+                                  className="p-1.5 rounded-lg text-amber-700 hover:bg-amber-50 transition-colors border border-transparent hover:border-amber-200 cursor-pointer"
+                                  title="سجل الحركة والتنقلات والجهات المصدرة"
+                                >
+                                  <Milestone className="w-3.5 h-3.5 text-amber-600" />
+                                </button>
                                 {currentUser.role !== 'operations' && (
                                   <>
                                     <button
@@ -1858,32 +1877,41 @@ export default function OrgManager({
                         </div>
 
                         {/* Mobile Buttons Bar */}
-                        <div className="flex items-center gap-1.5 pt-2 border-t border-slate-100">
+                        <div className="flex items-center gap-1.5 pt-2 border-t border-slate-100 flex-wrap">
                           <button
                             onClick={() => setSelectedProfileSoldierId(soldier.id)}
-                            className="flex-1 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-[11px] font-bold rounded-lg transition-colors flex items-center justify-center gap-1"
+                            className="flex-1 min-w-[90px] py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-[11px] font-bold rounded-lg transition-colors flex items-center justify-center gap-1"
                           >
                             <FileText className="w-3.5 h-3.5 text-slate-700" />
                             <span>الملف الشامل</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleOpenMovementHistory(soldier)}
+                            className="py-1.5 px-2.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 text-[11px] font-bold rounded-lg transition-colors flex items-center justify-center gap-1"
+                            title="سجل الحركة والتنقلات"
+                          >
+                            <Milestone className="w-3 h-3 text-amber-600" />
+                            <span>سجل الحركة</span>
                           </button>
 
                           {currentUser.role !== 'operations' && (
                             <>
                               <button
                                 onClick={() => handleOpenSoldierModal(soldier)}
-                                className="py-1.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-bold rounded-lg transition-colors"
+                                className="py-1.5 px-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-bold rounded-lg transition-colors"
                               >
                                 تعديل
                               </button>
                               <button
                                 onClick={() => handleOpenTransfer(soldier)}
-                                className="py-1.5 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-[11px] font-bold rounded-lg transition-colors"
+                                className="py-1.5 px-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-[11px] font-bold rounded-lg transition-colors"
                               >
                                 نقل
                               </button>
                               <button
                                 onClick={() => handleDeleteSoldierClick(soldier.id, soldier.fullName)}
-                                className="py-1.5 px-3 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[11px] font-bold rounded-lg transition-colors"
+                                className="py-1.5 px-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[11px] font-bold rounded-lg transition-colors"
                               >
                                 حذف
                               </button>
@@ -4347,6 +4375,30 @@ export default function OrgManager({
           </div>
         );
       })()}
+
+      {/* SOLDIER MOVEMENT HISTORY & TRANSFERS CHRONOLOGICAL MODAL */}
+      {isMovementHistoryModalOpen && movementHistorySoldier && (
+        <SoldierMovementHistoryModal
+          isOpen={isMovementHistoryModalOpen}
+          soldier={movementHistorySoldier}
+          units={units}
+          currentUser={currentUser}
+          printSettings={printSettings}
+          isDarkMode={isDarkMode}
+          onClose={() => {
+            setIsMovementHistoryModalOpen(false);
+            setMovementHistorySoldier(null);
+          }}
+          onUpdateSoldier={(soldierId, updatedFields) => {
+            setMovementHistorySoldier(prev => prev && prev.id === soldierId ? { ...prev, ...updatedFields } : prev);
+            setSearchedSoldiers(prev => prev.map(s => s.id === soldierId ? { ...s, ...updatedFields } : s));
+            showToast('تم تحديث وحفظ سجل الحركة بنجاح', 'success');
+          }}
+          onAddLog={(action, details) => {
+            onAddLog('تعديل', 'سجل الحركة', details);
+          }}
+        />
+      )}
 
       {/* SMART BOTTOM TOAST NOTIFICATION SYSTEM */}
       {toast && (

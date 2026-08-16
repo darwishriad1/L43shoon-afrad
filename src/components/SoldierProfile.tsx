@@ -7,7 +7,7 @@ import {
   Download, Trash2, User, RefreshCw, FileText, CheckCircle2, Upload,
   Lock, Check, Building, Camera, X, MessageSquare, Stethoscope, ChevronRight, ChevronLeft, Filter,
   Clock, Sparkles, Grid, List, Shield, Medal, Search, FileSpreadsheet, Eye, SlidersHorizontal, Flag, GraduationCap,
-  PackageCheck, Box, ShieldAlert, Key, Package, FileCheck2, CheckSquare, Layers, LayoutGrid, LogOut
+  PackageCheck, Box, ShieldAlert, Key, Package, FileCheck2, CheckSquare, Layers, LayoutGrid, LogOut, Milestone
 } from 'lucide-react';
 import { Soldier, SickLeave, AttendanceRecord, AuditLog, User as SystemUser, Unit, PrintSettings, MilitaryCustody } from '../types';
 import { fetchWithRetry, safeJson } from '../lib/api';
@@ -16,6 +16,7 @@ import WhatsAppShareModal from './WhatsAppShareModal';
 import SoldierMonthlyAttendanceModal from './SoldierMonthlyAttendanceModal';
 import SoldierAccountTasksTab from './SoldierAccountTasksTab';
 import MilitaryIdCardModal from './MilitaryIdCardModal';
+import SoldierMovementHistoryModal from './SoldierMovementHistoryModal';
 import { PrintHeader, PrintFooter } from './PrintHeaderFooter';
 
 const MONTHS_LIST = [
@@ -110,6 +111,7 @@ export default function SoldierProfile({
   const [isAttachmentModalOpen, setIsAttachmentModalOpen] = useState(false);
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false);
   const [isIdCardModalOpen, setIsIdCardModalOpen] = useState(false);
+  const [isMovementModalOpen, setIsMovementModalOpen] = useState(false);
 
   // Delete & Edit Leave modal states
   const [isDeleteConfirmModalOpen, setIsDeleteConfirmModalOpen] = useState(false);
@@ -2496,6 +2498,18 @@ export default function SoldierProfile({
                       </div>
                     )}
 
+                    {/* Movement History Chronological Modal */}
+                    <button
+                      onClick={() => setIsMovementModalOpen(true)}
+                      className="flex flex-col items-center justify-center p-1.5 sm:p-2.5 bg-slate-900/90 hover:bg-sky-950/50 border border-slate-800 hover:border-sky-500/50 rounded-xl gap-1 transition-all group cursor-pointer text-center min-h-[54px] sm:min-h-[64px] shadow-xs active:scale-95"
+                      title="سجل الحركة والتنقلات"
+                    >
+                      <div className="p-1 sm:p-1.5 bg-sky-500/10 text-sky-400 rounded-lg group-hover:bg-sky-500/20 transition-colors shrink-0">
+                        <Milestone className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                      </div>
+                      <span className="text-[9px] sm:text-[11px] font-black text-slate-200 group-hover:text-sky-300 leading-tight">سجل الحركة</span>
+                    </button>
+
                     {/* Edit Data */}
                     {currentUser.role !== 'operations' ? (
                       <button
@@ -4001,6 +4015,13 @@ export default function SoldierProfile({
                       يعرض هذا القسم السلسلة الزمنية الكاملة لكافة تنقلات الفرد، قرارات التكليف والتحويل الإداري بين الوحدات والتشكيلات العسكرية منذ تاريخ مباشرة الخدمة.
                     </p>
                   </div>
+                  <button
+                    onClick={() => setIsMovementModalOpen(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-lg shadow-sky-950/40 shrink-0"
+                  >
+                    <Milestone className="w-4 h-4" />
+                    <span>نافذة سجل الحركة الشاملة (تصدير / إدارة)</span>
+                  </button>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 font-sans">
@@ -7255,6 +7276,25 @@ export default function SoldierProfile({
           soldier={soldier}
           unit={units.find(u => u.id === soldier.unitId)}
           onClose={() => setIsIdCardModalOpen(false)}
+        />
+      )}
+
+      {/* Soldier Movement History & Transfers Chronological Modal */}
+      {isMovementModalOpen && soldier && (
+        <SoldierMovementHistoryModal
+          isOpen={isMovementModalOpen}
+          soldier={soldier}
+          units={units}
+          currentUser={currentUser}
+          printSettings={printSettings}
+          onClose={() => setIsMovementModalOpen(false)}
+          onUpdateSoldier={(soldierId, updatedFields) => {
+            setSoldier(prev => prev ? { ...prev, ...updatedFields } : prev);
+            if (onSoldierUpdated) onSoldierUpdated();
+          }}
+          onAddLog={(action, details) => {
+            // Logs are handled internally
+          }}
         />
       )}
 

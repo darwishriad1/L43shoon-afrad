@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ShieldCheck, 
   Award, 
@@ -48,6 +48,7 @@ interface SpecialSectionsProps {
   soldierRequests?: SoldierActionRequest[];
   onRefreshRequests?: () => void;
   onAddLog?: (log: any) => void;
+  initialTab?: 'requests_surveys' | 'leaves' | 'promotions' | 'welfare' | 'equipment' | 'archive' | 'discipline';
 }
 
 export default function SpecialSections({ 
@@ -58,7 +59,8 @@ export default function SpecialSections({
   onNavigateToSoldier,
   soldierRequests = [],
   onRefreshRequests,
-  onAddLog
+  onAddLog,
+  initialTab
 }: SpecialSectionsProps) {
   const isRestrictedUser = useMemo(() => {
     return currentUser && currentUser.role !== 'admin' && currentUser.role !== 'commander_formation' && Boolean(currentUser.unitId);
@@ -78,7 +80,13 @@ export default function SpecialSections({
     return units;
   }, [units, isRestrictedUser, currentUser]);
 
-  const [activeSubTab, setActiveSubTab] = useState<'requests_surveys' | 'leaves' | 'promotions' | 'welfare' | 'equipment' | 'archive' | 'discipline'>('requests_surveys');
+  const [activeSubTab, setActiveSubTab] = useState<'requests_surveys' | 'leaves' | 'promotions' | 'welfare' | 'equipment' | 'archive' | 'discipline'>(initialTab || 'requests_surveys');
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveSubTab(initialTab);
+    }
+  }, [initialTab]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUnitFilter, setSelectedUnitFilter] = useState('ALL');
   

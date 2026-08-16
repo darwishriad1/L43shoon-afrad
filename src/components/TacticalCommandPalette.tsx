@@ -24,7 +24,7 @@ interface TacticalCommandPaletteProps {
   onClose: () => void;
   soldiers: Soldier[];
   units: Unit[];
-  onNavigateTab: (tabId: string) => void;
+  onNavigateTab: (tabId: string, subTab?: string) => void;
   onSelectSoldier: (soldier: Soldier) => void;
   onOpenMilitaryCard?: (soldier: Soldier) => void;
 }
@@ -77,8 +77,8 @@ export default function TacticalCommandPalette({
     { id: 'org', title: 'الهيكل التنظيمي وشؤون الأفراد والكتائب', icon: Building2, category: 'شاشات المنظومة' },
     { id: 'special_sections', title: 'الأقسام الإدارية والخدمات والتسليح', icon: FileText, category: 'شاشات المنظومة' },
     { id: 'reports', title: 'التقارير والإحصائيات العسكرية المتقدمة', icon: FileText, category: 'شاشات المنظومة' },
-    { id: 'settings', title: 'الإعدادات والمزامنة السحابية والنسخ الاحتياطي', icon: Settings, category: 'شاشات المنظومة' },
-    { id: 'settings', title: 'قاعدة البيانات الاحتياطية المزدوجة ورفع كل شيء (Hot Standby DB)', icon: Database, category: 'شاشات المنظومة' },
+    { id: 'settings', subTab: 'settings', title: 'الإعدادات والتهيئة العامة', icon: Settings, category: 'شاشات المنظومة' },
+    { id: 'settings', subTab: 'backup', title: 'النسخ والبيانات والمزامنة وقاعدة البيانات الاحتياطية (Hot Standby)', icon: Database, category: 'شاشات المنظومة' },
   ];
 
   // Filtered Results
@@ -136,7 +136,7 @@ export default function TacticalCommandPalette({
       const current = filteredResults[selectedIndex];
       if (current) {
         if (current.type === 'nav') {
-          onNavigateTab(current.data.id);
+          onNavigateTab(current.data.id, (current.data as any).subTab);
           onClose();
         } else if (current.type === 'soldier') {
           onSelectSoldier(current.data);
@@ -200,7 +200,7 @@ export default function TacticalCommandPalette({
                     key={`nav_${item.data.id}`}
                     type="button"
                     onClick={() => {
-                      onNavigateTab(item.data.id);
+                      onNavigateTab(item.data.id, (item.data as any).subTab);
                       onClose();
                     }}
                     onMouseEnter={() => setSelectedIndex(idx)}

@@ -1,0 +1,44 @@
+{
+  "isActiveStandby": true,
+  "autoMirrorEnabled": true,
+  "autoMirrorIntervalMinutes": 10,
+  "lastSyncTimestamp": "2026-08-16T12:39:27.039Z",
+  "lastSyncDurationMs": 50,
+  "lastSyncHash": "init_sync_v1",
+  "totalSyncedRecords": 2,
+  "data": {
+    "users": [
+      {
+        "id": "u_1786352732440",
+        "uid": "Hqiurpu11WXDUFGqoV1kp7edVaB3",
+        "name": "درويش رياض",
+        "email": "darwish@military.local",
+        "role": "admin",
+        "unitId": null,
+        "username": "darwish",
+        "password": "1447",
+        "soldierId": null
+      },
+      {
+        "id": "u_1786873630855",
+        "uid": "u_1786873630855",
+        "name": "1447",
+        "email": "1447@military.local",
+        "role": "data_writer",
+        "unitId": null,
+        "username": "1447",
+        "password": "1447",
+        "soldierId": null
+      }
+    ],
+    "units": [],
+    "soldiers": [],
+    "attendance": [],
+    "sickLeaves": [],
+    "auditLogs": [],
+    "notifications": [],
+    "systemSettings": [],
+    "surveys": [],
+    "soldierRequests": []
+  }
+}
